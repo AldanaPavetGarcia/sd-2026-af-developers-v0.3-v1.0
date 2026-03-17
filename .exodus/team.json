@@ -1,0 +1,19 @@
+{
+  "team_name": "A&F Developers",
+  "repo_name": "sd-2026-af-developers",
+  "members": [
+    {
+      "full_name": "Pavet Garcia, Aldana Micaela",
+      "github_username": "AldanaPavet"
+    },
+    {
+      "full_name": "Soria, Federico Isaia",
+      "github_username": "BlastNeos"
+    }
+  ],
+  "admins": [
+    "GabrielEValenzuela",
+    "agumartina",
+    "NicoxMelia"
+  ]
+}
