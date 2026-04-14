@@ -42,8 +42,20 @@
 
 # ---- Extra (optional)
 build/
+*.gcov
 .vscode/
 .idea/
 cmake-build-*/
 compile_commands.json
 _assets/
+
+# archivos de testeo local
+build_local/
+build_ci_local/
+coverage_html/
+run_ci_local.sh
+llvm-gcov.sh
+coverage_summary.txt
+coverage.info
+connections.json
+connections.log

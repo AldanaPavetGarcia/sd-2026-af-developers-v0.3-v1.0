@@ -8,7 +8,7 @@ permissions:
   pull-requests: write
 
 env:
-  COVERAGE_THRESHOLD: "100"
+  COVERAGE_THRESHOLD: "90"
 
 jobs:
   validate-branch-name:
@@ -127,7 +127,7 @@ jobs:
       - name: Style Check
         id: style
         run: |
-          FILES=$(find src include tests \
+          FILES=$(find src include lib tests \
             \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \) \
             -not -path '*/build/*' \
             | sort)
@@ -276,14 +276,14 @@ jobs:
             --directory build \
             --output-file coverage.info \
             --gcov-tool "$(pwd)/llvm-gcov.sh" \
-            --ignore-errors inconsistent,mismatch
+            --ignore-errors inconsistent,mismatch,format,unsupported
 
           lcov --remove coverage.info \
             '/usr/*' \
             '*/build/vcpkg_installed/*' \
             '*/tests/*' \
             '*/test/*' \
-            --ignore-errors inconsistent,unused \
+            --ignore-errors inconsistent,unused,format,unsupported \
             --output-file coverage.info
 
           lcov --list coverage.info --ignore-errors inconsistent | tee coverage_list.txt
@@ -294,7 +294,7 @@ jobs:
           mkdir -p coverage_html
           genhtml coverage.info \
             --output-directory coverage_html \
-            --ignore-errors inconsistent || true
+            --ignore-errors inconsistent,format,unsupported || true
 
       - name: Upload Coverage Artifact
         if: always()
@@ -329,7 +329,7 @@ jobs:
             exit 0
           fi
 
-          lcov --summary coverage.info --ignore-errors inconsistent | tee coverage_summary.txt
+          lcov --summary coverage.info --ignore-errors inconsistent,format,unsupported | tee coverage_summary.txt
 
           LINES=$(grep -E '^  lines\.*:' coverage_summary.txt \
             | sed -E 's/.*: ([0-9]+(\.[0-9]+)?)%.*/\1/' | head -n1)

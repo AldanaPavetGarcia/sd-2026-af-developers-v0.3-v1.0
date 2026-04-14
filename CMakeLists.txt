@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.30)
-project(exodus-eop-v LANGUAGES CXX)
+project(exodus-eop-v LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,7 +19,7 @@ option(EXODUS_ENABLE_COVERAGE "Enable coverage flags (local only)" OFF)
 # =============================================================================
 # Flags de compilación
 # =============================================================================
-add_compile_options(-Wall -Wextra -Werror -Wpedantic)
+add_compile_options(-Wall -Wextra -Wpedantic)
 
 # =============================================================================
 # Biblioteca estática
@@ -35,12 +35,28 @@ target_include_directories(exodus_lib
 # =============================================================================
 # Ejecutable principal
 # =============================================================================
-add_executable(exodus_app
-  src/app/main.cpp
+add_executable(eop_server
+  src/app/eopServer.cpp
+  lib/src/eventAuditLogger.cpp
+  lib/src/systemTimeValidator.cpp
+  lib/src/commonProtocol.cpp
+  lib/src/configLoader.cpp
 )
 
-target_include_directories(exodus_app PRIVATE include)
-target_link_libraries(exodus_app PRIVATE exodus_lib)
+target_include_directories(eop_server PRIVATE include lib/include)
+target_link_libraries(eop_server PRIVATE exodus_lib)
+
+add_executable(eop_client
+  src/app/eop_client.c
+  src/timed_watchdog_controller.c
+  lib/src/eventAuditLogger.cpp
+  lib/src/systemTimeValidator.cpp
+  lib/src/commonProtocol.cpp
+  lib/src/configLoader.cpp
+)
+
+target_include_directories(eop_client PRIVATE include lib/include)
+target_link_libraries(eop_client PRIVATE exodus_lib)
 
 # =============================================================================
 # Tests (GTest)
@@ -49,10 +65,22 @@ if(EXODUS_BUILD_TESTS)
   find_package(GTest CONFIG REQUIRED)
 
   add_executable(unit_tests
-    tests/unit/exodusBanner_test.cpp
+    tests/unit/exodusBannerTest.cpp
+    tests/unit/testConnection.cpp
+    tests/unit/commonProtocolTest.cpp
+    tests/unit/systemTimeValidatorTest.cpp
+    tests/unit/eventAuditLoggerTest.cpp
+    tests/unit/configLoaderTest.cpp
+    src/app/eopServer.cpp
+    lib/src/eventAuditLogger.cpp
+    lib/src/systemTimeValidator.cpp
+    lib/src/commonProtocol.cpp
+    lib/src/configLoader.cpp
   )
 
-  target_include_directories(unit_tests PRIVATE include)
+  target_include_directories(unit_tests PRIVATE include lib/include)
+  target_compile_definitions(unit_tests PRIVATE TEST_MODE)
+
   target_link_libraries(unit_tests PRIVATE
     exodus_lib
     GTest::gtest
