@@ -3,7 +3,8 @@
 void Time::captureTimeToString(std::span<char> buffer, bool includeSeconds)
 {
     time_t now = time(nullptr);
-    struct tm* timeInfo = localtime(&now);
+    struct tm timeInfoBuf;
+    struct tm* timeInfo = localtime_r(&now, &timeInfoBuf);
     if (timeInfo != nullptr)
     {
         if (includeSeconds)
@@ -20,7 +21,8 @@ void Time::captureTimeToString(std::span<char> buffer, bool includeSeconds)
 void Date::captureDateToString(std::span<char> buffer, bool isY2K)
 {
     time_t now = time(nullptr);
-    struct tm* timeInfo = localtime(&now);
+    struct tm timeInfoBuf;
+    struct tm* timeInfo = localtime_r(&now, &timeInfoBuf);
     if (timeInfo != nullptr)
     {
         if (isY2K)

@@ -15,6 +15,7 @@ enable_testing()
 option(EXODUS_BUILD_TESTS "Build unit tests" ON)
 option(EXODUS_BUILD_BENCHMARKS "Build benchmarks" OFF)
 option(EXODUS_ENABLE_COVERAGE "Enable coverage flags (local only)" OFF)
+option(EXODUS_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 
 # =============================================================================
 # Flags de compilación
@@ -71,6 +72,7 @@ if(EXODUS_BUILD_TESTS)
     tests/unit/systemTimeValidatorTest.cpp
     tests/unit/eventAuditLoggerTest.cpp
     tests/unit/configLoaderTest.cpp
+    tests/unit/testLoad.cpp
     src/app/eopServer.cpp
     lib/src/eventAuditLogger.cpp
     lib/src/systemTimeValidator.cpp
@@ -93,8 +95,14 @@ if(EXODUS_BUILD_TESTS)
     target_link_options(unit_tests PRIVATE --coverage)
   endif()
 
+  if(EXODUS_ENABLE_TSAN)
+    target_compile_options(unit_tests PRIVATE -g -O1 -fsanitize=thread)
+    target_compile_options(exodus_lib PRIVATE -g -O1 -fsanitize=thread)
+    target_link_options(unit_tests PRIVATE -fsanitize=thread)
+  endif()
+
   include(GoogleTest)
-  gtest_discover_tests(unit_tests)
+  gtest_add_tests(TARGET unit_tests)
 endif()
 
 # =============================================================================

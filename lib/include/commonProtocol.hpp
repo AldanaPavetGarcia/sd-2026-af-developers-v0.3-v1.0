@@ -3,6 +3,7 @@
 
 #ifdef __cplusplus
 inline constexpr int MAX_CLIENTS = 10;
+#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstring>
@@ -15,6 +16,7 @@ inline constexpr int MAX_CLIENTS = 10;
 
 typedef std::mt19937 RngType;
 extern RngType rng;
+extern std::atomic<bool> isTerminationSignalReceived;
 
 // ---------------------------------------------------------------------------
 // Node-registry protocol commands
@@ -38,7 +40,8 @@ extern "C"
         CMD_ERROR_DUPLICATE,
         CMD_QUERY_NODE,
         CMD_ERROR_NOT_FOUND,
-        CMD_LIST_NODES
+        CMD_LIST_NODES,
+        CMD_HEARTBEAT
     };
 
     /**
@@ -51,7 +54,9 @@ extern "C"
     };
 
     // Global flags
+#ifndef __cplusplus
     extern bool isTerminationSignalReceived;
+#endif
 
     void modifyStringBuffer(char* str, int a, int b);
     bool pipeExists(const char* pipeName);

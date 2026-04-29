@@ -2,7 +2,7 @@
 
 // Definition of global variables declared in header.
 RngType rng;
-bool isTerminationSignalReceived = false;
+std::atomic<bool> isTerminationSignalReceived {false};
 
 /**
  * @brief SIGTERM signal reception handler.
@@ -36,6 +36,8 @@ std::string getCmdStringFromCode(SystemCommand code)
         case CMD_QUERY_NODE: cmdStr = "QUERY_NODE"; break;
         case CMD_ERROR_NOT_FOUND: cmdStr = "ERROR_NOT_FOUND"; break;
         case CMD_LIST_NODES: cmdStr = "LIST_NODES"; break;
+        case CMD_HEARTBEAT: return "HEARTBEAT";
+
         default: cmdStr = "UNKNOWN"; break;
     }
 
