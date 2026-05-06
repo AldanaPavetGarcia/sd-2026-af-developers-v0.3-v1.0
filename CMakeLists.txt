@@ -47,17 +47,21 @@ add_executable(eop_server
 target_include_directories(eop_server PRIVATE include lib/include)
 target_link_libraries(eop_server PRIVATE exodus_lib)
 
-add_executable(eop_client
-  src/app/eop_client.c
-  src/timed_watchdog_controller.c
-  lib/src/eventAuditLogger.cpp
-  lib/src/systemTimeValidator.cpp
-  lib/src/commonProtocol.cpp
-  lib/src/configLoader.cpp
-)
+# =============================================================================
+# EOP Client Library (Static and Shared)
+# =============================================================================
+add_library(eop_client_static STATIC src/app/eop_client.c)
+set_target_properties(eop_client_static PROPERTIES OUTPUT_NAME "eop_client")
+target_include_directories(eop_client_static PUBLIC include)
 
-target_include_directories(eop_client PRIVATE include lib/include)
-target_link_libraries(eop_client PRIVATE exodus_lib)
+add_library(eop_client_shared SHARED src/app/eop_client.c)
+set_target_properties(eop_client_shared PROPERTIES OUTPUT_NAME "eop_client")
+target_include_directories(eop_client_shared PUBLIC include)
+
+# Example program
+add_executable(connect_basic examples/connect_basic.c)
+target_link_libraries(connect_basic PRIVATE eop_client_static)
+
 
 # =============================================================================
 # Tests (GTest)
@@ -73,6 +77,8 @@ if(EXODUS_BUILD_TESTS)
     tests/unit/eventAuditLoggerTest.cpp
     tests/unit/configLoaderTest.cpp
     tests/unit/testLoad.cpp
+    tests/unit/testClient.cpp
+    src/app/eop_client.c
     src/app/eopServer.cpp
     lib/src/eventAuditLogger.cpp
     lib/src/systemTimeValidator.cpp
