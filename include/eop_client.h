@@ -42,12 +42,19 @@ extern "C"
      */
     eop_client_t* eop_connect(const char* host, uint16_t port, uint32_t timeout_ms);
 
-    /**
-     * @brief Disconnects and frees the client resources.
-     *
-     * @param client The client handler. Safe to call with NULL.
-     */
-    void eop_disconnect(eop_client_t* client);
+/**
+ * @brief Disconnects from the EOP server and frees the client resources.
+ *
+ * This function releases all resources owned by the opaque client handle.
+ * Passing NULL is a safe no-op.
+ *
+ * After this function returns, the client handle is no longer valid. Using the
+ * same handle again, including passing it to eop_send_command() or calling
+ * eop_disconnect() twice with the same pointer, is undefined behavior.
+ *
+ * @param client The client handler. Safe to call with NULL.
+ */
+void eop_disconnect(eop_client_t* client);
 
     /**
      * @brief Retrieves the last error message for the calling thread.
