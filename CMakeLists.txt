@@ -15,7 +15,12 @@ enable_testing()
 option(EXODUS_BUILD_TESTS "Build unit tests" ON)
 option(EXODUS_BUILD_BENCHMARKS "Build benchmarks" OFF)
 option(EXODUS_ENABLE_COVERAGE "Enable coverage flags (local only)" OFF)
+option(EXODUS_ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(EXODUS_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+
+if(EXODUS_ENABLE_ASAN AND EXODUS_ENABLE_TSAN)
+  message(FATAL_ERROR "EXODUS_ENABLE_ASAN and EXODUS_ENABLE_TSAN cannot be enabled at the same time")
+endif()
 
 # =============================================================================
 # Flags de compilación
@@ -62,7 +67,6 @@ target_include_directories(eop_client_shared PUBLIC include)
 add_executable(connect_basic examples/connect_basic.c)
 target_link_libraries(connect_basic PRIVATE eop_client_static)
 
-
 # =============================================================================
 # Tests (GTest)
 # =============================================================================
@@ -101,7 +105,15 @@ if(EXODUS_BUILD_TESTS)
     target_link_options(unit_tests PRIVATE --coverage)
   endif()
 
+  if(EXODUS_ENABLE_ASAN)
+    target_compile_definitions(unit_tests PRIVATE EXODUS_ENABLE_ASAN_BUILD)
+    target_compile_options(unit_tests PRIVATE -g -O1 -fsanitize=address -fno-omit-frame-pointer)
+    target_compile_options(exodus_lib PRIVATE -g -O1 -fsanitize=address -fno-omit-frame-pointer)
+    target_link_options(unit_tests PRIVATE -fsanitize=address)
+  endif()
+
   if(EXODUS_ENABLE_TSAN)
+    target_compile_definitions(unit_tests PRIVATE EXODUS_ENABLE_TSAN_BUILD)
     target_compile_options(unit_tests PRIVATE -g -O1 -fsanitize=thread)
     target_compile_options(exodus_lib PRIVATE -g -O1 -fsanitize=thread)
     target_link_options(unit_tests PRIVATE -fsanitize=thread)
