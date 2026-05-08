@@ -4,8 +4,10 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -21,6 +23,16 @@ namespace {
 constexpr int kSequentialDisconnectCycles = 1000;
 #else
 constexpr int kSequentialDisconnectCycles = 20;
+#endif
+
+#ifdef EXODUS_ENABLE_TSAN_BUILD
+constexpr int kConcurrentDisconnectThreads = 10;
+constexpr int kConcurrentDisconnectCyclesPerThread = 100;
+constexpr int kConcurrentClientTimeoutMs = 5000;
+#else
+constexpr int kConcurrentDisconnectThreads = 2;
+constexpr int kConcurrentDisconnectCyclesPerThread = 10;
+constexpr int kConcurrentClientTimeoutMs = 1000;
 #endif
 
 constexpr int kClientTimeoutMs = 1000;
@@ -180,4 +192,81 @@ TEST_F(ClientDisconnectSequentialTest, SequentialConnectSendDisconnectCycles) {
         eop_response_free(response);
         eop_disconnect(client);
     }
+}
+
+TEST_F(ClientDisconnectSequentialTest, ConcurrentConnectSendDisconnectCycles) {
+    std::atomic<int> failures{0};
+    std::mutex error_mutex;
+    std::string first_error;
+
+    auto record_failure = [&](const std::string& message) {
+        failures.fetch_add(1, std::memory_order_relaxed);
+
+        std::lock_guard<std::mutex> lock(error_mutex);
+        if (first_error.empty()) {
+            first_error = message;
+        }
+    };
+
+    auto worker = [&](int thread_index) {
+        for (int cycle = 0; cycle < kConcurrentDisconnectCyclesPerThread; ++cycle) {
+            const std::string payload =
+                "node_id=us107-concurrent-" + std::to_string(thread_index) + "-" +
+                std::to_string(cycle);
+
+            eop_client_t* client =
+                eop_connect("127.0.0.1", server_.port(), kConcurrentClientTimeoutMs);
+
+            if (client == nullptr) {
+                record_failure(
+                    "eop_connect returned NULL at thread=" + std::to_string(thread_index) +
+                    " cycle=" + std::to_string(cycle)
+                );
+                return;
+            }
+
+            eop_response_t* response = eop_send_command(
+                client,
+                0,
+                reinterpret_cast<const uint8_t*>(payload.data()),
+                payload.size(),
+                kConcurrentClientTimeoutMs
+            );
+
+            if (response == nullptr) {
+                eop_disconnect(client);
+                record_failure(
+                    "eop_send_command returned NULL at thread=" + std::to_string(thread_index) +
+                    " cycle=" + std::to_string(cycle)
+                );
+                return;
+            }
+
+            if (response->status_code != EOP_OK) {
+                eop_response_free(response);
+                eop_disconnect(client);
+                record_failure(
+                    "unexpected response status at thread=" + std::to_string(thread_index) +
+                    " cycle=" + std::to_string(cycle)
+                );
+                return;
+            }
+
+            eop_response_free(response);
+            eop_disconnect(client);
+        }
+    };
+
+    std::vector<std::thread> workers;
+    workers.reserve(kConcurrentDisconnectThreads);
+
+    for (int thread_index = 0; thread_index < kConcurrentDisconnectThreads; ++thread_index) {
+        workers.emplace_back(worker, thread_index);
+    }
+
+    for (auto& worker_thread : workers) {
+        worker_thread.join();
+    }
+
+    EXPECT_EQ(failures.load(std::memory_order_relaxed), 0) << first_error;
 }
