@@ -137,14 +137,18 @@ eop_client_t* eop_connect(const char* host, uint16_t port, uint32_t timeout_ms)
 
 void eop_disconnect(eop_client_t* client)
 {
-    if (!client)
+    if (!client) {
         return;
+    }
+
     pthread_mutex_lock(&client->lock);
-    if (client->fd >= 0)
-    {
+
+    if (client->fd >= 0) {
+        (void)shutdown(client->fd, SHUT_RDWR);
         close(client->fd);
         client->fd = -1;
     }
+
     pthread_mutex_unlock(&client->lock);
     pthread_mutex_destroy(&client->lock);
     free(client);
