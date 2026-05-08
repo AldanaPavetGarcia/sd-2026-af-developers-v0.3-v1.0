@@ -82,6 +82,7 @@ if(EXODUS_BUILD_TESTS)
     tests/unit/configLoaderTest.cpp
     tests/unit/testLoad.cpp
     tests/unit/testClient.cpp
+    tests/unit/testClientDisconnect.cpp
     src/app/eop_client.c
     src/app/eopServer.cpp
     lib/src/eventAuditLogger.cpp
