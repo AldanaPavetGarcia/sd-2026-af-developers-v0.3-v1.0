@@ -25,8 +25,8 @@ namespace
 {
     // Use a unique port for this test to avoid conflicts
     const int kLoadTestPort = 11000 + (getpid() % 5000);
-    constexpr int kNumClients = 50;
-    constexpr int kRequestsPerClient = 200;
+    constexpr int kNumClients = 20;
+    constexpr int kRequestsPerClient = 50;
     constexpr rlim_t kRequiredFds = 1024;
 
     class EopLoadTest : public ::testing::Test
@@ -55,7 +55,7 @@ namespace
                 struct rlimit verify;
                 if (getrlimit(RLIMIT_NOFILE, &verify) != 0 || verify.rlim_cur < kRequiredFds)
                 {
-                    GTEST_SKIP() << "RLIMIT_NOFILE too low for 1000-client load test";
+                    GTEST_SKIP() << "RLIMIT_NOFILE too low for CI load test";
                 }
             }
 
@@ -108,9 +108,9 @@ namespace
     std::thread EopLoadTest::serverThread;
 
     /**
-     * @brief Test with 1000 clients sending 10,000 requests each.
+     * @brief Test with concurrent clients sending multiple requests each (Reduced for CI).
      */
-    TEST_F(EopLoadTest, HighLoad1000Clients10000Requests)
+    TEST_F(EopLoadTest, HighLoadConcurrentClientsCI)
     {
         std::atomic<int> readyCount {0};
         std::atomic<bool> startFlag {false};

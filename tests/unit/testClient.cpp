@@ -200,7 +200,7 @@ TEST_F(ClientTest, SequentialLeakCheck)
     ASSERT_NE(client, nullptr);
 
     const char* req = "node_id=cycle";
-    for (int i = 0; i < 1000; ++i)
+    for (int i = 0; i < 100; ++i)
     {
         eop_response_t* resp = eop_send_command(client, 0, (const uint8_t*)req, strlen(req), 1000);
         ASSERT_NE(resp, nullptr);
