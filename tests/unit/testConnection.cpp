@@ -458,24 +458,17 @@ TEST_F(EopServerTest, AbruptDisconnectMarksNodeOffline)
 TEST_F(EopServerTest, SdkCleanDisconnectMarksNodeOffline)
 {
     const std::string nodeId = "us107-sdk-clean-disconnect";
-    const std::string payload =
-        "node_id=" + nodeId + " bunker_name=SdkClean ip_address=127.0.0.1 capacity=10";
+    const std::string payload = "node_id=" + nodeId + " bunker_name=SdkClean ip_address=127.0.0.1 capacity=10";
 
     eop_client_t* client = eop_connect("127.0.0.1", static_cast<uint16_t>(kTestPort), 1000);
     ASSERT_NE(client, nullptr) << eop_last_error();
 
-    eop_response_t* response = eop_send_command(
-        client,
-        0,
-        reinterpret_cast<const uint8_t*>(payload.data()),
-        payload.size(),
-        1000);
+    eop_response_t* response =
+        eop_send_command(client, 0, reinterpret_cast<const uint8_t*>(payload.data()), payload.size(), 1000);
 
     ASSERT_NE(response, nullptr) << eop_last_error();
 
-    const std::string responsePayload(
-        reinterpret_cast<const char*>(response->payload),
-        response->payload_len);
+    const std::string responsePayload(reinterpret_cast<const char*>(response->payload), response->payload_len);
 
     EXPECT_EQ(response->status_code, EOP_OK);
     EXPECT_NE(responsePayload.find("ACK"), std::string::npos) << responsePayload;
@@ -485,8 +478,7 @@ TEST_F(EopServerTest, SdkCleanDisconnectMarksNodeOffline)
 
     eop_disconnect(client);
 
-    EXPECT_TRUE(waitForNodeStatus(nodeId, "OFFLINE"))
-        << "Expected node to become OFFLINE after SDK clean disconnect";
+    EXPECT_TRUE(waitForNodeStatus(nodeId, "OFFLINE")) << "Expected node to become OFFLINE after SDK clean disconnect";
 }
 
 // ---------------------------------------------------------------------------
