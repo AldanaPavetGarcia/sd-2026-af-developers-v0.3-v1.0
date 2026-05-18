@@ -1,0 +1,20 @@
+services:
+  eop-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: eop-server:local
+    container_name: eop-server
+    environment:
+      EOP_PORT: "9026"
+      EOP_IDLE_TIMEOUT: "30"
+      EOP_MAX_CLIENTS: "100"
+      EOP_HEARTBEAT_INTERVAL: "5"
+    ports:
+      - "9026:9026"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "9026"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s

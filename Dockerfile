@@ -21,7 +21,7 @@ COPY examples ./examples
 
 RUN cmake -S . -B build \
     -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_BUILD_TYPE=Release \ 
     -DEXODUS_BUILD_TESTS=OFF \
     -DEXODUS_BUILD_BENCHMARKS=OFF
 
@@ -30,7 +30,7 @@ RUN cmake --build build --target eop_server --parallel \
 
 FROM alpine:3.20 AS runtime
 
-RUN apk add --no-cache libstdc++ \
+RUN apk add --no-cache libstdc++ busybox-extras \
     && addgroup -S exodus \
     && adduser -S exodus -G exodus
 
