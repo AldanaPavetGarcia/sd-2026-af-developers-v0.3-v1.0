@@ -24,6 +24,7 @@ ServerContext serverContext;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+static constexpr int GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS = 15;
 
 /**
  * @brief Loads concurrency and liveness-related configuration from environment variables.
@@ -392,6 +393,50 @@ static void unregisterSession(ServerContext& ctx, int clientSock, const std::str
 
     shutdown(clientSock, SHUT_RDWR);
     close(clientSock);
+}
+
+/**
+ * @brief Waits for active sessions to finish before forcing shutdown.
+ *
+ * @param ctx Shared server context.
+ * @param timeoutSeconds Maximum time to wait before forcing closure.
+ */
+static void waitForActiveSessionsToFinish(ServerContext& ctx, int timeoutSeconds)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeoutSeconds);
+
+    while (ctx.activeConnections.load() > 0 && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+}
+
+/**
+ * @brief Closes sessions that remain active after the graceful shutdown window.
+ *
+ * @param ctx Shared server context.
+ */
+static void closeRemainingSessions(ServerContext& ctx)
+{
+    std::vector<int> remainingFds;
+
+    {
+        std::lock_guard<std::mutex> lock(ctx.sessionsMutex);
+        remainingFds.reserve(ctx.activeSessions.size());
+
+        for (const auto& [fd, session] : ctx.activeSessions)
+        {
+            if (session.active)
+            {
+                remainingFds.push_back(fd);
+            }
+        }
+    }
+
+    for (int fd : remainingFds)
+    {
+        unregisterSession(ctx, fd, "server graceful shutdown");
+    }
 }
 
 /**
@@ -1021,8 +1066,20 @@ void startServer(int port, int idleTimeout)
         }
     }
 
+        auditLogger.writeString("Graceful shutdown requested", INFO_LOG);
+
+    close(serverSock);
+
     serverContext.running = false;
     serverContext.queueCv.notify_all();
+
+    waitForActiveSessionsToFinish(serverContext, GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS);
+
+    if (serverContext.activeConnections.load() > 0)
+    {
+        auditLogger.writeString("Graceful shutdown timeout reached; closing remaining sessions", WARNING_LOG);
+        closeRemainingSessions(serverContext);
+    }
 
     if (timeoutMonitor.joinable())
     {
@@ -1037,7 +1094,6 @@ void startServer(int port, int idleTimeout)
         }
     }
 
-    close(serverSock);
     std::cout << "Server stopped." << std::endl;
 }
 
@@ -1048,6 +1104,7 @@ void startServer(int port, int idleTimeout)
 #ifndef TEST_MODE
 int main()
 {
+    setSigaction();
     ConfigLoader config("config.env");
 
     const char* portEnv = std::getenv("EOP_PORT");

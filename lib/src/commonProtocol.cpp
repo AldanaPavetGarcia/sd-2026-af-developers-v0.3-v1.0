@@ -1,4 +1,5 @@
 #include "../include/commonProtocol.hpp"
+#include <signal.h>
 
 // Definition of global variables declared in header.
 RngType rng;
@@ -15,6 +16,25 @@ void sigtermHandler(int signum, siginfo_t* info, void* ptr)
     (void)info;
     (void)ptr;
     isTerminationSignalReceived = true;
+}
+// LCOV_EXCL_STOP
+
+/**
+ * @brief Registers process signal handlers for graceful shutdown.
+ *
+ * SIGTERM is sent by Docker and Kubernetes when stopping the container.
+ * SIGINT is registered as well to support local Ctrl+C execution.
+ */
+// LCOV_EXCL_START
+void setSigaction(void)
+{
+    struct sigaction action = {};
+    action.sa_sigaction = sigtermHandler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO;
+
+    sigaction(SIGTERM, &action, nullptr);
+    sigaction(SIGINT, &action, nullptr);
 }
 // LCOV_EXCL_STOP
 
