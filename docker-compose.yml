@@ -35,3 +35,23 @@ services:
       timeout: 3s
       retries: 12
       start_period: 5s
+
+  signoz:
+    image: signoz/signoz-standalone:latest
+    container_name: eop-signoz
+    privileged: true
+    ports:
+      - "8081:8080"
+    volumes:
+      - eop-signoz-clickhouse-data:/var/lib/clickhouse
+      - eop-signoz-data:/var/lib/signoz
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "curl -fsS http://127.0.0.1:8080 >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+volumes:
+  eop-signoz-clickhouse-data:
+  eop-signoz-data:
