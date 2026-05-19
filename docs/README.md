@@ -1,44 +1,121 @@
-# System Architecture
+# System Architecture & Operations Manual (EOP System v0.1)
 
-This document describes the architecture of the system implemented by the team.
+This document describes the comprehensive system architecture, modular design, and operational procedures implemented by the engineering team for the **EOP Protocol Ecosystem**.
 
-Recommended sections:
+---
 
-- System overview
-- Components
-- Data flow
-- Deployment architecture
+## 1. System Overview & Service Scope
 
-## Integration and Test Execution Manual (EOP Server)
+The system is designed as a high-performance, low-latency communication ecosystem connecting distributed bunker nodes to a centralized infrastructure. Below is the scope defined by Epics.
 
-This section details the standardized procedures for initializing the local environment, establishing client-server communication, and validating the Node Registry Protocol.
+### Epic E1: C++ TCP Server (Core Infrastructure)
 
-### 1. Environment Construction (Build Process)
+* **Connection and Greeting:** The server opens a passive socket on port `EOP_PORT` (9026). Upon detecting a connection (`accept`), it initiates a welcome protocol by sending a structured message with the server version, a Unix timestamp, and a unique `session_id`. It manages a 30s inactivity timeout.
+* *What it does NOT do:* It does not implement authentication (user/pass). It does not encrypt data (plain text). It does not handle multiple protocol versions simultaneously.
 
-Before proceeding with execution, compile the binaries using CMake. Make sure you are in the project root directory and run:
+
+* **Concurrent Multi-client Support:** Implements a concurrency model designed to ensure that up to 100 bunkers operate without cross-latency. If a bunker dies (`SIGKILL`), the server safely releases the file descriptor without affecting the others.
+* *What it does NOT do:* It does not scale beyond a single CPU instance (no load balancing between servers). It does not guarantee extreme fairness if a client intentionally saturates bandwidth.
+
+
+* **Centralized Node Registry:** Processes the `REGISTER` message. Stores `node_id`, `bunker_name`, `ip_address`, and `capacity` in an in-memory data structure (`std::unordered_map`). Allows individual queries (`QUERY_NODE`) and full listing (`LIST_NODES`).
+* *What it does NOT do:* It does not persist data (volatile memory). It does not allow partial metadata updates (requires re-registration).
+
+
+* **Failure Detection and Offline Status:** If no traffic or heartbeat is received from the client within the `EOP_HEARTBEAT_INTERVAL`, the server marks the node as `OFFLINE` in the registry.
+* *What it does NOT do:* It does not attempt to "reconnect" to the client from the server. It does not remove the node from the registry, it only changes its status label.
+
+
+
+### Epic E2: C Client Library (Integration SDK)
+
+* **Connection Abstraction:** Provides the function `eop_connect(host, port)`. It encapsulates socket creation, DNS resolution, and initial greeting handling, returning an opaque pointer `eop_client_t*`.
+* **Command-Response Cycle:** Exposes `eop_send_command`. It is a synchronous, blocking function that sends command bytes, waits for the server response, and returns an `eop_response_t` structure. Handles internal timeouts to prevent hanging.
+* *What it does NOT do:* It does not support asynchronous commands (callbacks). It does not fragment large messages.
+
+
+* **Resource Cleanup:** The `eop_disconnect` function ensures the socket is closed using an exit handshake (`SHUT_RDWR`), notifying the server, and freeing all dynamic heap memory.
+
+### Epic E3: Containerization and Kubernetes (Orchestration)
+
+* **Reproducible Deployment:** Multi-stage Docker builds (compiles in a heavy image, runs in an Alpine/Distroless image). The server handles `SIGTERM` signals for a 15-second "Graceful Shutdown."
+* *What it does NOT do:* It does not include debugging tools (`gdb`, `vim`) in the production image to keep the size under 50MB.
+
+
+* **Pod Self-healing:** Defines Liveness and Readiness probes. If the server process hangs (deadlock), K8s automatically restarts the pod. The service is marked as "Not Ready" during startup until port 9026 is fully open.
+
+### Epic E4: Basic Observability
+
+* **Tracing with SigNoz:** Instruments the C++ code with the OpenTelemetry SDK. Each incoming command creates a "Span" sent to the collector to measure operation latency. Correlates JSON logs with trace IDs.
+* *What it does NOT do:* It does not measure detailed bunker hardware metrics (CPU/RAM) or provide business alerts.
+
+
+
+---
+
+## 2. Class Structure and Modularity
+
+The codebase is split into modular components to enforce a clean separation of concerns:
+
+```
+[ Client Nodes (C SDK) ] <--- network ---> [ Server Core (C++) ]
+                                                   │
+         ┌───────────────────┬─────────────────────┼─────────────────────┐
+         ▼                   ▼                     ▼                     ▼
+┌─────────────────┐ ┌─────────────────┐ ┌────────────────────┐ ┌───────────────────┐
+│   WDog Module   │ │   Common (.so)  │ │ Communications(.so)│ │  Logger Module    │
+│  Timer/Keepalive│ │  Enums/Contracts│ │ Dispatcher/Business│ │ Multi-Sink JSON   │
+└─────────────────┘ └─────────────────┘ └────────────────────┘ └───────────────────┘
+
+```
+
+1. **Clients and Server (Core Entities):**
+* **Server (C++):** Main class responsible for the lifecycle of the master socket (`bind`, `listen`, `accept`). Manages the Thread Pool and message orchestration.
+* **Client (C):** High-level abstraction for bunker nodes. Encapsulates the file descriptor and session state.
+
+
+2. **WDog (Watchdog & Timer Manager):** Monitors Keepalive and Heartbeat intervals. Maintains a record of "last activity" per `node_id`. If the current time exceeds timeouts, it triggers a forced disconnection event.
+3. **Common (Shared Library - `.so`):** Acts as the **Single Source of Truth (SSOT)**. Contains definitions for `NODE_STATE` (`ONLINE`, `OFFLINE`, `REGISTERING`) and structured message types (Headers, command codes).
+4. **Communications (Command Handler Library - `.so`):** Implements the **Dispatcher**. Receives a raw command, identifies its type, and calls the corresponding service function (e.g., `handle_register`, `handle_query`), decoupling transport from the application layer.
+5. **Logger (Structured Multi-Sink Logging):** Implements differentiated destinations:
+* `connections.json`: Tracks IPs, session IDs, and connection timestamps.
+* `errors.json`: Detailed trace of internal failures and exceptions.
+* `audit.json`: Log of execution commands paired with OTel `trace_id` correlation.
+
+
+
+---
+
+## 3. Environment Setup & Node Initialization
+
+This section details the standardized procedures for initializing the local environment and establishing client-server communication.
+
+### Step 1: Environment Construction (Build Process)
+
+Compile the binaries using CMake from the project root directory:
 
 ```bash
 mkdir -p build && cd build
 cmake ..
 make -j$(nproc)
 cd ..
+
 ```
 
----
+### Step 2: Node Initialization
 
-### 2. Node Initialization and Connectivity
-
-To validate the bidirectional ecosystem, concurrent instantiation of two isolated processes (Server and Client) is required. Instantiate each in a separate terminal or session.
+To validate the bidirectional ecosystem, instantiate each process in a separate terminal or session.
 
 #### Server Node (Terminal 1)
 
-Deploys the main listener. The default operating port (9026) and idle timeout are specified in the `config.env` configuration file.
+Deploys the main listener. Operating ports and idle timeouts are loaded from the `config.env` configuration file.
 
 ```bash
 ./build/eop_server
+
 ```
 
-**Expected State:** The console should report that the service is active:
+* **Expected Output State:**
 `Server started on port 9026. Inactivity timeout: 60s.`
 
 #### Client Node (Terminal 2)
@@ -47,185 +124,124 @@ Set the network socket pointing to the local server host and port:
 
 ```bash
 ./build/eop_client 127.0.0.1 9026
+
 ```
 
-**Expected State:** After a successful connection, the interactive interpreter will enable keyboard input, notifying:
+* **Expected Output State:**
 `Connection established with 127.0.0.1:9026.`
 
 ---
 
-### 3. Available Command Protocol (CLI Options)
+## 4. Available Command Protocol (CLI Options)
 
-Once the network layer is established on the client interface (Terminal 2), the user has a set of instructions for interacting with the server's persistence.
+Once the network layer is established on the client interface (**Terminal 2**), use the following interactive protocol instructions to communicate with the server registry.
 
-#### A. Initial Registration and Welcome (REGISTER)
+### A. Initial Registration (REGISTER)
 
 The initial session binding is completed atomically in the first registration transaction.
 
-- **Command:**
-
+* **Command Format:**
 ```text
 REGISTER node_id=alpha-01 bunker_name=Refugio-A ip_address=10.0.0.5 capacity=80
+
 ```
 
-- **Server Response:** Confirms registration and attaches the welcome handshake with the assigned identifier and timestamp:
-  `ACK Server v1.0 | TIME <timestamp> | SESSION_ID alpha-01`
-- **Audit (Terminal 1):** Internally records the adoption of an IP address and counts the increase in the concurrent session pool (`Total connections: 1`).
 
-#### B. Duplicate Prevention (ERROR_DUPLICATE)
+* **Server Response:** `ACK Server v1.0 | TIME <timestamp> | SESSION_ID alpha-01`
+* **Server Audit (Terminal 1):** Internally records the session: `Total connections: 1`.
 
-The system safeguards integrity by ensuring the strict uniqueness of the `node_id` field.
+### B. Duplicate Prevention (ERROR_DUPLICATE)
 
-- **Command to inject:**
+The system safeguards registry integrity by ensuring the strict uniqueness of the `node_id` field.
+
+* **Command to Inject:**
 
 ```text
-REGISTER node_id=alpha-01 bunker_name=Zone-B ip_address=10.0.0.6 capacity=10
-```
-
-- **Server Response:** Blocks the overwrite and issues:
-  `ERROR_DUPLICATE node_id=alpha-01 desc=Node already registered`
-
-#### C. Specific Query (QUERY_NODE)
-
-Allows you to extract the persisted attributes of an active node under its specific ID.
-
-- **Command to inject:**
-
+    REGISTER node_id=alpha-01 bunker_name=Zone-B ip_address=10.0.0.6 capacity=10
+    ```
+*   **Server Response:**
+    
 ```text
-QUERY_NODE node_id=alpha-01
-```
+    ERROR_DUPLICATE node_id=alpha-01 desc=Node already registered
+    ```
 
-- **Server Response:**
-  `node_id=alpha-01 bunker_name=Refugio-A ip_address=10.0.0.5 capacity=80`
+### C. Specific Query (QUERY_NODE)
+Extracts the persisted attributes of an active node under its specific ID.
+*   **Command to Inject:**
+    
+```text
+    QUERY_NODE node_id=alpha-01
+    ```
+*   **Server Response:**
+    
+```text
+    node_id=alpha-01 bunker_name=Refugio-A ip_address=10.0.0.5 capacity=80
+    ```
 
-#### D. Global Query (LIST_NODES)
-
+### D. Global Query (LIST_NODES)
 Iterates over the data structure to return all active linked elements.
-
-- **Command to inject:**
-
+*   **Command to Inject:**
+    
 ```text
-LIST_NODES
-```
+    LIST_NODES
+    ```
+*   **Server Response:** Emits a total count (`LIST_NODES count=X`), details all retrieved entries, and closes the transfer block using `END_LIST`.
 
-- **Server Response:** Emits a total count (`LIST_NODES count=X`), details all retrieved entries, and closes the transfer block using `END_LIST`.
-
-#### E. Explicit Termination (EXIT/QUIT)
-
+### E. Explicit Termination (EXIT/QUIT)
 Connection closure managed directly by the client.
-
-- **Command to inject:**
-
+*   **Command to Inject:**
+    
 ```text
-exit
-```
-
-- **Server Response:** The server asynchronously closes the descriptor and logs the controlled decrease in the client quota (`Total connections: 0`).
-
----
-
-### 4. Lifecycle: Idleness and Auditing (Timeouts & Logs)
-
-- **Timeout (Idle Timeout):** The thread assigned to each socket is passively monitored. If the client does not transmit frames within 60 seconds (parameter `EOP_IDLE_TIMEOUT`), the connection expires and is released. The server terminal will validate the event by issuing an idle timeout.
-
-- **Logging or Auditing System:** All critical events, edge resolutions, and syntax anomalies are formally and permanently indexed. Refer to the analytical file `system.log` mounted in the root directory during the test routine.
+    exit
+    ```
+*   **Server Response:** The server asynchronously closes the descriptor and logs the controlled decrease: `Total connections: 0`.
 
 ---
 
-### 5. Performance Benchmarking (Latency Testing)
+## 5. Lifecycle, Performance & Validation Benchmarks
 
-To audit the efficiency of the transport layer and ensure compliance with latency requirements under load, an automated benchmarking engine is available.
+### Inactivity Monitoring
+*   **Timeout (Idle Timeout):** If the client does not transmit frames within 60 seconds (parameter `EOP_IDLE_TIMEOUT`), the connection expires and is released. The server terminal will validate the event by issuing an idle timeout log.
+*   **Auditing:** Refer to the analytical file `system.log` mounted in the root directory during the test routine to trace edge resolutions.
 
-#### Running the Latency Benchmark
+### Performance Benchmarking (Latency Testing)
+To audit the efficiency of the transport layer under load, run the Python telemetry script. Ensure the server is operating in a clean state (Terminal 1).
 
-This procedure requires the server to be operating in a clean state (without any blocking connections).
-
-1. **Environment Preparation (Terminal 1):**
-   Ensure the binary is up to date and deploy the server:
-
-```bash
-./build/eop_server
-```
-
-2. **Running the Measurement Probe (Terminal 2):**
-   From the project root, run the Python-based telemetry script. This script simulates transaction bursts to calculate round-trip time (RTT):
-
+From the project root (**Terminal 2**), run:
 ```bash
 python3 tests/load/latency_check.py
+
 ```
 
-**Reported Metrics:**
+The script will report metrics regarding **Min/Max Latency**, **Average RTT**, and **Packet Loss**.
 
-- **Min/Max Latency:** Limits detected in the server response.
-- **Average RTT:** Average response time.
-- **Packet Loss:** Integrity of received messages compared to sent messages.
+### File Descriptor Leak Validation
 
----
+Validates descriptor stability through repeated `connect -> register -> disconnect` cycles to avoid resource exhaustion under high connection churn.
 
-### 6. File Descriptor Leak Validation
-
-To validate descriptor stability under repeated client activity, a dedicated helper script is available. This validation is intended to support compliance with the file descriptor leak criterion under high connection churn.
-
-#### Purpose
-
-This script starts the server, measures the number of open file descriptors through `/proc/<pid>/fd`, executes a large number of client connection cycles, and compares the final descriptor count against the baseline.
-
-Its purpose is to help detect potential file descriptor leaks during repeated:
-
-- connect → disconnect cycles
-- register → disconnect cycles
-
-#### Running the FD Leak Validation
-
-1. **Environment Preparation**
-   Ensure the project is already built:
+Run the validation script using the following parameters from the project root:
 
 ```bash
-mkdir -p build && cd build
-cmake ..
-make -j$(nproc)
-cd ..
-```
-
-2. **Run the Validation Script**
-   From the project root, execute:
-
-```bash
+# Test 10,000 cycles for connection and registration
 python3 tests/load/<fd_leak_script>.py 10000 register
+
+# Test 10,000 cycles for pure connection/disconnection
 python3 tests/load/<fd_leak_script>.py 10000 connect
-```
 
-**Parameters**
-
-- **First argument:** number of cycles to execute
-- **Second argument:**
-  - `register` → connect, register a node, then disconnect
-  - `connect` → connect and disconnect without registering
-
-**Stronger Validation Run**
-
-For a more aggressive stress validation:
-
-```bash
+# Aggressive stress validation run (1 Million cycles)
 python3 tests/load/<fd_leak_script>.py 1000000 register
+
 ```
 
-**Expected Result**
-
-The script reports:
-
-- initial FD count
-- final FD count
-- FD delta
-
-A successful run should end with:
-
+* **Expected Successful Result:**
 ```text
 PASS: No significant file descriptor leak detected
+
 ```
 
-If descriptor growth is above the tolerated threshold, the script will report:
 
+* **Failure Result:**
 ```text
 FAIL: Possible file descriptor leak detected
+
 ```
