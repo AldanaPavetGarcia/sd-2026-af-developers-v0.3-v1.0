@@ -1066,7 +1066,7 @@ void startServer(int port, int idleTimeout)
         }
     }
 
-        auditLogger.writeString("Graceful shutdown requested", INFO_LOG);
+    auditLogger.writeString("Graceful shutdown requested", INFO_LOG);
 
     close(serverSock);
 
