@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eop-server
+  labels:
+    app: eop-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: eop-server
+  template:
+    metadata:
+      labels:
+        app: eop-server
+    spec:
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: eop-server
+          image: eop-server:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: eop-server-config
+          ports:
+            - name: tcp-eop
+              containerPort: 9026
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: tcp-eop
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: tcp-eop
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "128Mi"

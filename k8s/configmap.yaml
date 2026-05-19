@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eop-server-config
+  labels:
+    app: eop-server
+data:
+  EOP_PORT: "9026"
+  EOP_IDLE_TIMEOUT: "30"
+  EOP_MAX_CLIENTS: "100"
+  EOP_HEARTBEAT_INTERVAL: "5"
