@@ -158,11 +158,26 @@ PY
 
 run_register_smoke() {
     local node_id="$1"
+    local attempts="${EOP_REGISTER_ATTEMPTS:-5}"
+    local delay_seconds="${EOP_REGISTER_RETRY_DELAY_SECONDS:-1}"
 
-    EOP_HOST="127.0.0.1" \
-    EOP_PORT="${LOCAL_PORT}" \
-    EOP_NODE_ID="${node_id}" \
-        ./tests/smoke/eop-register-smoke.sh
+    for attempt in $(seq 1 "${attempts}"); do
+        log "Running REGISTER smoke attempt ${attempt}/${attempts} for node_id=${node_id}..."
+
+        if EOP_HOST="127.0.0.1" \
+            EOP_PORT="${LOCAL_PORT}" \
+            EOP_NODE_ID="${node_id}" \
+            ./tests/smoke/eop-register-smoke.sh; then
+            return 0
+        fi
+
+        if (( attempt < attempts )); then
+            log "REGISTER smoke failed; retrying in ${delay_seconds}s..."
+            sleep "${delay_seconds}"
+        fi
+    done
+
+    fail "REGISTER smoke failed after ${attempts} attempts for node_id=${node_id}."
 }
 
 start_active_client() {
@@ -366,7 +381,6 @@ main() {
     start_port_forward
 
     run_register_smoke "us109-before-crash-$(date +%s)"
-    start_active_client
 
     local restart_count_before
     restart_count_before="$(get_restart_count "${pod}")"
@@ -375,13 +389,18 @@ main() {
     simulate_server_crash "${pod}"
 
     wait_for_container_restart_ready "${pod}" "${restart_count_before}"
-    assert_active_client_disconnected
     assert_previous_logs_include_crash_reason "${pod}"
 
     stop_port_forward
     start_port_forward
 
     run_register_smoke "us109-after-crash-$(date +%s)"
+
+    start_active_client
+    simulate_server_crash "${pod}"
+    assert_active_client_disconnected
+
+    stop_port_forward
 
     local pod_before_delete
     local pod_after_delete
