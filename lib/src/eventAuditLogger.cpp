@@ -1,6 +1,50 @@
 #include "../include/eventAuditLogger.hpp"
+#include <chrono>
+#include <iomanip>
 #include <mutex>
+#include <sstream>
 #include <sys/stat.h>
+
+#include <opentelemetry/nostd/span.h>
+#include <opentelemetry/trace/provider.h>
+#include <opentelemetry/trace/span.h>
+
+static std::string getIsoTimestamp()
+{
+    auto now = std::chrono::system_clock::now();
+    auto time = std::chrono::system_clock::to_time_t(now);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+
+    std::stringstream ss;
+    ss << std::put_time(std::gmtime(&time), "%Y-%m-%dT%H:%M:%S") << '.' << std::setfill('0') << std::setw(3)
+       << ms.count() << 'Z';
+    return ss.str();
+}
+
+static std::string escapeJson(const std::string& s)
+{
+    std::string out;
+    for (char c : s)
+    {
+        if (c == '"')
+            out += "\\\"";
+        else if (c == '\\')
+            out += "\\\\";
+        else if (c == '\n')
+            out += "\\n";
+        else if (c == '\r')
+            out += "\\r";
+        else if (c == '\t')
+            out += "\\t";
+        else if (c >= 0 && c < 32)
+        {
+            // ignore other control characters
+        }
+        else
+            out += c;
+    }
+    return out;
+}
 
 EventAuditLogger::EventAuditLogger()
 {
@@ -31,7 +75,47 @@ int EventAuditLogger::writeLog(const char* logMessage, LogType type)
         default: std::snprintf(currentEntry.tag, TAG_BUFFER_SIZE, "%s", DEFAULT_TAG); break;
     }
 
-    std::cout << currentEntry.tag << " " << logMessage << std::endl;
+    std::string levelStr;
+    switch (type)
+    {
+        case INFO_LOG: levelStr = "INFO"; break;
+        case CONTROL_LOG: levelStr = "CONTROL"; break;
+        case ERROR_LOG: levelStr = "ERROR"; break;
+        case WARNING_LOG: levelStr = "WARNING"; break;
+        case CRITICAL_LOG: levelStr = "CRITICAL"; break;
+        case EVENT_LOG: levelStr = "EVENT"; break;
+        case DEBUG_LOG: levelStr = "DEBUG"; break;
+        case CONNECTION_LOG: levelStr = "CONNECTION"; break;
+        default: levelStr = "LOG"; break;
+    }
+
+    std::string traceIdStr;
+    std::string spanIdStr;
+    auto activeSpan = opentelemetry::trace::Tracer::GetCurrentSpan();
+    if (activeSpan)
+    {
+        auto ctx = activeSpan->GetContext();
+        if (ctx.IsValid())
+        {
+            char traceIdHex[33] = {0};
+            ctx.trace_id().ToLowerBase16(opentelemetry::nostd::span<char, 32>(traceIdHex, 32));
+            char spanIdHex[17] = {0};
+            ctx.span_id().ToLowerBase16(opentelemetry::nostd::span<char, 16>(spanIdHex, 16));
+            traceIdStr = std::string(traceIdHex, 32);
+            spanIdStr = std::string(spanIdHex, 16);
+        }
+    }
+
+    std::string nodeIdStr = g_logContext.nodeId;
+    std::string eventStr = g_logContext.event;
+    if (eventStr.empty())
+    {
+        eventStr = levelStr + "_EVENT";
+    }
+
+    std::cout << "{\"timestamp\":\"" << getIsoTimestamp() << "\",\"level\":\"" << levelStr << "\",\"trace_id\":\""
+              << traceIdStr << "\",\"span_id\":\"" << spanIdStr << "\",\"node_id\":\"" << nodeIdStr << "\",\"event\":\""
+              << eventStr << "\",\"message\":\"" << escapeJson(logMessage) << "\"}" << std::endl;
 
     Date dateObj = {};
     Time timeObj = {};

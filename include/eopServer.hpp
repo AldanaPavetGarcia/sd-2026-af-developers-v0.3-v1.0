@@ -24,6 +24,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <opentelemetry/trace/span.h>
+
 #include "../lib/include/commonProtocol.hpp"
 #include "../lib/include/eventAuditLogger.hpp"
 #include "../lib/include/systemTimeValidator.hpp"
@@ -197,6 +199,9 @@ struct SessionContext
     std::chrono::steady_clock::time_point lastActivity; ///< Last activity time for heartbeat/timeout checks.
     bool registered;                                    ///< True if the client has completed REGISTER successfully.
     bool active;                                        ///< True while the session is considered alive.
+
+    opentelemetry::nostd::shared_ptr<opentelemetry::trace::Span>
+        connectionSpan; ///< Span tracking the lifetime of the session.
 
     SessionContext()
         : clientFd(-1)

@@ -19,7 +19,64 @@
 #include <string>
 #include <thread>
 
+#include <opentelemetry/exporters/otlp/otlp_http_exporter_factory.h>
+#include <opentelemetry/exporters/otlp/otlp_http_exporter_options.h>
+#include <opentelemetry/sdk/resource/resource.h>
+#include <opentelemetry/sdk/trace/batch_span_processor_factory.h>
+#include <opentelemetry/sdk/trace/batch_span_processor_options.h>
+#include <opentelemetry/sdk/trace/tracer_provider.h>
+#include <opentelemetry/sdk/trace/tracer_provider_factory.h>
+#include <opentelemetry/trace/provider.h>
+#include <opentelemetry/trace/scope.h>
+
 ServerContext serverContext;
+
+// ---------------------------------------------------------------------------
+// OpenTelemetry setup
+// ---------------------------------------------------------------------------
+static void InitTracer()
+{
+#ifndef TEST_MODE
+    if (const char* env = std::getenv("EOP_TRACING_ENABLED"))
+    {
+        if (std::string(env) == "0")
+            return;
+    }
+    opentelemetry::exporter::otlp::OtlpHttpExporterOptions opts;
+    if (const char* env = std::getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
+    {
+        opts.url = env;
+    }
+    else
+    {
+        opts.url = "http://localhost:4318/v1/traces";
+    }
+
+    auto exporter = opentelemetry::exporter::otlp::OtlpHttpExporterFactory::Create(opts);
+    opentelemetry::sdk::trace::BatchSpanProcessorOptions bspOpts;
+    auto processor = opentelemetry::sdk::trace::BatchSpanProcessorFactory::Create(std::move(exporter), bspOpts);
+
+    auto resource = opentelemetry::sdk::resource::Resource::Create({{"service.name", "eop-server"}});
+
+    auto provider = opentelemetry::sdk::trace::TracerProviderFactory::Create(std::move(processor), resource);
+    opentelemetry::nostd::shared_ptr<opentelemetry::trace::TracerProvider> sharedProvider(provider.release());
+    opentelemetry::trace::Provider::SetTracerProvider(sharedProvider);
+#endif
+}
+
+static void ShutdownTracer()
+{
+#ifndef TEST_MODE
+    auto provider = opentelemetry::trace::Provider::GetTracerProvider();
+    auto sdkProvider = dynamic_cast<opentelemetry::sdk::trace::TracerProvider*>(provider.get());
+    if (sdkProvider)
+    {
+        sdkProvider->ForceFlush();
+        sdkProvider->Shutdown();
+    }
+    opentelemetry::trace::Provider::SetTracerProvider(std::shared_ptr<opentelemetry::trace::TracerProvider>());
+#endif
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -337,6 +394,7 @@ static void unregisterSession(ServerContext& ctx, int clientSock, const std::str
     std::string clientIp;
     std::chrono::steady_clock::time_point connectedAt;
     bool foundSession = false;
+    opentelemetry::nostd::shared_ptr<opentelemetry::trace::Span> connSpan;
 
     {
         std::lock_guard<std::mutex> lock(ctx.sessionsMutex);
@@ -351,6 +409,7 @@ static void unregisterSession(ServerContext& ctx, int clientSock, const std::str
         sessionId = it->second.sessionId;
         clientIp = it->second.clientIp;
         connectedAt = it->second.connectedAt;
+        connSpan = it->second.connectionSpan;
 
         ctx.activeSessions.erase(it);
 
@@ -389,6 +448,35 @@ static void unregisterSession(ServerContext& ctx, int clientSock, const std::str
         closeMsg << " total_connections=" << ctx.activeConnections.load();
 
         auditLogger.writeString(closeMsg.str(), CONNECTION_LOG);
+
+        // Disconnection span
+        auto tracer = opentelemetry::trace::Provider::GetTracerProvider()->GetTracer("eop-server");
+        opentelemetry::trace::StartSpanOptions options;
+        if (connSpan)
+        {
+            options.parent = connSpan->GetContext();
+        }
+        auto disconnectSpan = tracer->StartSpan("client_disconnect", options);
+        disconnectSpan->SetAttribute("operation.name", "client_disconnect");
+        disconnectSpan->SetAttribute("session.id", sessionId);
+        disconnectSpan->SetAttribute("result", "OK");
+        disconnectSpan->SetAttribute("duration_ms", static_cast<int64_t>(0));
+        if (!nodeId.empty())
+        {
+            disconnectSpan->SetAttribute("node.id", nodeId);
+        }
+        disconnectSpan->End();
+
+        // End connection span
+        if (connSpan)
+        {
+            connSpan->SetAttribute("duration_ms", static_cast<int64_t>(durationMs));
+            if (!nodeId.empty())
+            {
+                connSpan->SetAttribute("node.id", nodeId);
+            }
+            connSpan->End();
+        }
     }
 
     shutdown(clientSock, SHUT_RDWR);
@@ -483,7 +571,100 @@ static void workerLoop(ServerContext& ctx)
             ctx.messageQueue.pop();
         }
 
+        std::string opName = "unknown_operation";
+        if (msg.message.rfind(getCmdStringFromCode(CMD_REGISTER) + " ", 0) == 0)
+            opName = "REGISTER";
+        else if (msg.message.rfind(getCmdStringFromCode(CMD_QUERY_NODE) + " ", 0) == 0)
+            opName = "QUERY_NODE";
+        else if (msg.message.rfind(getCmdStringFromCode(CMD_LIST_NODES), 0) == 0)
+            opName = "LIST_NODES";
+        else if (msg.message.rfind(getCmdStringFromCode(CMD_HEARTBEAT), 0) == 0)
+            opName = "HEARTBEAT";
+
+        bool shouldTrace = (opName == "REGISTER" || opName == "QUERY_NODE" || opName == "LIST_NODES");
+
+        opentelemetry::nostd::shared_ptr<opentelemetry::trace::Span> opSpan;
+        std::unique_ptr<opentelemetry::trace::Scope> scope;
+        auto startTime = std::chrono::steady_clock::now();
+
+        std::string initialNodeId;
+        if (shouldTrace)
+        {
+            auto tracer = opentelemetry::trace::Provider::GetTracerProvider()->GetTracer("eop-server");
+            opentelemetry::trace::StartSpanOptions options;
+            {
+                std::lock_guard<std::mutex> lock(ctx.sessionsMutex);
+                auto it = ctx.activeSessions.find(msg.clientFd);
+                if (it != ctx.activeSessions.end())
+                {
+                    initialNodeId = it->second.nodeId;
+                    if (it->second.connectionSpan)
+                    {
+                        options.parent = it->second.connectionSpan->GetContext();
+                    }
+                }
+            }
+            opSpan = tracer->StartSpan(opName, options);
+            scope = std::make_unique<opentelemetry::trace::Scope>(tracer->WithActiveSpan(opSpan));
+
+            g_logContext.nodeId = initialNodeId;
+            g_logContext.event = opName;
+            g_logContext.result = ""; // default empty
+        }
+
         handleClientMessage(msg.clientFd, msg.clientIp, msg.message);
+
+        if (shouldTrace && opSpan)
+        {
+            auto endTime = std::chrono::steady_clock::now();
+            auto durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+
+            std::string resultStr = g_logContext.result;
+            if (resultStr.empty())
+                resultStr = "OK"; // fallback
+
+            std::string updatedNodeId;
+            std::string updatedSessionId;
+            {
+                std::lock_guard<std::mutex> lock(ctx.sessionsMutex);
+                auto it = ctx.activeSessions.find(msg.clientFd);
+                if (it != ctx.activeSessions.end())
+                {
+                    updatedNodeId = it->second.nodeId;
+                    updatedSessionId = it->second.sessionId;
+                }
+            }
+
+            opSpan->SetAttribute("operation.name", opName);
+            opSpan->SetAttribute("session.id", updatedSessionId);
+            opSpan->SetAttribute("duration_ms", static_cast<int64_t>(durationMs));
+            opSpan->SetAttribute("result", resultStr);
+
+            if (!updatedNodeId.empty())
+            {
+                opSpan->SetAttribute("node.id", updatedNodeId);
+            }
+            else if (!g_logContext.nodeId.empty())
+            {
+                opSpan->SetAttribute("node.id", g_logContext.nodeId);
+            }
+
+            if (resultStr == "ERROR")
+            {
+                opSpan->SetStatus(opentelemetry::trace::StatusCode::kError);
+            }
+            else
+            {
+                opSpan->SetStatus(opentelemetry::trace::StatusCode::kOk);
+            }
+
+            opSpan->End();
+            scope.reset();
+
+            g_logContext.nodeId.clear();
+            g_logContext.event.clear();
+            g_logContext.result.clear();
+        }
     }
 }
 
@@ -685,6 +866,8 @@ static void handleRegister(int clientSock, const std::string& line)
     record.status = NodeStatus::ONLINE;
     record.lastSeen = std::chrono::system_clock::now();
 
+    g_logContext.nodeId = record.nodeId; // Update log context with node id
+
     const RegisterNodeResult result = serverContext.registry.registerOrReconnectNode(record);
 
     if (result == RegisterNodeResult::NEW_NODE || result == RegisterNodeResult::RECONNECTED_NODE)
@@ -704,6 +887,7 @@ static void handleRegister(int clientSock, const std::string& line)
             logMsg << "Node registered: " << serializeRecord(record);
         }
         auditLogger.writeString(logMsg.str(), INFO_LOG);
+        g_logContext.result = "OK";
     }
     else
     {
@@ -712,6 +896,7 @@ static void handleRegister(int clientSock, const std::string& line)
         send(clientSock, errDup.c_str(), errDup.size(), 0);
 
         auditLogger.writeString("Duplicate REGISTER attempt for node_id=" + record.nodeId, WARNING_LOG);
+        g_logContext.result = "ERROR";
     }
 }
 // LCOV_EXCL_STOP
@@ -738,10 +923,13 @@ static void handleQueryNode(int clientSock, const std::string& line)
     }
 
     NodeRecord record;
+    g_logContext.nodeId = nodeId;
+
     if (serverContext.registry.queryNode(nodeId, record))
     {
         const std::string response = serializeRecord(record) + "\n";
         send(clientSock, response.c_str(), response.size(), 0);
+        g_logContext.result = "OK";
     }
     else
     {
@@ -750,6 +938,7 @@ static void handleQueryNode(int clientSock, const std::string& line)
         send(clientSock, errNotFound.c_str(), errNotFound.size(), 0);
 
         auditLogger.writeString("QUERY_NODE for unknown node_id=" + std::string(nodeId), WARNING_LOG);
+        g_logContext.result = "ERROR";
     }
 }
 // LCOV_EXCL_STOP
@@ -775,6 +964,7 @@ static void handleListNodes(int clientSock)
 
     const std::string responseStr = response.str();
     send(clientSock, responseStr.c_str(), responseStr.size(), 0);
+    g_logContext.result = "OK";
 }
 
 // ---------------------------------------------------------------------------
@@ -839,6 +1029,8 @@ void handleClientMessage(int clientSock, const std::string& clientIp, const std:
  */
 void startServer(int port, int idleTimeout)
 {
+    InitTracer();
+
     serverContext.idleTimeoutSeconds = idleTimeout;
     serverContext.running = true;
     loadServerConfig(serverContext);
@@ -971,6 +1163,21 @@ void startServer(int port, int idleTimeout)
                             send(clientSock, welcomeMsg.c_str(), welcomeMsg.size(), 0);
                         }
 
+                        auto tracer = opentelemetry::trace::Provider::GetTracerProvider()->GetTracer("eop-server");
+                        auto connSpan = tracer->StartSpan("client_connect");
+                        connSpan->SetAttribute("operation.name", "client_connect");
+                        connSpan->SetAttribute("session.id", sessionId);
+                        connSpan->SetAttribute("result", "OK");
+
+                        {
+                            std::lock_guard<std::mutex> lock(serverContext.sessionsMutex);
+                            auto it = serverContext.activeSessions.find(clientSock);
+                            if (it != serverContext.activeSessions.end())
+                            {
+                                it->second.connectionSpan = connSpan;
+                            }
+                        }
+
                         std::ostringstream acceptedMsg;
                         acceptedMsg << "New connection accepted IP=" << clientIp << " Session=" << sessionId
                                     << " Total connections:" << serverContext.activeConnections.load();
@@ -1095,6 +1302,7 @@ void startServer(int port, int idleTimeout)
     }
 
     std::cout << "Server stopped." << std::endl;
+    ShutdownTracer();
 }
 
 // ---------------------------------------------------------------------------

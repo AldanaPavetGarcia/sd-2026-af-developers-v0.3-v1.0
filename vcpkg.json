@@ -2,7 +2,23 @@
   "name": "cyberpunk-cordoba-2077",
   "version-string": "0.1.0",
   "dependencies": [
-    "gtest",
-    "benchmark"
-  ]
+    {
+      "name": "opentelemetry-cpp",
+      "features": ["otlp-http"]
+    }
+  ],
+  "features": {
+    "tests": {
+      "description": "Dependencies for unit tests",
+      "dependencies": [
+        "gtest"
+      ]
+    },
+    "benchmarks": {
+      "description": "Dependencies for benchmarks",
+      "dependencies": [
+        "benchmark"
+      ]
+    }
+  }
 }

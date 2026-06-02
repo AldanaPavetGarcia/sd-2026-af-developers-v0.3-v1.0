@@ -1,4 +1,183 @@
+x-common: &common
+  restart: unless-stopped
+  logging:
+    options:
+      max-size: 50m
+      max-file: "3"
+
+x-clickhouse-defaults: &clickhouse-defaults
+  <<: *common
+  image: clickhouse/clickhouse-server:25.5.6
+  tty: true
+  depends_on:
+    init-clickhouse:
+      condition: service_completed_successfully
+    zookeeper-1:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "wget", "--spider", "-q", "0.0.0.0:8123/ping"]
+    interval: 5s
+    timeout: 5s
+    retries: 12
+    start_period: 10s
+  ulimits:
+    nproc: 65535
+    nofile:
+      soft: 262144
+      hard: 262144
+  environment:
+    - CLICKHOUSE_SKIP_USER_SETUP=1
+
+x-zookeeper-defaults: &zookeeper-defaults
+  <<: *common
+  image: signoz/zookeeper:3.7.1
+  user: root
+  healthcheck:
+    test: ["CMD-SHELL", "curl -s -m 2 http://localhost:8080/commands/ruok | grep error | grep null"]
+    interval: 5s
+    timeout: 5s
+    retries: 12
+    start_period: 10s
+
+x-db-depend: &db-depend
+  <<: *common
+  depends_on:
+    clickhouse:
+      condition: service_healthy
+
 services:
+  init-clickhouse:
+    <<: *common
+    image: clickhouse/clickhouse-server:25.5.6
+    container_name: eop-signoz-init-clickhouse
+    command:
+      - bash
+      - -c
+      - |
+        version="v0.0.1"
+        node_os=$$(uname -s | tr '[:upper:]' '[:lower:]')
+        node_arch=$$(uname -m | sed s/aarch64/arm64/ | sed s/x86_64/amd64/)
+        echo "Fetching histogram-binary for $${node_os}/$${node_arch}"
+        cd /tmp
+        wget -O histogram-quantile.tar.gz "https://github.com/SigNoz/signoz/releases/download/histogram-quantile%2F$${version}/histogram-quantile_$${node_os}_$${node_arch}.tar.gz"
+        tar -xvzf histogram-quantile.tar.gz
+        mv histogram-quantile /var/lib/clickhouse/user_scripts/histogramQuantile
+    restart: on-failure
+    volumes:
+      - eop-signoz-clickhouse-user-scripts:/var/lib/clickhouse/user_scripts/
+
+  zookeeper-1:
+    <<: *zookeeper-defaults
+    container_name: eop-signoz-zookeeper-1
+    volumes:
+      - eop-signoz-zookeeper-1:/bitnami/zookeeper
+    environment:
+      - ZOO_SERVER_ID=1
+      - ALLOW_ANONYMOUS_LOGIN=yes
+      - ZOO_AUTOPURGE_INTERVAL=1
+      - ZOO_ENABLE_PROMETHEUS_METRICS=yes
+      - ZOO_PROMETHEUS_METRICS_PORT_NUMBER=9141
+
+  clickhouse:
+    <<: *clickhouse-defaults
+    container_name: eop-signoz-clickhouse
+    ports:
+      - "8123:8123"
+    volumes:
+      - ./monitoring/signoz-common/clickhouse/config.xml:/etc/clickhouse-server/config.xml:ro
+      - ./monitoring/signoz-common/clickhouse/users.xml:/etc/clickhouse-server/users.xml:ro
+      - ./monitoring/signoz-common/clickhouse/custom-function.xml:/etc/clickhouse-server/custom-function.xml:ro
+      - ./monitoring/signoz-common/clickhouse/cluster.xml:/etc/clickhouse-server/config.d/cluster.xml:ro
+      - eop-signoz-clickhouse-user-scripts:/var/lib/clickhouse/user_scripts/
+      - eop-signoz-clickhouse:/var/lib/clickhouse/
+
+  signoz-telemetrystore-migrator:
+    <<: *db-depend
+    image: signoz/signoz-otel-collector:v0.144.4
+    container_name: eop-signoz-telemetrystore-migrator
+    environment:
+      - SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_DSN=tcp://clickhouse:9000
+      - SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_CLUSTER=cluster
+      - SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_REPLICATION=true
+      - SIGNOZ_OTEL_COLLECTOR_TIMEOUT=10m
+    entrypoint: ["/bin/sh"]
+    command:
+      - -c
+      - |
+        /signoz-otel-collector migrate bootstrap &&
+        /signoz-otel-collector migrate sync up &&
+        /signoz-otel-collector migrate async up
+    restart: on-failure
+
+  signoz:
+    <<: *db-depend
+    image: signoz/signoz:v0.126.0
+    container_name: eop-signoz
+    ports:
+      - "8081:8080"
+    volumes:
+      - eop-signoz-sqlite:/var/lib/signoz/
+    environment:
+      - SIGNOZ_ALERTMANAGER_PROVIDER=signoz
+      - SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_DSN=tcp://clickhouse:9000
+      - SIGNOZ_SQLSTORE_SQLITE_PATH=/var/lib/signoz/signoz.db
+      - SIGNOZ_TOKENIZER_JWT_SECRET=secret
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "localhost:8080/api/v1/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  signoz-otel-collector:
+    <<: *common
+    image: signoz/signoz-otel-collector:v0.144.4
+    container_name: eop-signoz-otel-collector
+    depends_on:
+      signoz-telemetrystore-migrator:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+    entrypoint: ["/signoz-otel-collector"]
+    command:
+      - "--config=/etc/otel-collector-config.yaml"
+    volumes:
+      - ./monitoring/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    environment:
+      - OTEL_RESOURCE_ATTRIBUTES=host.name=eop-signoz-host,os.type=linux
+      - LOW_CARDINAL_EXCEPTION_GROUPING=false
+      - SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_DSN=tcp://clickhouse:9000
+      - SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_CLUSTER=cluster
+      - SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_REPLICATION=true
+      - SIGNOZ_OTEL_COLLECTOR_TIMEOUT=10m
+    healthcheck:
+      test: ["CMD-SHELL", "grep -qi ':10DD' /proc/net/tcp /proc/net/tcp6 && grep -qi ':10DE' /proc/net/tcp /proc/net/tcp6"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  otel-collector:
+    <<: *common
+    image: otel/opentelemetry-collector-contrib:0.114.0
+    container_name: eop-otel-collector
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./monitoring/eop-otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "13133:13133"
+    depends_on:
+      signoz-otel-collector:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/otelcol-contrib", "--version"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
   eop-server:
     build:
       context: .
@@ -10,8 +189,12 @@ services:
       EOP_IDLE_TIMEOUT: "30"
       EOP_MAX_CLIENTS: "100"
       EOP_HEARTBEAT_INTERVAL: "5"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318/v1/traces"
     ports:
       - "9026:9026"
+    depends_on:
+      otel-collector:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "nc", "-z", "127.0.0.1", "9026"]
       interval: 5s
@@ -19,39 +202,8 @@ services:
       retries: 12
       start_period: 5s
 
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.114.0
-    container_name: eop-otel-collector
-    command: ["--config=/etc/otelcol-contrib/config.yaml"]
-    volumes:
-      - ./monitoring/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
-    ports:
-      - "4317:4317"
-      - "4318:4318"
-      - "13133:13133"
-    healthcheck:
-      test: ["CMD", "/otelcol-contrib", "--version"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-      start_period: 5s
-
-  signoz:
-    image: signoz/signoz-standalone:latest
-    container_name: eop-signoz
-    privileged: true
-    ports:
-      - "8081:8080"
-    volumes:
-      - eop-signoz-clickhouse-data:/var/lib/clickhouse
-      - eop-signoz-data:/var/lib/signoz
-    healthcheck:
-      test: ["CMD", "bash", "-lc", "curl -fsS http://127.0.0.1:8080 >/dev/null"]
-      interval: 15s
-      timeout: 10s
-      retries: 20
-      start_period: 60s
-
 volumes:
-  eop-signoz-clickhouse-data:
-  eop-signoz-data:
+  eop-signoz-clickhouse:
+  eop-signoz-clickhouse-user-scripts:
+  eop-signoz-sqlite:
+  eop-signoz-zookeeper-1:

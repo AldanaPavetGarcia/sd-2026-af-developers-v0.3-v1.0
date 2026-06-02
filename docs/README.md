@@ -245,3 +245,40 @@ PASS: No significant file descriptor leak detected
 FAIL: Possible file descriptor leak detected
 
 ```
+
+---
+
+### Observability Runbook (SigNoz to Logs)
+
+This section provides the procedure to navigate from a trace in SigNoz to its corresponding JSON log entry on the server using `node.id`.
+
+#### Context Correlation
+The EOP server emits structured JSON logs to `stdout`. Every log line generated during an operation includes a `trace_id` and a `span_id`.
+
+**Prerequisite:** Ensure the Docker Compose stack is running and the SigNoz dashboard is accessible at `http://localhost:8081`.
+
+#### Step 1: Locating the Node in SigNoz
+1. Open the **SigNoz UI**.
+2. Navigate to the **Traces** tab.
+3. In the filters bar, search for the `node.id` tag (e.g. `node.id="alpha-01"`).
+4. Click on a specific trace to open the Trace Detail view. This view displays the waterfall of spans (e.g. `client_connect` -> `REGISTER`).
+
+#### Step 2: Extracting Trace Information
+1. On the trace timeline, click on the specific span you are investigating (e.g. the `REGISTER` span).
+2. The right sidebar will open displaying the **Span Attributes**.
+3. Note down the **Trace ID** and **Span ID** shown in the properties.
+
+#### Step 3: Finding the Log Line
+1. Connect to the host running the `eop-server` Docker container.
+2. Search the standard output (or container logs) filtering by the `trace_id` or `node_id`.
+
+Using `grep`:
+```bash
+# Filter by Trace ID:
+docker logs eop-server | grep '"trace_id":"<YOUR_TRACE_ID>"'
+
+# Filter by Node ID:
+docker logs eop-server | grep '"node_id":"alpha-01"'
+```
+
+You will see the structured JSON output corresponding to that exact span, containing the specific event message and severity level, which allows for precise debugging.

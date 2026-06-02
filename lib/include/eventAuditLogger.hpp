@@ -94,6 +94,15 @@ struct LogEntry
  * @brief Class responsible for managing system logs, providing access to processes for auditing.
  */
 #ifdef __cplusplus
+struct LogContext
+{
+    std::string nodeId;
+    std::string event;
+    std::string result;
+};
+
+inline thread_local LogContext g_logContext;
+
 class EventAuditLogger
 {
 private:
