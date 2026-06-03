@@ -1,4 +1,4 @@
-.PHONY: deploy-local k8s-apply k8s-recovery-test observability-test
+.PHONY: deploy-local k8s-apply k8s-recovery-test observability-test benchmark
 
 deploy-local:
 	docker compose up --build -d
@@ -13,3 +13,6 @@ k8s-recovery-test:
 
 observability-test:
 	python3 tests/smoke/test_signoz_integration.py
+
+benchmark:
+	cd hpc-engine/benchmarks && bash run_benchmark.sh

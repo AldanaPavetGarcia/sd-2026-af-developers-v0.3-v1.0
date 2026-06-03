@@ -161,3 +161,8 @@ if(EXODUS_BUILD_BENCHMARKS)
     benchmark::benchmark_main
   )
 endif()
+
+# =============================================================================
+# HPC Engine (standalone subprocess for graph analysis)
+# =============================================================================
+add_subdirectory(hpc-engine)
