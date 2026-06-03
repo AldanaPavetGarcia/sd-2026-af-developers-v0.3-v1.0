@@ -48,4 +48,20 @@ It has been decided to implement a **JSON**-based protocol for payload encoding,
 
 * * **Security:** Engineers are prohibited from including sensitive data (tokens, passwords) in JSON fields, thus maintaining secure telemetry output.
 
+## v0.2 Addendum: ANALYZE_GRAPH Protocol Extension
+
+For Milestone 2, the EOP protocol is extended with a new message type: `ANALYZE_GRAPH`.
+
+This extension preserves the existing protocol decisions:
+
+- Payload encoding remains JSON.
+- Message framing remains delimiter-based using `\n`.
+- Existing v0.1 message types remain unchanged.
+- The extension is additive and non-breaking.
+
+The `ANALYZE_GRAPH` message allows a C client to request graph analysis through the existing EOP server. The server dispatches the request to the registered HPC engine and returns the result to the originating client.
+
+The detailed request schema, response schema, validation rules, error codes, and sequence diagram are documented in:
+
+`docs/analyze-graph-protocol-v0.2.md`
 --
