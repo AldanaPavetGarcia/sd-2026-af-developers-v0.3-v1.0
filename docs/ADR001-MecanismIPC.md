@@ -1,4 +1,4 @@
-# ADR 001: Interprocess Communication (IPC) Mechanism — BSD Sockets vs. RPC Frameworks
+# ADR 001: Interprocess Communication (IPC) Mechanism
 
 ## Context and Problem
 
