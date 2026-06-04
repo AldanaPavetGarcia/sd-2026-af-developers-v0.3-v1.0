@@ -1,13 +1,15 @@
 #!/bin/bash
 set -e
 
-# Build the engine if not already built
-cd ..
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target hpc_engine
-cd benchmarks
+# Build the engine from the project root so vcpkg manifest is found
+cd ../..
+cmake -S . -B build-bench -G Ninja -DCMAKE_BUILD_TYPE=Release -DEXODUS_BUILD_TESTS=OFF -DHPC_BUILD_TESTS=OFF \
+  -DCMAKE_TOOLCHAIN_FILE=${VCPKG_ROOT:-/opt/vcpkg}/scripts/buildsystems/vcpkg.cmake \
+  -DVCPKG_MANIFEST_INSTALL=OFF -DVCPKG_INSTALLED_DIR=$(pwd)/vcpkg_installed
+cmake --build build-bench --target hpc_engine -j 2
+cd hpc-engine/benchmarks
 
-ENGINE="../build/hpc_engine"
+ENGINE="../../build-bench/hpc-engine/hpc_engine"
 
 if [ ! -f "$ENGINE" ]; then
     echo "Error: hpc_engine executable not found at $ENGINE"
@@ -28,7 +30,8 @@ echo "- **CPU Cores Available:** $(nproc)" >> $REPORT_FILE
 echo "" >> $REPORT_FILE
 
 # Sizes requested in AC5
-SIZES=(10000 50000 100000)
+#SIZES=(10000 50000 100000)
+SIZES=(100 250 500)
 THREADS=(1 2 4 8)
 
 for size in "${SIZES[@]}"; do

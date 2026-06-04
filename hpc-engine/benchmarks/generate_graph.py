@@ -47,7 +47,7 @@ def generate_graph(num_nodes):
     return payload
 
 if __name__ == "__main__":
-    if len(sys.sys.argv) != 3:
+    if len(sys.argv) != 3:
         print("Usage: generate_graph.py <num_nodes> <output_file>")
         sys.exit(1)
         
