@@ -86,6 +86,7 @@ jobs:
             clang-format-${{ env.CLANG_VERSION }} \
             lcov \
             llvm-${{ env.CLANG_VERSION }} \
+            libomp-dev \
             doxygen \
             graphviz \
             unzip \
@@ -296,7 +297,7 @@ jobs:
             --directory build \
             --output-file coverage.info \
             --gcov-tool "$(pwd)/llvm-gcov.sh" \
-            --ignore-errors inconsistent,mismatch,format,unsupported
+            --ignore-errors inconsistent,mismatch,format,unsupported,empty
 
           lcov --remove coverage.info \
             '/usr/*' \
