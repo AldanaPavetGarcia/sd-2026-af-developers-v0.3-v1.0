@@ -160,15 +160,30 @@ ParseResult parseRequest(const std::string& raw_json)
         std::string to_name = edge_obj["to"].get<std::string>();
         double weight = edge_obj["weight"].get<double>();
 
-        // Look up node indices (structural mapping; validation happens later)
+        // Validate that both endpoints are declared nodes
         auto from_it = graph.node_index.find(from_name);
-        auto to_it = graph.node_index.find(to_name);
-
-        if (from_it != graph.node_index.end() && to_it != graph.node_index.end())
+        if (from_it == graph.node_index.end())
         {
-            graph.adjacency[from_it->second].push_back({to_it->second, weight});
+            result.ok = false;
+            result.error_code = "ERROR_INVALID_GRAPH";
+            result.error_message =
+                "Edge references undeclared node '" + from_name + "' in 'from' field.";
+            result.error_field = "payload.edges[" + std::to_string(i) + "].from";
+            return result;
         }
-        // If nodes don't exist, the validator will catch this
+
+        auto to_it = graph.node_index.find(to_name);
+        if (to_it == graph.node_index.end())
+        {
+            result.ok = false;
+            result.error_code = "ERROR_INVALID_GRAPH";
+            result.error_message =
+                "Edge references undeclared node '" + to_name + "' in 'to' field.";
+            result.error_field = "payload.edges[" + std::to_string(i) + "].to";
+            return result;
+        }
+
+        graph.adjacency[from_it->second].push_back({to_it->second, weight});
     }
 
     // Algorithms
