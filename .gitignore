@@ -52,6 +52,7 @@ _assets/
 # archivos de testeo local
 build_local/
 build_ci_local/
+build-bench/
 coverage_html/
 run_ci_local.sh
 llvm-gcov.sh

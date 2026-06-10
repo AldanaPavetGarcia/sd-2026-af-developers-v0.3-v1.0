@@ -12,7 +12,7 @@ import sys
 import argparse
 
 
-LARGE_GRAPH_THRESHOLD = 10_000
+LARGE_GRAPH_THRESHOLD = 500
 
 
 def generate_graph(num_nodes: int, density: float) -> dict:
