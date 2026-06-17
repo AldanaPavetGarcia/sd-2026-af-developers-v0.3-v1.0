@@ -90,6 +90,12 @@ OMP_MAX="$(echo '{"type": "ANALYZE_GRAPH", "request_id": "req-123", "payload": {
 declare -A SPEEDUP_AC2A   # speedup con 4 hilos en AC2A_SIZE
 declare -A SPEEDUP_AC2B   # speedup con 8 hilos en AC2B_SIZE
 
+# Guardamos el speedup con 4 y 8 hilos del tamaño más grande disponible
+# para calcular la fracción serial s (inversa de Amdahl)
+SPEEDUP_4T="0"
+SPEEDUP_8T="0"
+AMADHL_REF_SIZE=0
+
 # ---------------------------------------------------------------------------
 # 4. Bucle principal de benchmark
 # ---------------------------------------------------------------------------
@@ -161,6 +167,18 @@ for size in "${SIZES[@]}"; do
             SPEEDUP_AC2B["$size"]="$SPEEDUP"
         fi
 
+        # Guardar speedups para cálculo de Amdahl (usamos el tamaño más grande ejecutado)
+        if [[ "$SPEEDUP" != "N/A" ]] && [[ "$SPEEDUP" != "0" ]]; then
+            if [ "$t" -eq 4 ] && (( size >= AMADHL_REF_SIZE )); then
+                SPEEDUP_4T="$SPEEDUP"
+                AMADHL_REF_SIZE=$size
+            fi
+            if [ "$t" -eq 8 ] && (( size >= AMADHL_REF_SIZE )); then
+                SPEEDUP_8T="$SPEEDUP"
+                AMADHL_REF_SIZE=$size
+            fi
+        fi
+
         rm -f "$OUT_FILE"
     done
 
@@ -211,18 +229,87 @@ VERDICT_AC2B=$(check_speedup "$SPD_AC2B" 3.0)
     echo "## Análisis — Ley de Amdahl"
     echo ""
     echo "La Ley de Amdahl establece que el speedup máximo teórico con \`p\` procesadores"
-    echo "es \`S(p) = 1 / (s + (1-s)/p)\`, donde \`s\` es la fracción serial."
+    echo "es \`S(p) = 1 / (s + (1-s)/p)\`, donde \`s\` es la fracción serial del algoritmo."
     echo ""
-    echo "| Hilos (p) | Speedup teórico (s=0.1) | Speedup teórico (s=0.2) |"
-    echo "|----------:|------------------------:|------------------------:|"
+    echo "### Fracción serial calculada desde datos reales"
+    echo ""
+
+    # Calcular s a partir del speedup medido con p hilos.
+    # Inversa de Amdahl: s = (1/S(p) - 1/p) / (1 - 1/p)
+    # Preferimos p=8 (más robusto); si no hay datos, usamos p=4.
+    S_EMPIRICAL="N/D"
+    P_USED=""
+    S_FOR_AMDAHL="0.2"  # valor por defecto para la tabla
+
+    if [[ "$SPEEDUP_8T" != "0" ]] && [[ "$SPEEDUP_8T" != "N/A" ]]; then
+        P_USED=8
+        S_EMPIRICAL=$("$PYTHON" -c "
+S = float('$SPEEDUP_8T'); p = $P_USED
+if S > 0 and p > 1:
+    s = (1.0/S - 1.0/p) / (1.0 - 1.0/p)
+    s = max(0.0, min(1.0, s))  # clamp to [0,1]
+    print(f'{s:.4f}')
+else:
+    print('N/D')
+" 2>/dev/null || echo "N/D")
+        if [[ "$S_EMPIRICAL" != "N/D" ]]; then
+            S_FOR_AMDAHL="$S_EMPIRICAL"
+        fi
+    elif [[ "$SPEEDUP_4T" != "0" ]] && [[ "$SPEEDUP_4T" != "N/A" ]]; then
+        P_USED=4
+        S_EMPIRICAL=$("$PYTHON" -c "
+S = float('$SPEEDUP_4T'); p = $P_USED
+if S > 0 and p > 1:
+    s = (1.0/S - 1.0/p) / (1.0 - 1.0/p)
+    s = max(0.0, min(1.0, s))  # clamp to [0,1]
+    print(f'{s:.4f}')
+else:
+    print('N/D')
+" 2>/dev/null || echo "N/D")
+        if [[ "$S_EMPIRICAL" != "N/D" ]]; then
+            S_FOR_AMDAHL="$S_EMPIRICAL"
+        fi
+    fi
+
+    # Speedup máximo teórico (límite p → ∞)
+    S_MAX="N/D"
+    if [[ "$S_FOR_AMDAHL" != "0.2" ]] || [[ "$S_EMPIRICAL" != "N/D" ]]; then
+        S_MAX=$("$PYTHON" -c "
+s = float('$S_FOR_AMDAHL')
+if s > 0:
+    print(f'{1.0/s:.2f}')
+else:
+    print('∞')
+" 2>/dev/null || echo "N/D")
+    fi
+
+    echo "| Parámetro | Valor |"
+    echo "|---|---|"
+    if [[ -n "$P_USED" ]]; then
+        echo "| Speedup medido (${P_USED} hilos, ${AMADHL_REF_SIZE} nodos) | ${SPEEDUP_8T:-${SPEEDUP_4T}}× |"
+    fi
+    echo "| Fracción serial estimada (**s**) | **${S_EMPIRICAL}** |"
+    echo "| Speedup máximo teórico (p→∞) | **${S_MAX}×** |"
+    echo ""
+    echo "### Predicciones teóricas con s = ${S_FOR_AMDAHL}"
+    echo ""
+    echo "| Hilos (p) | Speedup teórico | Eficiencia |"
+    echo "|----------:|----------------:|-----------:|"
     for t in 2 4 8 16; do
-        S1=$(echo "scale=2; 1 / (0.1 + 0.9/$t)" | bc -l)
-        S2=$(echo "scale=2; 1 / (0.2 + 0.8/$t)" | bc -l)
-        echo "| $t | ${S1}× | ${S2}× |"
+        THEO=$("$PYTHON" -c "
+s = float('$S_FOR_AMDAHL'); p = $t
+print(f'{1.0 / (s + (1.0 - s) / p):.2f}')
+" 2>/dev/null || echo "?")
+        EFF=$("$PYTHON" -c "
+s = float('$S_FOR_AMDAHL'); p = $t
+speedup = 1.0 / (s + (1.0 - s) / p)
+print(f'{speedup / p * 100:.1f}%')
+" 2>/dev/null || echo "?")
+        echo "| $t | ${THEO}× | ${EFF} |"
     done
     echo ""
-    echo "> Los speedups observados por encima del umbral de Amdahl (s=0.2) indican"
-    echo "> que la paralelización es efectiva para los algoritmos implementados."
+    echo "> La eficiencia mide qué porcentaje del potencial de cada núcleo se aprovecha."
+    echo "> Valores por encima del 70% a 8 hilos indican una paralelización efectiva."
     echo ""
     echo "## Conclusión"
     echo ""
