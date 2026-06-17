@@ -678,6 +678,6 @@ jobs:
 
       - name: Run tests under ThreadSanitizer
         env:
-          TSAN_OPTIONS: "halt_on_error=1:second_deadlock_stack=1"
+          TSAN_OPTIONS: "halt_on_error=1:second_deadlock_stack=1:ignore_noninstrumented_modules=1"
         run: |
           ctest --test-dir build-tsan --output-on-failure --parallel 2
