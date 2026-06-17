@@ -50,13 +50,13 @@ echo "✅ Engine compilado: $ENGINE"
 # ---------------------------------------------------------------------------
 cd "$SCRIPT_DIR"
 
-# Tamaños representativos: pequeño, mediano (AC2a), grande (AC2b)
-SIZES=(500 1000 2500 5000 10000)
+# Tamaños representativos: 1k, 10k, 100k (como especifica la PR)
+SIZES=(1000 5000 10000 100000)
 THREADS=(1 2 4 8)
 
-# Nodo de referencia para cada criterio
+# Nodo de referencia para cada criterio (según enunciado US-202)
 AC2A_SIZE=5000
-AC2B_SIZE=10000
+AC2B_SIZE=100000
 
 REPORT_FILE="BENCHMARK_REPORT.md"
 PYTHON="${PYTHON:-python3}"
@@ -191,7 +191,7 @@ check_speedup() {
 }
 
 VERDICT_AC2A=$(check_speedup "$SPD_AC2A" 2.0)
-VERDICT_AC2B=$(check_speedup "$SPD_AC2B" 2.5)
+VERDICT_AC2B=$(check_speedup "$SPD_AC2B" 3.0)
 
 {
     echo "## Verificación de Criterios de Aceptación"
@@ -199,7 +199,7 @@ VERDICT_AC2B=$(check_speedup "$SPD_AC2B" 2.5)
     echo "| Criterio | Descripción | Speedup Medido | Mínimo Requerido | Estado |"
     echo "|---|---|---:|---:|:---:|"
     echo "| AC2a | 4 hilos, ${AC2A_SIZE} nodos | ${SPD_AC2A}× | 2.0× | $VERDICT_AC2A |"
-    echo "| AC2b | 8 hilos, ${AC2B_SIZE} nodos | ${SPD_AC2B}× | 2.5× | $VERDICT_AC2B |"
+    echo "| AC2b | 8 hilos, ${AC2B_SIZE} nodos | ${SPD_AC2B}× | 3.0× | $VERDICT_AC2B |"
     echo "| AC3  | 0 data races (TSAN) | — | 0 races | ⚙️ Ver paso TSAN en CI |"
     echo ""
 } >> "$REPORT_FILE"
