@@ -80,6 +80,7 @@ if(HPC_BUILD_TESTS)
     tests/test_connected_components.cpp
     tests/test_centrality.cpp
     tests/test_protocol.cpp
+    tests/test_concurrent_algorithms.cpp
   )
 
   target_link_libraries(hpc_tests PRIVATE
