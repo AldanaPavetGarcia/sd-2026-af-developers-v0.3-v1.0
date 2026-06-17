@@ -54,9 +54,31 @@ jobs:
           context: .
           file: ./Dockerfile
           push: false
+          load: true
           tags: eop-server:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Validate Docker image size ≤ 50 MB
+        run: |
+          SIZE_BYTES=$(docker inspect eop-server:ci \
+            --format='{{.Size}}' 2>/dev/null)
+
+          if [ -z "$SIZE_BYTES" ]; then
+            echo "❌ Could not inspect image eop-server:ci"
+            exit 1
+          fi
+
+          SIZE_MB=$(echo "scale=2; $SIZE_BYTES / 1048576" | bc)
+          echo "Runtime image size: ${SIZE_MB} MB (${SIZE_BYTES} bytes)"
+
+          MAX_MB=50
+          if awk "BEGIN { exit !(${SIZE_MB} > ${MAX_MB}) }"; then
+            echo "❌ FAILED: Image size ${SIZE_MB} MB exceeds limit of ${MAX_MB} MB"
+            exit 1
+          fi
+
+          echo "✅ PASSED: Image size ${SIZE_MB} MB is within the ${MAX_MB} MB limit"
 
   continuous-integration:
     runs-on: ubuntu-latest
