@@ -64,18 +64,31 @@ nlohmann::json computeConnectedComponents(const Graph& graph)
         ++num_components;
     }
 
-    // Group nodes by component
-    std::vector<std::vector<std::string>> components(num_components);
+    // Group nodes by component using thread-local buckets to avoid omp critical.
+    // Each thread accumulates into its own local components array;
+    // results are merged serially afterwards (reduction pattern for non-primitive types).
+    int max_threads = omp_get_max_threads();
+    std::vector<std::vector<std::vector<std::string>>> local_components(
+        max_threads, std::vector<std::vector<std::string>>(num_components));
 
 #pragma omp parallel for schedule(static)
     for (int i = 0; i < n; ++i)
     {
+        int tid = omp_get_thread_num();
         int cid = component_id[i];
-        const std::string& name = graph.node_names[i];
+        local_components[tid][cid].push_back(graph.node_names[i]);
+    }
 
-#pragma omp critical
+    // Serial merge of thread-local buckets (reduction of non-primitive type)
+    std::vector<std::vector<std::string>> components(num_components);
+    for (int t = 0; t < max_threads; ++t)
+    {
+        for (int c = 0; c < num_components; ++c)
         {
-            components[cid].push_back(name);
+            for (const auto& name : local_components[t][c])
+            {
+                components[c].push_back(name);
+            }
         }
     }
 
