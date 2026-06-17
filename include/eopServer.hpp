@@ -240,9 +240,9 @@ struct ServerContext
 
     NodeRegistry registry; ///< In-memory node registry (AC4).
 
-    int maxClients;               ///< Maximum allowed simultaneous clients (EOP_MAX_CLIENTS).
-    int heartbeatIntervalSeconds; ///< Heartbeat interval configuration (EOP_HEARTBEAT_INTERVAL).
-    int idleTimeoutSeconds;       ///< Idle timeout configuration (EOP_IDLE_TIMEOUT).
+    std::atomic<int> maxClients;               ///< Maximum allowed simultaneous clients (EOP_MAX_CLIENTS).
+    std::atomic<int> heartbeatIntervalSeconds; ///< Heartbeat interval configuration (EOP_HEARTBEAT_INTERVAL).
+    std::atomic<int> idleTimeoutSeconds;       ///< Idle timeout configuration (EOP_IDLE_TIMEOUT).
 
     std::queue<ClientMessage> messageQueue; ///< Queue of client messages for the Thread Pool.
     std::mutex queueMutex;                  ///< Protects access to messageQueue.
@@ -256,6 +256,10 @@ struct ServerContext
         , idleTimeoutSeconds(EOP_IDLE_TIMEOUT)
     {
     }
+
+    // Deleted copy/move to prevent accidental copies of atomic members
+    ServerContext(const ServerContext&) = delete;
+    ServerContext& operator=(const ServerContext&) = delete;
 
     ~ServerContext() {}
 };
