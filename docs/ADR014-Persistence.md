@@ -1,4 +1,4 @@
-# ADR 008: Persistence of Logs in Structured Format (JSON)
+# ADR-014: Persistence of Logs in Structured Format (JSON)
 
 ## Context and Problem
 
@@ -17,10 +17,8 @@ The initial phase user stories (US-101, US-102, US-104) require comprehensive lo
 It has been decided to implement the **Structured JSON Stream to Standard Output (`stdout`)**, managed centrally by the `Logger` class (Option 3). Data segregation and differentiation will be performed at the schema level using the mandatory `"event"` field, classified into three logical categories:
 
 * **`connections`:** Logging of handshakes, session assignments, and disconnections.
-
 * **`errors`:** Protocol failures, network outages, and system exceptions.
-
-``errors`:** * **`audit`:** History of which `node_id` executed which specific operation.
+* **`audit`:** History of which `node_id` executed which specific operation.
 
 ## Justification (Trade-off Analysis)
 
@@ -28,13 +26,14 @@ It has been decided to implement the **Structured JSON Stream to Standard Output
 
 * **Traceability and Cross-Correlation:** Enables the exact injection of the technical fields `trace_id` and `span_id` required by **US-110 AC4**, allowing SigNoz to deterministically link a log line with its corresponding trace.
 
-* * **Schema Flexibility:** If new metadata needs to be added per event in Lab 2 or Lab 3, the JSON format allows for the incorporation of new keys without breaking the existing monitoring platform parsers.
+* **Schema Flexibility:** If new metadata needs to be added per event in Lab 2 or Lab 3, the JSON format allows for the incorporation of new keys without breaking the existing monitoring platform parsers.
 
 ## Consequences
 
 * **Positive:** Strict compliance with Vault-Tec operational audits; real-time error diagnosis; and a radical simplification of the `Logger` class design by eliminating the need to handle concurrent text file descriptors on disk.
 
-* **Negative:** The JSON format generates greater serialization overhead in C++ and consumes more bandwidth/storage in the output buffer than plain text. * **Technical Design Invariants:** The JSON object emitted by the `Logger` must have the following semantic structure on each line:
+* **Negative:** The JSON format generates greater serialization overhead in C++ and consumes more bandwidth/storage in the output buffer than plain text.
+* **Technical Design Invariants:** The JSON object emitted by the `Logger` must have the following semantic structure on each line:
 ```json
 {
 "timestamp": "ISO-8601-FORMATED-STRING",
