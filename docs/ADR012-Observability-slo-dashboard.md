@@ -11,7 +11,7 @@ The platform will deploy a standardized observability stack using **Prometheus**
 
 ### 1. Formally Enforced Service Level Indicators (SLIs)
 
-$$\text{Request Success Rate} = \frac{\text{Total Responses} - \text{Total } 5xx \text{ Errors}}{\text{Total Incoming Requests}} \times 100$$
+$$\text{Request Success Rate} = \frac{\text{Successful Responses}}{\text{Total Incoming Requests}} \times 100$$
 
 $$\text{Latency Performance} = \text{Duration of transaction execution mapped at the } P99 \text{ percentile.}$$
 
@@ -23,7 +23,7 @@ Compliance windows operate on a rolling evaluation mechanism:
 | --- | --- | --- | --- |
 | **Service Availability** | $\ge 99.9\%$ | 30 Days Rolling | **43.8 Minutes** maximum allowed downtime |
 | **C++ Core Server Latency** | $< 200 \text{ ms}$ ($P99$) | 5 Minutes Rolling | $0.1\%$ of total transactions |
-| **HPC Engine Processing** | $< 500 \text{ ms}$ ($P99$) | 5 Minutes Rolling | Limited by parallel execution thresholds |
+| **HPC Engine Processing** | Evaluated against the benchmark targets defined for US-201 and US-206 | 5 Minutes Rolling | P99 latency must remain below $2\times$ the single-thread baseline defined by the benchmark report |
 
 ### 3. Operational Error Budget Allocation Policy
 
