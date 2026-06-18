@@ -28,8 +28,8 @@ The following architectural design decisions have been made:
 * **Out-of-Band Telemetry Propagation (Through Files or an External Database):** Storing trace identifiers in shared storage for retrieval by the Server and Engine was considered. It was rejected because it introduces I/O latency, adds storage dependencies, and creates race conditions that undermine the real-time observability required by the SLO dashboard.
 
 ## Justification (Trade-off Analysis)
-* **Backward Compatibility:** Because this is a purely additive extension, legacy v0.1 servers or clients will simply ignore the `ANALYZE_GRAPH` token in their control structures (`switch-case`), ensuring immediate interoperability.
-* **Observability Standardization:** By using the official W3C specification (`traceparent` structured as `version-traceid-parentid-traceflags`), we ensure that any standard OpenTelemetry SDK in C++ can deserialize the context directly, accurately mapping the time the graph spends on the network versus execution time within OpenMP threads.
+* **Backward Compatibility:** Because the extension is additive, existing v0.1 clients that continue using `REGISTER`, `QUERY_NODE`, `LIST_NODES`, and `HEARTBEAT` remain unaffected. Servers that do not implement `ANALYZE_GRAPH` should reject it as an unsupported operation rather than reinterpret or modify existing message behavior.
+* **Observability Standardization:** By following the W3C Trace Context format, the C++ services can extract `traceparent` and `tracestate` from the JSON envelope and reconstruct the parent context using standard OpenTelemetry APIs.
 
 ## Consequences
 
@@ -39,8 +39,8 @@ The following architectural design decisions have been made:
 * **Drawbacks:** The size of the JSON payload increases slightly due to the inclusion of telemetry strings, adding a marginal network byte overhead per analysis request.
 * **Restrictions Introduced:**  
   * If a C client sends an `ANALYZE_GRAPH` message without the `traceparent` field, Server v0.1 is strictly required to generate a root context (*Root Trace*) before forwarding the packet to the HPC engine in order to prevent telemetry fragmentation.
-  * Error codes mapped in the technical document (`ERROR_HPC_TIMEOUT`, `ERROR_SERVICE_UNAVAILABLE`, etc.) must be translated into OpenTelemetry span error states to trigger Grafana’s automated alerts if the error budget is compromised.
+  * Error codes defined in the technical document must be recorded as OpenTelemetry span error states and, where metrics are exported, reflected in the counters used by Grafana SLO dashboards.
 
 ## References
-* `docs/adr/ADR-003-protocol-design.md` (Base Protocol and v0.2 Milestone Addendum)
+* `docs/ADR003-Protocol.md` (Base Protocol and v0.2 Milestone Addendum)
 * `docs/analyze-graph-protocol-v0.2.md` (Formal specification of contracts and JSON schemas)
