@@ -45,6 +45,6 @@ The full EOP v0.1 and v0.2 stack will be fully containerized via multi-stage Doc
 
 * All cluster manifests must pass automated linting checks (`kubeval` or `kubeconform`) within the CI pipeline.
 
-* Deployments must achieve a zero-downtime rolling restart constraint. Triggering a rolling update (`kubectl rollout restart`) must maintain continuous request routing without throwing connection errors or dropping packets on active clients.
+* Rolling restarts must be compatible with the v0.2 workload requirements and validated by the corresponding US-204 integration test. The server and HPC engine must rely on readiness probes so traffic is only routed to Ready pods.
 
 * The build system must expose a unified hook (`make k8s-apply`) that automatically handles the sequence of applying configurations and blocking until all components transition into a healthy `Ready` state.
