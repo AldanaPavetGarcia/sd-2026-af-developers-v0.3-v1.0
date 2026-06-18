@@ -50,7 +50,7 @@ To avoid scope creep in v0.1, this service **DOES NOT** perform the following ta
 
 * **Metrics and Alerts Aggregation:** No scraping endpoints are exposed for Prometheus, and no dashboards are configured in Grafana (reserved for v0.2).
 
-* * **Log Centralization with Loki:** Log output is strictly limited to `stdout` in structured JSON format. Log collection and indexing by log agents are excluded (reserved for v0.3).
+* **Log Centralization with Loki:** Log output is strictly limited to `stdout` in structured JSON format. Log collection and indexing by log agents are excluded (reserved for v0.3).
 
 * **Cryptography or TLS Handling:** BSD socket connections are in plain text. Transport layer security is not managed by the server at this stage.
 

@@ -32,7 +32,7 @@ The **Thread Pool** model (Option 2) has been chosen for implementation.
 
 * **Negative:** It introduces the need for robust synchronization primitives. Potential bottlenecks in the shared queue must be carefully managed.
 
-* * **Technical Implementation:**
+* **Technical Implementation:**
 * **Mutexes** and **Condition Variables** will be used for synchronization between the producer thread (the one that accepts connections/messages) and the consumer threads (workers).
 
 * Shared state (such as the node registry) will be protected using granular locks to minimize contention.

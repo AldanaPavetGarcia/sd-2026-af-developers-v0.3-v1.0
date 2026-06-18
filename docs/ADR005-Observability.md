@@ -44,7 +44,7 @@ It has been decided to adopt **Native Instrumentation from v0.1 using the OpenTe
 
 * **Positive:** Drastic reduction in mean time to failure (MTTR); immediate visibility of latency bottlenecks; a technical foundation prepared for native log-to-trace indexing and correlation, which will be completed in version 0.3.
 
-* * **Drawbacks:** Introduces overhead in the initial development of v0.1, making instrumentation a mandatory acceptance criterion (AC) rather than an optional one for stories like **US-110**.
+* **Drawbacks:** Introduces overhead in the initial development of v0.1, making instrumentation a mandatory acceptance criterion (AC) rather than an optional one for stories like **US-110**.
 
 * **Technical Restrictions and Invariants:**
 
@@ -52,7 +52,7 @@ It has been decided to adopt **Native Instrumentation from v0.1 using the OpenTe
 
 * **Span Boundaries:** Each service must send a span for incoming (server) and outgoing (client) requests, as well as for critical failures (by explicitly setting the `status = ERROR` attribute and injecting the error message).
 
-* * **Log Contract:** All logs must be written in a structured format to `stdout`, strictly adhering to the following JSON schema, invariably coupled to the active `trace_id`:
+* **Log Contract:** All logs must be written in a structured format to `stdout`, strictly adhering to the following JSON schema, invariably coupled to the active `trace_id`:
 ```json
 {
 "timestamp": "2077-01-01T00:00:00.000Z",

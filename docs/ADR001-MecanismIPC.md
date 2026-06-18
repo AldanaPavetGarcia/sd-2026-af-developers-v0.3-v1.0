@@ -30,6 +30,6 @@ It has been decided to use **Direct BSD/POSIX Sockets** (Option 4) for the imple
 
 * **Positive:** Development of direct skills in file descriptor management; full control over the error and concurrency model; the system is free of heavy external dependencies.
 
-* * **Drawbacks:** Significant increase in implementation effort (specifically in handling partial `recv()` returns). The protocol's evolution requires rigorous manual negotiation to maintain compatibility.
+* **Drawbacks:** Significant increase in implementation effort (specifically in handling partial `recv()` returns). The protocol's evolution requires rigorous manual negotiation to maintain compatibility.
 
 * **Restrictions Introduced:** The use of **RAII** for resource management (file descriptors) becomes mandatory according to **NFR-3**, and the concurrency model for handling multiple clients must be explicitly documented in **ADR-002**.

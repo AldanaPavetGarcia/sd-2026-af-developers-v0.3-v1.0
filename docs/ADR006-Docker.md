@@ -22,7 +22,7 @@ It has been decided to adopt **Mandatory Containerization with Docker and Deploy
 
 * **Efficiency in Runtime Environments:** The restriction to using *Multi-stage builds* separates the compilation toolchain from the runtime environment, resulting in ultra-lightweight images (e.g., 50 MB) based on optimized distributions (e.g., `debian:bookworm-slim`, `alpine`, or `distroless`).
 
-* * **Active Operational Resilience:** Kubernetes manifests will delegate fault monitoring to automated liveness and readiness probes, guaranteeing the restart of downed pods in less than 10 seconds (US-109).
+* **Active Operational Resilience:** Kubernetes manifests will delegate fault monitoring to automated liveness and readiness probes, guaranteeing the restart of downed pods in less than 10 seconds (US-109).
 
 * **Local Development Agility:** Adopting Docker Compose as the local development environment unifies the startup of the EOP server, OTel Collector, and SigNoz into a single command (`docker compose up`) in less than 60 seconds, accelerating the team's integration testing.
 
@@ -30,7 +30,7 @@ It has been decided to adopt **Mandatory Containerization with Docker and Deploy
 
 * **Positive:** Identical and reproducible deployments on any infrastructure; automated manifest validation in continuous integration (CI) using `kubeval`/`kubeconform`; clean configuration injection using `ConfigMaps` without hardcoded values ​​in the images.
 
-* * **Drawbacks:** Steep initial learning curve for engineers accustomed only to traditional local environments.
+* **Drawbacks:** Steep initial learning curve for engineers accustomed only to traditional local environments.
 
 * **Technical Restrictions and Invariants:**
 

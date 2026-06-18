@@ -32,7 +32,7 @@ It has been decided to implement a **JSON**-based protocol for payload encoding,
 
 * **Flexibility:** JSON allows for the addition of new optional fields in future versions (v0.2 or v0.3) without breaking compatibility for clients that don't expect them, facilitating protocol evolution without constant renegotiations.
 
-* * **Interoperability:** As a universal standard, it guarantees that components written by different teams can communicate as long as they adhere to the agreed-upon field scheme (Envelope).
+* **Interoperability:** As a universal standard, it guarantees that components written by different teams can communicate as long as they adhere to the agreed-upon field scheme (Envelope).
 
 ## Consequences
 
@@ -46,7 +46,7 @@ It has been decided to implement a **JSON**-based protocol for payload encoding,
 
 * **Validation:** Interoperability will be verified through cross-testing where the client on one team must operate correctly with the server on another.
 
-* * **Security:** Engineers are prohibited from including sensitive data (tokens, passwords) in JSON fields, thus maintaining secure telemetry output.
+* **Security:** Engineers are prohibited from including sensitive data (tokens, passwords) in JSON fields, thus maintaining secure telemetry output.
 
 ## v0.2 Addendum: ANALYZE_GRAPH Protocol Extension
 
