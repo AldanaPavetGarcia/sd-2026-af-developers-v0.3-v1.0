@@ -24,13 +24,13 @@ The `hpc-engine` will completely avoid dense structures and will internally repr
 
 ## Justification (Trade-off Analysis)
 
-Bunker network topologies are inherently **sparse graphs** (each node connects to a localized subset of neighboring installations, meaning $E \ll V^2$). The Adjacency List reduces space complexity down to $O(V + E)$, utilizing less than **50 MB** of RAM for $100,000$ vertices, leaving the processor cache lines open for algorithm execution.
+Bunker network topologies are inherently **sparse graphs** (each node connects to a localized subset of neighboring installations, meaning $E \ll V^2$). For sparse bunker topologies, adjacency lists provide $O(V + E)$ memory usage, avoiding the $O(V^2)$ memory cost of adjacency matrices. Exact memory consumption depends on the number of edges and the concrete `Edge` representation, leaving the processor cache lines open for algorithm execution.
 
 
 ## Consequences
 
 * **Positive:** Ultra-low memory consumption; high cache-line hit ratios when iterating through immediate neighbor weights in OpenMP loops.
 
-* **Drawbacks:** Vertices must be mapped from alphanumeric strings (e.g., `"bunker-alpha"`) to sequential integer indices ($0$ to $N-1$) upon receipt, adding an $O(V \log V)$ pre-processing step.
+* **Drawbacks:** Vertices must be mapped from alphanumeric strings (e.g., `"bunker-alpha"`) to sequential integer indices ($0$ to $N-1$) upon receipt. This introduces a preprocessing step to map external string identifiers to internal numeric indices.
 
 * **Restrictions Introduced:** Strict validation is enforced at the boundary. If any edge payload points to a vertex index or identifier outside the verified node allocation array, the parser must abort processing immediately and emit an `ERROR_INVALID_GRAPH` code, guaranteeing memory isolation.
