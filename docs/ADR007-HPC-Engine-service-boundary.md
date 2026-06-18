@@ -29,18 +29,18 @@ When an external client submits an `ANALYZE_GRAPH` transaction, the v0.1 server 
 
 | Alternative | Reason For Rejection |
 | --- | --- |
-| **Monolithic Server Integration** (Compile algorithms directly inside the v0.1 server binary) | Simplifies the deployment topology by maintaining a single binary, but tightly couples raw networking/session state with intensive CPU-bound processing. A single malformed graph computation could starve the main socket selector loop, dropping incoming búnker connections and violating availability constraints. |
+| **Monolithic Server Integration** (Compile algorithms directly inside the v0.1 server binary) | Simplifies the deployment topology by maintaining a single binary, but tightly couples raw networking/session state with intensive CPU-bound processing. A single malformed graph computation could starve the main socket selector loop, dropping incoming bunker connections and violating availability constraints. |
 | **Fat Client-Side Implementation** (Execute algorithms locally in the C library) | Bypasses server overhead, but forces client environments to possess heavy computational resources. It completely invalidates the platform-as-a-service model required by Vault-Tec and prevents centralized caching or orchestration. |
 | **Standalone Daemon with independent API (e.g., gRPC)** | Creates an architectural fragmentation. It forces clients to manage connections to multiple endpoints and violates **ADR-001**, which explicitly mandates custom socket communication over third-party RPC frameworks for the core platform. |
 
 
 ## Justification (Trade-off Analysis)
 
-* **Separation of Concerns:** The v0.1 server remains a highly optimized, non-blocking I/O multiplexer focused on connection lifecycles, session pools, and basic routing. The `hpc-engine` owns the CPU-bound, parallel algorithmic domain.
+* **Separation of Concerns:** The v0.1 server remains a highly optimized, communication server focused on connection lifecycles, session pools, and basic routing. The `hpc-engine` owns the CPU-bound, parallel algorithmic domain.
 
 * **Reuse of Infrastructure:** By forcing the engine to connect via the `REGISTER` message, we reuse 100% of the socket framing, error handling, and connection state machines developed in v0.1.
 
-* **Fault Isolation & Resiliencia:** If the `hpc-engine` component experiences an unhandled failure or crash, the main server intercepts the broken pipe and gracefully returns an `ERROR_SERVICE_UNAVAILABLE` payload to the client. The core communication platform never hangs or crashes due to external engine dropouts.
+* **Fault Isolation & Resilience:** If the `hpc-engine` component experiences an unhandled failure or crash, the main server intercepts the broken pipe and gracefully returns an `ERROR_SERVICE_UNAVAILABLE` payload to the client. The core communication platform never hangs or crashes due to external engine dropouts.
 
 
 ## Consequences

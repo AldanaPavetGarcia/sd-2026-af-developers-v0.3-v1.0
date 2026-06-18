@@ -1,4 +1,4 @@
-# ADR 007: Node_id Assignment Strategy and Reconnection Management
+# ADR-013: Node_id Assignment Strategy and Reconnection Management
 
 ## Context and Problem
 
@@ -10,11 +10,11 @@ The EOP server needs to uniquely identify each bunker that connects to the netwo
 
 2. **Static Generation by Configuration:** Each bunker has a hardcoded `node_id` in its local configuration file. (Rejected: Reduces Vault-Tec's operational flexibility and hinders dynamic scaling in automated environments.)
 
-3. **Customer-Managed Hybrid Identification with Local Persistence:** The client generates its initial identifier and is responsible for persisting it. Upon reconnection, it reuses this identity to synchronize state on the server.
+3. **Client-Managed Hybrid Identification with Local Persistence:** The client generates its initial identifier and is responsible for persisting it. Upon reconnection, it reuses this identity to synchronize state on the server.
 
 ## Decision
 
-It has been decided to implement the **Customer-Managed Hybrid Identification System with server-side restore logic** (Option 3).
+It has been decided to implement the **Client-Managed Hybrid Identification System with server-side restore logic** (Option 3).
 
 ## Justification (Trade-off Analysis)
 
@@ -22,11 +22,11 @@ It has been decided to implement the **Customer-Managed Hybrid Identification Sy
 
 * **Base Decoupling:** The server's validation logic is simplified. It does not need to coordinate the generation of global IDs at this stage, delegating the responsibility for initial uniqueness to the C integration library (Epic E2).
 
-* * **History Consistency:** Ensures that traces sent to **SigNoz (US-110)** maintain semantic consistency, as operations from the same physical bunker will be grouped under the same `node_id` over time, facilitating diagnostics in the Runbook.
+* **History Consistency:** Ensures that traces sent to **SigNoz (US-110)** maintain semantic consistency, as operations from the same physical bunker will be grouped under the same `node_id` over time, facilitating diagnostics in the Runbook.
 
 ## Consequences
 
-* **Positive:** Hot recovery from failures without manual operator intervention; complete mitigation of memory leaks due to orphaned records in the server's internal map.
+* **Positive:** Hot recovery from failures without manual operator intervention; helps prevent memory leaks from orphaned records in the server's internal map by reusing node allocations upon reconnection.
 
 * **Negative:** Introduces a critical dependency on the client's entropy generator. There is a marginal risk of ID collisions if random generation is weak.
 

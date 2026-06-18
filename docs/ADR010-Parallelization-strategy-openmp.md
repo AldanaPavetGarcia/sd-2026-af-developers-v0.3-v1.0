@@ -39,7 +39,7 @@ OpenMP is built directly into the toolchain compilers (GCC and Clang). It requir
 
 * **Positive:** Direct runtime execution control through the standard `OMP_NUM_THREADS` environment variable without requiring source re-compilation.
 
-* **Drawbacks:** Thread synchronization bugs (data races) become a critical risk. Concurrent vector accumulation requires explicit use of OpenMP allocation reduction clauses (`reduction(+:variable)`) or local atomic variables.
+* **Drawbacks:** Thread synchronization bugs (data races) become a critical risk. Concurrent vector accumulation requires explicit use of OpenMP reduction clauses (`reduction(+:variable)`) or local atomic variables.
 
 * **Restrictions Introduced:**
 
