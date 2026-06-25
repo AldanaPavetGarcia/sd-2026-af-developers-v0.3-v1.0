@@ -16,6 +16,7 @@
 #include <thread>
 #include <vector>
 #include <poll.h>
+#include <cstdlib>
 
 #include <gtest/gtest.h>
 
@@ -735,4 +736,31 @@ TEST_F(EopServerTest, AnalyzeGraphForwardsRequestToRegisteredHpcEngine)
     EXPECT_NE(clientResponse.find("req-dispatch"), std::string::npos) << clientResponse;
 
     close(engineSock);
+}
+
+// ---------------------------------------------------------------------------
+// ANALYZE_GRAPH returns timeout when the registered HPC Engine stalls
+// ---------------------------------------------------------------------------
+TEST_F(EopServerTest, AnalyzeGraphReturnsTimeoutWhenHpcEngineStalls)
+{
+    setenv("EOP_HPC_TIMEOUT_MS", "100", 1);
+
+    int engineSock = openClientSocket();
+    ASSERT_GE(engineSock, 0);
+
+    const std::string engineAck = sendOnOpenSocketAndReceive(
+        engineSock, "REGISTER node_id=hpc-engine bunker_name=HPC ip_address=127.0.0.1 capacity=1");
+
+    ASSERT_NE(engineAck.find("ACK"), std::string::npos) << engineAck;
+
+    const std::string clientResponse = sendAndReceive(
+        getCmdStringFromCode(CMD_ANALYZE_GRAPH) +
+        R"( {"type":"ANALYZE_GRAPH","request_id":"req-timeout","payload":{"nodes":["A"],"edges":[],"algorithms":["connected_components"]}})");
+
+    EXPECT_NE(clientResponse.find(getCmdStringFromCode(CMD_ERROR_HPC_TIMEOUT)), std::string::npos)
+        << clientResponse;
+    EXPECT_NE(clientResponse.find("HPC engine timeout"), std::string::npos) << clientResponse;
+
+    close(engineSock);
+    unsetenv("EOP_HPC_TIMEOUT_MS");
 }
