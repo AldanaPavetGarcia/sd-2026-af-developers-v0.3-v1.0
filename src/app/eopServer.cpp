@@ -303,6 +303,23 @@ static void updateSessionActivity(ServerContext& ctx, int clientSock)
 }
 
 /**
+ * @brief Returns true when a node_id belongs to an HPC Engine session.
+ *
+ * The v0.2 protocol keeps REGISTER backward compatible, so the engine is
+ * identified by convention through its node_id.
+ *
+ * @param nodeId Registered node identifier.
+ * @return true if the node id represents an HPC Engine.
+ */
+static bool isHpcEngineNodeId(const std::string& nodeId)
+{
+    constexpr const char* kHpcEngineNodeId = "hpc-engine";
+    constexpr const char* kHpcEngineNodePrefix = "hpc-engine-";
+
+    return nodeId == kHpcEngineNodeId || nodeId.rfind(kHpcEngineNodePrefix, 0) == 0;
+}
+
+/**
  * @brief Associates a successfully registered node with its active session.
  *
  * Also updates the corresponding node record to ONLINE state.
@@ -322,6 +339,7 @@ static void bindNodeToSession(ServerContext& ctx, int clientSock, const std::str
         {
             it->second.nodeId = nodeId;
             it->second.registered = true;
+            it->second.reservedForDispatch = isHpcEngineNodeId(nodeId);
             it->second.lastActivity = std::chrono::steady_clock::now();
             sessionId = it->second.sessionId;
         }
@@ -703,6 +721,10 @@ static void timeoutMonitorLoop(ServerContext& ctx)
             std::lock_guard<std::mutex> lock(ctx.sessionsMutex);
             for (auto& [fd, session] : ctx.activeSessions)
             {
+                if (session.reservedForDispatch)
+                {
+                    continue;
+                }
                 if (!session.active)
                 {
                     continue;
@@ -1045,9 +1067,9 @@ void handleClientMessage(int clientSock, const std::string& clientIp, const std:
     }
     else if (request.rfind(getCmdStringFromCode(CMD_ANALYZE_GRAPH), 0) == 0)
     {
-    audit_log_write_fmt(INFO_LOG, "Request received: 'ANALYZE_GRAPH ...' from IP=%s", clientIp.c_str());
-    updateSessionActivity(serverContext, clientSock);
-    handleAnalyzeGraph(clientSock, request);
+        audit_log_write_fmt(INFO_LOG, "Request received: 'ANALYZE_GRAPH ...' from IP=%s", clientIp.c_str());
+        updateSessionActivity(serverContext, clientSock);
+        handleAnalyzeGraph(clientSock, request);
     }
     else
     {
@@ -1161,7 +1183,8 @@ void startServer(int port, int idleTimeout)
             {
                 if (session.active)
                 {
-                    pollfds.push_back({fd, POLLIN, 0});
+                    const short events = session.reservedForDispatch ? 0 : POLLIN;
+                    pollfds.push_back({fd, events, 0});
                 }
             }
         }
