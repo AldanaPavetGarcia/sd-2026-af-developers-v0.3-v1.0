@@ -15,6 +15,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <poll.h>
 
 #include <gtest/gtest.h>
 
@@ -145,6 +146,29 @@ namespace
             return "";
         }
         return std::string(buf, static_cast<std::size_t>(bytes));
+    }
+
+    /**
+     * @brief Receives a single response message with a bounded timeout.
+     *
+     * @param sock Connected socket file descriptor.
+     * @param timeoutMs Timeout in milliseconds.
+     * @return Response payload, or empty string on timeout/error.
+     */
+    std::string receiveFromSocketWithTimeout(int sock, int timeoutMs)
+    {
+        struct pollfd pfd = {};
+        pfd.fd = sock;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+
+        const int pollResult = poll(&pfd, 1, timeoutMs);
+        if (pollResult <= 0 || (pfd.revents & POLLIN) == 0)
+        {
+            return "";
+        }
+
+        return receiveFromSocket(sock);
     }
 
     /**
@@ -669,4 +693,46 @@ TEST_F(EopServerTest, HeartbeatDisconnectAndReconnectFullCycle)
     EXPECT_TRUE(waitForNodeStatus(nodeId, "ONLINE")) << "Expected node to become ONLINE again after reconnection";
 
     close(sock2);
+}
+
+// ---------------------------------------------------------------------------
+// ANALYZE_GRAPH is forwarded to a registered HPC Engine
+// ---------------------------------------------------------------------------
+TEST_F(EopServerTest, AnalyzeGraphForwardsRequestToRegisteredHpcEngine)
+{
+    int engineSock = openClientSocket();
+    ASSERT_GE(engineSock, 0);
+
+    const std::string engineAck = sendOnOpenSocketAndReceive(
+        engineSock, "REGISTER node_id=hpc-engine bunker_name=HPC ip_address=127.0.0.1 capacity=1");
+
+    ASSERT_NE(engineAck.find("ACK"), std::string::npos) << engineAck;
+
+    std::string clientResponse;
+    std::thread clientThread(
+        [&clientResponse]()
+        {
+            clientResponse = sendAndReceive(
+                getCmdStringFromCode(CMD_ANALYZE_GRAPH) +
+                R"( {"type":"ANALYZE_GRAPH","request_id":"req-dispatch","payload":{"nodes":["A"],"edges":[],"algorithms":["connected_components"]}})");
+        });
+
+    const std::string forwardedRequest = receiveFromSocketWithTimeout(engineSock, 2000);
+
+    EXPECT_NE(forwardedRequest.find(getCmdStringFromCode(CMD_ANALYZE_GRAPH)), std::string::npos)
+        << forwardedRequest;
+    EXPECT_NE(forwardedRequest.find("req-dispatch"), std::string::npos) << forwardedRequest;
+
+    const std::string engineResponse =
+        R"({"type":"RESPONSE","status":"ACK","request_id":"req-dispatch","result":{"ok":true}})"
+        "\n";
+
+    send(engineSock, engineResponse.c_str(), engineResponse.size(), 0);
+
+    clientThread.join();
+
+    EXPECT_NE(clientResponse.find(R"("status":"ACK")"), std::string::npos) << clientResponse;
+    EXPECT_NE(clientResponse.find("req-dispatch"), std::string::npos) << clientResponse;
+
+    close(engineSock);
 }
