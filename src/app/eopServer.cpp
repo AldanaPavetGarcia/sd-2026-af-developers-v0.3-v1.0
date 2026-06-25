@@ -580,8 +580,11 @@ static void workerLoop(ServerContext& ctx)
             opName = "LIST_NODES";
         else if (msg.message.rfind(getCmdStringFromCode(CMD_HEARTBEAT), 0) == 0)
             opName = "HEARTBEAT";
+        else if (msg.message.rfind(getCmdStringFromCode(CMD_ANALYZE_GRAPH), 0) == 0)
+            opName = "ANALYZE_GRAPH";
 
-        bool shouldTrace = (opName == "REGISTER" || opName == "QUERY_NODE" || opName == "LIST_NODES");
+        bool shouldTrace = (opName == "REGISTER" || opName == "QUERY_NODE" || opName == "LIST_NODES" ||
+                            opName == "ANALYZE_GRAPH");
 
         opentelemetry::nostd::shared_ptr<opentelemetry::trace::Span> opSpan;
         std::unique_ptr<opentelemetry::trace::Scope> scope;
@@ -804,6 +807,19 @@ static std::string buildErrorNotFound(const std::string& nodeId)
 // LCOV_EXCL_STOP
 
 /**
+ * @brief Build an ERROR_SERVICE_UNAVAILABLE response for ANALYZE_GRAPH.
+ *
+ * This is returned when no HPC Engine is currently available to process
+ * graph analysis requests.
+ *
+ * @return Formatted service-unavailable response.
+ */
+static std::string buildErrorServiceUnavailable()
+{
+    return getCmdStringFromCode(CMD_ERROR_SERVICE_UNAVAILABLE) + " desc=HPC engine unavailable\n";
+}
+
+/**
  * @brief Serialise a NodeRecord to a single line (AC5, AC7).
  *
  * Format:
@@ -967,6 +983,27 @@ static void handleListNodes(int clientSock)
     g_logContext.result = "OK";
 }
 
+/**
+ * @brief Handle an ANALYZE_GRAPH command when no HPC Engine is available.
+ *
+ * The first integration step is intentionally conservative: the server recognizes
+ * the v0.2 command and fails safely instead of treating it as an unknown command
+ * or blocking while waiting for a non-existent engine.
+ *
+ * @param clientSock Connected client socket.
+ * @param line Raw request line.
+ */
+static void handleAnalyzeGraph(int clientSock, const std::string& line)
+{
+    (void)line;
+
+    const std::string err = buildErrorServiceUnavailable();
+    send(clientSock, err.c_str(), err.size(), 0);
+
+    auditLogger.writeString("ANALYZE_GRAPH rejected: HPC engine unavailable", WARNING_LOG);
+    g_logContext.result = "ERROR";
+}
+
 // ---------------------------------------------------------------------------
 // Per-client worker handling
 // ---------------------------------------------------------------------------
@@ -1005,6 +1042,12 @@ void handleClientMessage(int clientSock, const std::string& clientIp, const std:
     {
         // Skip logging for HEARTBEAT to maintain high performance under load
         handleHeartbeat(clientSock);
+    }
+    else if (request.rfind(getCmdStringFromCode(CMD_ANALYZE_GRAPH), 0) == 0)
+    {
+    audit_log_write_fmt(INFO_LOG, "Request received: 'ANALYZE_GRAPH ...' from IP=%s", clientIp.c_str());
+    updateSessionActivity(serverContext, clientSock);
+    handleAnalyzeGraph(clientSock, request);
     }
     else
     {

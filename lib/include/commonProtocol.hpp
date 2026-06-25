@@ -41,7 +41,9 @@ extern "C"
         CMD_QUERY_NODE,
         CMD_ERROR_NOT_FOUND,
         CMD_LIST_NODES,
-        CMD_HEARTBEAT
+        CMD_HEARTBEAT,
+        CMD_ANALYZE_GRAPH,
+        CMD_ERROR_SERVICE_UNAVAILABLE,
     };
 
     /**

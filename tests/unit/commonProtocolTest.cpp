@@ -9,6 +9,8 @@ TEST(CommonProtocolTest, GetCmdStringFromCode)
     EXPECT_EQ(getCmdStringFromCode(CMD_QUERY_NODE), "QUERY_NODE");
     EXPECT_EQ(getCmdStringFromCode(CMD_ERROR_NOT_FOUND), "ERROR_NOT_FOUND");
     EXPECT_EQ(getCmdStringFromCode(CMD_LIST_NODES), "LIST_NODES");
+    EXPECT_EQ(getCmdStringFromCode(CMD_ANALYZE_GRAPH), "ANALYZE_GRAPH");
+    EXPECT_EQ(getCmdStringFromCode(CMD_ERROR_SERVICE_UNAVAILABLE), "ERROR_SERVICE_UNAVAILABLE");
     EXPECT_EQ(getCmdStringFromCode(static_cast<SystemCommand>(999)), "UNKNOWN"); // NOLINT
 }
 

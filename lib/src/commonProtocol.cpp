@@ -57,7 +57,8 @@ std::string getCmdStringFromCode(SystemCommand code)
         case CMD_ERROR_NOT_FOUND: cmdStr = "ERROR_NOT_FOUND"; break;
         case CMD_LIST_NODES: cmdStr = "LIST_NODES"; break;
         case CMD_HEARTBEAT: return "HEARTBEAT";
-
+        case CMD_ANALYZE_GRAPH: cmdStr = "ANALYZE_GRAPH"; break;
+        case CMD_ERROR_SERVICE_UNAVAILABLE: cmdStr = "ERROR_SERVICE_UNAVAILABLE"; break;
         default: cmdStr = "UNKNOWN"; break;
     }
 
