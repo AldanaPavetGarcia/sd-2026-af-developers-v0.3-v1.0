@@ -842,6 +842,16 @@ static std::string buildErrorServiceUnavailable()
 }
 
 /**
+ * @brief Build an ERROR_HPC_TIMEOUT response for ANALYZE_GRAPH.
+ *
+ * @return Formatted HPC timeout response.
+ */
+static std::string buildErrorHpcTimeout()
+{
+    return getCmdStringFromCode(CMD_ERROR_HPC_TIMEOUT) + " desc=HPC engine timeout\n";
+}
+
+/**
  * @brief Serialise a NodeRecord to a single line (AC5, AC7).
  *
  * Format:
@@ -1006,6 +1016,160 @@ static void handleListNodes(int clientSock)
 }
 
 /**
+ * @brief Returns the configured HPC dispatch timeout in milliseconds.
+ *
+ * Uses EOP_HPC_TIMEOUT_MS when present; otherwise falls back to 5000 ms.
+ *
+ * @return Timeout in milliseconds.
+ */
+static int getHpcDispatchTimeoutMs()
+{
+    constexpr int kDefaultTimeoutMs = 5000;
+
+    const char* rawTimeout = std::getenv("EOP_HPC_TIMEOUT_MS");
+    if (rawTimeout == nullptr)
+    {
+        return kDefaultTimeoutMs;
+    }
+
+    char* endPtr = nullptr;
+    const long parsed = std::strtol(rawTimeout, &endPtr, 10);
+
+    if (endPtr == rawTimeout || parsed <= 0 || parsed > 60000)
+    {
+        return kDefaultTimeoutMs;
+    }
+
+    return static_cast<int>(parsed);
+}
+
+/**
+ * @brief Finds an ONLINE HPC Engine session reserved for dispatch.
+ *
+ * @param[out] engineFd Socket fd associated with the HPC Engine.
+ * @param[out] engineNodeId Node id associated with the HPC Engine.
+ * @return true if an available engine was found.
+ */
+static bool findAvailableHpcEngineSession(int& engineFd, std::string& engineNodeId)
+{
+    std::lock_guard<std::mutex> sessionsLock(serverContext.sessionsMutex);
+    std::lock_guard<std::mutex> registryLock(serverContext.registry.registryMutex);
+
+    for (const auto& [fd, session] : serverContext.activeSessions)
+    {
+        if (!session.active || !session.registered || !session.reservedForDispatch)
+        {
+            continue;
+        }
+
+        auto nodeIt = serverContext.registry.nodesMap.find(session.nodeId);
+        if (nodeIt == serverContext.registry.nodesMap.end())
+        {
+            continue;
+        }
+
+        if (nodeIt->second.status != NodeStatus::ONLINE)
+        {
+            continue;
+        }
+
+        engineFd = fd;
+        engineNodeId = session.nodeId;
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * @brief Sends the full payload to a socket.
+ *
+ * @param fd Target socket fd.
+ * @param payload Payload to send.
+ * @return true if the full payload was sent.
+ */
+static bool sendAllToSocket(int fd, const std::string& payload)
+{
+    std::size_t totalSent = 0;
+
+    while (totalSent < payload.size())
+    {
+        const ssize_t sent = send(fd, payload.data() + totalSent, payload.size() - totalSent, 0);
+
+        if (sent < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return false;
+        }
+
+        if (sent == 0)
+        {
+            return false;
+        }
+
+        totalSent += static_cast<std::size_t>(sent);
+    }
+
+    return true;
+}
+
+/**
+ * @brief Receives one response from the HPC Engine using a bounded timeout.
+ *
+ * @param fd Engine socket fd.
+ * @param timeoutMs Timeout in milliseconds.
+ * @param[out] timedOut True when the timeout expires.
+ * @param[out] disconnected True when the engine socket closes or errors.
+ * @return Response payload, or empty string on timeout/disconnect/error.
+ */
+static std::string receiveHpcEngineResponse(int fd, int timeoutMs, bool& timedOut, bool& disconnected)
+{
+    constexpr std::size_t kHpcResponseBufferSize = 65536;
+
+    timedOut = false;
+    disconnected = false;
+
+    struct pollfd pfd = {};
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+
+    const int pollResult = poll(&pfd, 1, timeoutMs);
+
+    if (pollResult == 0)
+    {
+        timedOut = true;
+        return "";
+    }
+
+    if (pollResult < 0)
+    {
+        disconnected = true;
+        return "";
+    }
+
+    if ((pfd.revents & POLLIN) == 0)
+    {
+        disconnected = true;
+        return "";
+    }
+
+    std::vector<char> buffer(kHpcResponseBufferSize, 0);
+    const ssize_t bytesRecv = recv(fd, buffer.data(), buffer.size() - 1, 0);
+
+    if (bytesRecv <= 0)
+    {
+        disconnected = true;
+        return "";
+    }
+
+    return std::string(buffer.data(), static_cast<std::size_t>(bytesRecv));
+}
+
+/**
  * @brief Handle an ANALYZE_GRAPH command when no HPC Engine is available.
  *
  * The first integration step is intentionally conservative: the server recognizes
@@ -1017,13 +1181,70 @@ static void handleListNodes(int clientSock)
  */
 static void handleAnalyzeGraph(int clientSock, const std::string& line)
 {
-    (void)line;
+    std::lock_guard<std::mutex> dispatchLock(serverContext.hpcDispatchMutex);
 
-    const std::string err = buildErrorServiceUnavailable();
-    send(clientSock, err.c_str(), err.size(), 0);
+    int engineFd = -1;
+    std::string engineNodeId;
 
-    auditLogger.writeString("ANALYZE_GRAPH rejected: HPC engine unavailable", WARNING_LOG);
-    g_logContext.result = "ERROR";
+    if (!findAvailableHpcEngineSession(engineFd, engineNodeId))
+    {
+        const std::string err = buildErrorServiceUnavailable();
+        send(clientSock, err.c_str(), err.size(), 0);
+
+        auditLogger.writeString("ANALYZE_GRAPH rejected: HPC engine unavailable", WARNING_LOG);
+        g_logContext.result = "ERROR";
+        return;
+    }
+
+    std::string request = line;
+    if (request.empty() || request.back() != '\n')
+    {
+        request.push_back('\n');
+    }
+
+    if (!sendAllToSocket(engineFd, request))
+    {
+        unregisterSession(serverContext, engineFd, "hpc engine dispatch send failed");
+
+        const std::string err = buildErrorServiceUnavailable();
+        send(clientSock, err.c_str(), err.size(), 0);
+
+        auditLogger.writeString("ANALYZE_GRAPH rejected: failed to send request to HPC engine", ERROR_LOG);
+        g_logContext.result = "ERROR";
+        return;
+    }
+
+    bool timedOut = false;
+    bool disconnected = false;
+    std::string engineResponse =
+        receiveHpcEngineResponse(engineFd, getHpcDispatchTimeoutMs(), timedOut, disconnected);
+
+    if (timedOut)
+    {
+        const std::string err = buildErrorHpcTimeout();
+        send(clientSock, err.c_str(), err.size(), 0);
+
+        auditLogger.writeString("ANALYZE_GRAPH failed: HPC engine timeout", WARNING_LOG);
+        g_logContext.result = "ERROR";
+        return;
+    }
+
+    if (disconnected || engineResponse.empty())
+    {
+        unregisterSession(serverContext, engineFd, "hpc engine disconnected during dispatch");
+
+        const std::string err = buildErrorServiceUnavailable();
+        send(clientSock, err.c_str(), err.size(), 0);
+
+        auditLogger.writeString("ANALYZE_GRAPH failed: HPC engine disconnected during dispatch", ERROR_LOG);
+        g_logContext.result = "ERROR";
+        return;
+    }
+
+    send(clientSock, engineResponse.c_str(), engineResponse.size(), 0);
+
+    auditLogger.writeString("ANALYZE_GRAPH dispatched to HPC engine node_id=" + engineNodeId, INFO_LOG);
+    g_logContext.result = "OK";
 }
 
 // ---------------------------------------------------------------------------

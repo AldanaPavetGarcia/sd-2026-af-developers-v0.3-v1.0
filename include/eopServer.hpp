@@ -240,6 +240,8 @@ struct ServerContext
     std::mutex sessionsMutex;                               ///< Protects access to activeSessions.
     std::unordered_map<int, SessionContext> activeSessions; ///< Active sessions indexed by client socket fd.
 
+    std::mutex hpcDispatchMutex; ///< Serializes ANALYZE_GRAPH dispatches to the HPC Engine.
+
     NodeRegistry registry; ///< In-memory node registry (AC4).
 
     std::atomic<int> maxClients;               ///< Maximum allowed simultaneous clients (EOP_MAX_CLIENTS).
