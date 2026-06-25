@@ -283,6 +283,16 @@ TEST_F(EopServerTest, UnknownCommandReturnsError)
     EXPECT_NE(response.find("ERROR_BAD_REQUEST desc=Unknown command"), std::string::npos) << response;
 }
 
+TEST_F(EopServerTest, AnalyzeGraphReturnsServiceUnavailableWhenNoHpcEngineIsRegistered)
+{
+    const std::string response =
+        sendAndReceive(getCmdStringFromCode(CMD_ANALYZE_GRAPH) + " request_id=test-offline-engine payload={}");
+
+    EXPECT_NE(response.find(getCmdStringFromCode(CMD_ERROR_SERVICE_UNAVAILABLE)), std::string::npos)
+        << "Expected ERROR_SERVICE_UNAVAILABLE, got: " << response;
+    EXPECT_NE(response.find("HPC engine unavailable"), std::string::npos) << response;
+}
+
 TEST_F(EopServerTest, ServerBindFailureTest)
 {
     // Port 1 is privileged, binding will fail and hit the error branch in startServer
