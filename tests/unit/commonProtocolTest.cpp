@@ -12,6 +12,7 @@ TEST(CommonProtocolTest, GetCmdStringFromCode)
     EXPECT_EQ(getCmdStringFromCode(CMD_ANALYZE_GRAPH), "ANALYZE_GRAPH");
     EXPECT_EQ(getCmdStringFromCode(CMD_ERROR_SERVICE_UNAVAILABLE), "ERROR_SERVICE_UNAVAILABLE");
     EXPECT_EQ(getCmdStringFromCode(static_cast<SystemCommand>(999)), "UNKNOWN"); // NOLINT
+    EXPECT_EQ(getCmdStringFromCode(CMD_ERROR_HPC_TIMEOUT), "ERROR_HPC_TIMEOUT");
 }
 
 TEST(CommonProtocolTest, GetStatusString)
