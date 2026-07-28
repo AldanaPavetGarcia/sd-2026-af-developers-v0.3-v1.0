@@ -11,12 +11,12 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
+#include <poll.h>
 #include <string>
 #include <thread>
 #include <vector>
-#include <poll.h>
-#include <cstdlib>
 
 #include <gtest/gtest.h>
 
@@ -720,8 +720,7 @@ TEST_F(EopServerTest, AnalyzeGraphForwardsRequestToRegisteredHpcEngine)
 
     const std::string forwardedRequest = receiveFromSocketWithTimeout(engineSock, 2000);
 
-    EXPECT_NE(forwardedRequest.find(getCmdStringFromCode(CMD_ANALYZE_GRAPH)), std::string::npos)
-        << forwardedRequest;
+    EXPECT_NE(forwardedRequest.find(getCmdStringFromCode(CMD_ANALYZE_GRAPH)), std::string::npos) << forwardedRequest;
     EXPECT_NE(forwardedRequest.find("req-dispatch"), std::string::npos) << forwardedRequest;
 
     const std::string engineResponse =
@@ -757,8 +756,7 @@ TEST_F(EopServerTest, AnalyzeGraphReturnsTimeoutWhenHpcEngineStalls)
         getCmdStringFromCode(CMD_ANALYZE_GRAPH) +
         R"( {"type":"ANALYZE_GRAPH","request_id":"req-timeout","payload":{"nodes":["A"],"edges":[],"algorithms":["connected_components"]}})");
 
-    EXPECT_NE(clientResponse.find(getCmdStringFromCode(CMD_ERROR_HPC_TIMEOUT)), std::string::npos)
-        << clientResponse;
+    EXPECT_NE(clientResponse.find(getCmdStringFromCode(CMD_ERROR_HPC_TIMEOUT)), std::string::npos) << clientResponse;
     EXPECT_NE(clientResponse.find("HPC engine timeout"), std::string::npos) << clientResponse;
 
     close(engineSock);

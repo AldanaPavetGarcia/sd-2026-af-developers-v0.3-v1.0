@@ -199,7 +199,7 @@ struct SessionContext
     std::chrono::steady_clock::time_point lastActivity; ///< Last activity time for heartbeat/timeout checks.
     bool registered;                                    ///< True if the client has completed REGISTER successfully.
     bool active;                                        ///< True while the session is considered alive.
-    bool reservedForDispatch;                          ///< True when the session is reserved for server-side dispatch.
+    bool reservedForDispatch;                           ///< True when the session is reserved for server-side dispatch.
 
     opentelemetry::nostd::shared_ptr<opentelemetry::trace::Span>
         connectionSpan; ///< Span tracking the lifetime of the session.

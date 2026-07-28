@@ -601,8 +601,8 @@ static void workerLoop(ServerContext& ctx)
         else if (msg.message.rfind(getCmdStringFromCode(CMD_ANALYZE_GRAPH), 0) == 0)
             opName = "ANALYZE_GRAPH";
 
-        bool shouldTrace = (opName == "REGISTER" || opName == "QUERY_NODE" || opName == "LIST_NODES" ||
-                            opName == "ANALYZE_GRAPH");
+        bool shouldTrace =
+            (opName == "REGISTER" || opName == "QUERY_NODE" || opName == "LIST_NODES" || opName == "ANALYZE_GRAPH");
 
         opentelemetry::nostd::shared_ptr<opentelemetry::trace::Span> opSpan;
         std::unique_ptr<opentelemetry::trace::Scope> scope;
@@ -1216,8 +1216,7 @@ static void handleAnalyzeGraph(int clientSock, const std::string& line)
 
     bool timedOut = false;
     bool disconnected = false;
-    std::string engineResponse =
-        receiveHpcEngineResponse(engineFd, getHpcDispatchTimeoutMs(), timedOut, disconnected);
+    std::string engineResponse = receiveHpcEngineResponse(engineFd, getHpcDispatchTimeoutMs(), timedOut, disconnected);
 
     if (timedOut)
     {
