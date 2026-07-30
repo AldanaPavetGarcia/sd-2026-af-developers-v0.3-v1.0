@@ -1,26 +1,360 @@
 /**
  * @file main.cpp
- * @brief HPC Engine entry point: reads JSON from stdin, processes graph, writes result to stdout.
+ * @brief HPC Engine entry point.
+ *
+ * Default mode:
+ *   Reads one JSON request from stdin, processes it, writes one response to stdout.
+ *
+ * Socket mode:
+ *   Connects to the EOP server, registers as an HPC Engine node, and processes
+ *   ANALYZE_GRAPH requests over the same persistent TCP socket.
  *
  * Exit codes:
- *   0 — Success (ACK response written to stdout)
- *   1 — Validation or parse error (ERROR response written to stdout)
+ *   0 — Success
+ *   1 — Validation, parse, or socket error
  *   2 — Unexpected internal error
  */
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <cstring>
 #include <iostream>
 #include <sstream>
 #include <string>
 
 #include "hpc/engine.hpp"
 
-int main()
+namespace
 {
-    std::ostringstream buffer;
-    buffer << std::cin.rdbuf();
 
-    const hpc::EngineProcessResult result = hpc::processAnalyzeGraphRequest(buffer.str());
+    struct SocketModeConfig
+    {
+        std::string serverHost = "127.0.0.1";
+        int serverPort = 9090;
+        std::string nodeId = "hpc-engine";
+        std::string bunkerName = "HPC";
+        std::string ipAddress = "127.0.0.1";
+        int capacity = 1;
+    };
 
-    std::cout << result.payload;
-    return result.exit_code;
+    bool hasSocketModeArgs(int argc, char* argv[])
+    {
+        for (int i = 1; i < argc; ++i)
+        {
+            if (std::string(argv[i]) == "--server-host" || std::string(argv[i]) == "--server-port" ||
+                std::string(argv[i]) == "--node-id")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool parseSocketModeArgs(int argc, char* argv[], SocketModeConfig& config)
+    {
+        for (int i = 1; i < argc; ++i)
+        {
+            const std::string arg = argv[i];
+
+            auto requireValue = [&](const std::string& option) -> const char*
+            {
+                if (i + 1 >= argc)
+                {
+                    std::cerr << "Missing value for " << option << '\n';
+                    return nullptr;
+                }
+
+                ++i;
+                return argv[i];
+            };
+
+            if (arg == "--server-host")
+            {
+                const char* value = requireValue(arg);
+                if (value == nullptr)
+                {
+                    return false;
+                }
+                config.serverHost = value;
+            }
+            else if (arg == "--server-port")
+            {
+                const char* value = requireValue(arg);
+                if (value == nullptr)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    config.serverPort = std::stoi(value);
+                }
+                catch (...)
+                {
+                    std::cerr << "Invalid value for --server-port\n";
+                    return false;
+                }
+            }
+            else if (arg == "--node-id")
+            {
+                const char* value = requireValue(arg);
+                if (value == nullptr)
+                {
+                    return false;
+                }
+                config.nodeId = value;
+            }
+            else if (arg == "--bunker-name")
+            {
+                const char* value = requireValue(arg);
+                if (value == nullptr)
+                {
+                    return false;
+                }
+                config.bunkerName = value;
+            }
+            else if (arg == "--ip-address")
+            {
+                const char* value = requireValue(arg);
+                if (value == nullptr)
+                {
+                    return false;
+                }
+                config.ipAddress = value;
+            }
+            else if (arg == "--capacity")
+            {
+                const char* value = requireValue(arg);
+                if (value == nullptr)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    config.capacity = std::stoi(value);
+                }
+                catch (...)
+                {
+                    std::cerr << "Invalid value for --capacity\n";
+                    return false;
+                }
+            }
+            else
+            {
+                std::cerr << "Unknown argument: " << arg << '\n';
+                return false;
+            }
+        }
+
+        if (config.serverPort <= 0 || config.serverPort > 65535)
+        {
+            std::cerr << "Invalid server port range\n";
+            return false;
+        }
+
+        if (config.nodeId.empty())
+        {
+            std::cerr << "node-id cannot be empty\n";
+            return false;
+        }
+
+        if (config.capacity <= 0)
+        {
+            std::cerr << "capacity must be positive\n";
+            return false;
+        }
+
+        return true;
+    }
+
+    bool sendAll(int fd, const std::string& payload)
+    {
+        std::size_t totalSent = 0;
+
+        while (totalSent < payload.size())
+        {
+            const ssize_t sent = send(fd, payload.data() + totalSent, payload.size() - totalSent, 0);
+
+            if (sent < 0)
+            {
+                if (errno == EINTR)
+                {
+                    continue;
+                }
+
+                return false;
+            }
+
+            if (sent == 0)
+            {
+                return false;
+            }
+
+            totalSent += static_cast<std::size_t>(sent);
+        }
+
+        return true;
+    }
+
+    bool readLine(int fd, std::string& line)
+    {
+        line.clear();
+
+        char ch = '\0';
+        while (true)
+        {
+            const ssize_t received = recv(fd, &ch, 1, 0);
+
+            if (received == 0)
+            {
+                return !line.empty();
+            }
+
+            if (received < 0)
+            {
+                if (errno == EINTR)
+                {
+                    continue;
+                }
+
+                return false;
+            }
+
+            if (ch == '\n')
+            {
+                return true;
+            }
+
+            if (ch != '\r')
+            {
+                line.push_back(ch);
+            }
+        }
+    }
+
+    int connectToServer(const SocketModeConfig& config)
+    {
+        int sock = socket(AF_INET, SOCK_STREAM, 0);
+        if (sock < 0)
+        {
+            std::cerr << "Failed to create socket\n";
+            return -1;
+        }
+
+        struct sockaddr_in serverAddr = {};
+        serverAddr.sin_family = AF_INET;
+        serverAddr.sin_port = htons(static_cast<uint16_t>(config.serverPort));
+
+        if (inet_pton(AF_INET, config.serverHost.c_str(), &serverAddr.sin_addr) != 1)
+        {
+            std::cerr << "Invalid server host: " << config.serverHost << '\n';
+            close(sock);
+            return -1;
+        }
+
+        if (connect(sock, reinterpret_cast<struct sockaddr*>(&serverAddr), sizeof(serverAddr)) < 0)
+        {
+            std::cerr << "Failed to connect to EOP server\n";
+            close(sock);
+            return -1;
+        }
+
+        return sock;
+    }
+
+    std::string buildRegisterCommand(const SocketModeConfig& config)
+    {
+        std::ostringstream command;
+        command << "REGISTER node_id=" << config.nodeId << " bunker_name=" << config.bunkerName
+                << " ip_address=" << config.ipAddress << " capacity=" << config.capacity << '\n';
+        return command.str();
+    }
+
+    int runBatchMode()
+    {
+        std::ostringstream buffer;
+        buffer << std::cin.rdbuf();
+
+        const hpc::EngineProcessResult result = hpc::processAnalyzeGraphRequest(buffer.str());
+
+        std::cout << result.payload;
+        return result.exit_code;
+    }
+
+    int runSocketMode(const SocketModeConfig& config)
+    {
+        int sock = connectToServer(config);
+        if (sock < 0)
+        {
+            return 1;
+        }
+
+        const std::string registerCommand = buildRegisterCommand(config);
+        if (!sendAll(sock, registerCommand))
+        {
+            std::cerr << "Failed to send REGISTER to EOP server\n";
+            close(sock);
+            return 1;
+        }
+
+        std::string registerResponse;
+        if (!readLine(sock, registerResponse) || registerResponse.find("ACK") == std::string::npos)
+        {
+            std::cerr << "HPC Engine registration failed. Response: " << registerResponse << '\n';
+            close(sock);
+            return 1;
+        }
+
+        std::cerr << "HPC Engine registered as node_id=" << config.nodeId << '\n';
+
+        std::string request;
+        while (readLine(sock, request))
+        {
+            if (request.empty())
+            {
+                continue;
+            }
+
+            const hpc::EngineProcessResult result = hpc::processAnalyzeGraphRequest(request);
+            if (!sendAll(sock, result.payload))
+            {
+                std::cerr << "Failed to send HPC Engine response\n";
+                close(sock);
+                return 1;
+            }
+        }
+
+        close(sock);
+        return 0;
+    }
+
+} // namespace
+
+int main(int argc, char* argv[])
+{
+    try
+    {
+        if (!hasSocketModeArgs(argc, argv))
+        {
+            return runBatchMode();
+        }
+
+        SocketModeConfig config;
+        if (!parseSocketModeArgs(argc, argv, config))
+        {
+            return 1;
+        }
+
+        return runSocketMode(config);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Unexpected HPC Engine error: " << e.what() << '\n';
+        return 2;
+    }
 }
