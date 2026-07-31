@@ -302,10 +302,30 @@ namespace
             return 1;
         }
 
+        bool registered = false;
         std::string registerResponse;
-        if (!readLine(sock, registerResponse) || registerResponse.find("ACK") == std::string::npos)
+        for (int attempts = 0; attempts < 3; ++attempts)
         {
-            std::cerr << "HPC Engine registration failed. Response: " << registerResponse << '\n';
+            if (!readLine(sock, registerResponse))
+            {
+                break;
+            }
+
+            if (registerResponse.find("ACK") != std::string::npos)
+            {
+                registered = true;
+                break;
+            }
+
+            if (registerResponse.find("ERROR") != std::string::npos)
+            {
+                break;
+            }
+        }
+
+        if (!registered)
+        {
+            std::cerr << "HPC Engine registration failed. Last response: " << registerResponse << '\n';
             close(sock);
             return 1;
         }
