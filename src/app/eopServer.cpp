@@ -320,6 +320,103 @@ static bool isHpcEngineNodeId(const std::string& nodeId)
 }
 
 /**
+ * @brief Returns a copy of a request without leading whitespace.
+ *
+ * ANALYZE_GRAPH v0.2 uses newline-delimited JSON, while the legacy v0.1
+ * command path may still include textual command prefixes. Trimming only the
+ * left side keeps the original payload unchanged for forwarding.
+ *
+ * @param value Raw request or command line.
+ * @return Request without leading spaces, tabs, carriage returns or newlines.
+ */
+static std::string trimLeftCopy(const std::string& value)
+{
+    const std::size_t first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos)
+    {
+        return "";
+    }
+
+    return value.substr(first);
+}
+
+/**
+ * @brief Detects the legacy ANALYZE_GRAPH command prefix.
+ *
+ * This keeps temporary compatibility with clients/tests that still send the
+ * command as "ANALYZE_GRAPH <json>" instead of the v0.2 JSON-only envelope.
+ *
+ * @param request Raw request line received by the server.
+ * @return true if the request starts with the legacy ANALYZE_GRAPH command.
+ */
+static bool isLegacyAnalyzeGraphCommand(const std::string& request)
+{
+    const std::string trimmed = trimLeftCopy(request);
+    const std::string command = getCmdStringFromCode(CMD_ANALYZE_GRAPH);
+
+    return trimmed == command || trimmed.rfind(command + " ", 0) == 0 || trimmed.rfind(command + "\t", 0) == 0;
+}
+
+/**
+ * @brief Detects the v0.2 JSON ANALYZE_GRAPH envelope.
+ *
+ * The protocol contract defines ANALYZE_GRAPH as a JSON object with
+ * type="ANALYZE_GRAPH". This lightweight check only identifies the envelope
+ * before dispatch; detailed JSON/schema validation remains in the HPC Engine.
+ *
+ * @param request Raw request line received by the server.
+ * @return true if the request looks like a JSON ANALYZE_GRAPH envelope.
+ */
+static bool isJsonAnalyzeGraphEnvelope(const std::string& request)
+{
+    const std::string trimmed = trimLeftCopy(request);
+
+    if (trimmed.empty() || trimmed.front() != '{')
+    {
+        return false;
+    }
+
+    return trimmed.find("\"type\"") != std::string::npos && trimmed.find("\"ANALYZE_GRAPH\"") != std::string::npos;
+}
+
+/**
+ * @brief Detects whether a request should be handled by the ANALYZE_GRAPH path.
+ *
+ * The server accepts the documented v0.2 JSON envelope and, temporarily, the
+ * legacy prefixed form used during the first integration step.
+ *
+ * @param request Raw request line received by the server.
+ * @return true if the request is an ANALYZE_GRAPH request.
+ */
+static bool isAnalyzeGraphRequest(const std::string& request)
+{
+    return isLegacyAnalyzeGraphCommand(request) || isJsonAnalyzeGraphEnvelope(request);
+}
+
+/**
+ * @brief Normalizes an ANALYZE_GRAPH request before forwarding it to the HPC Engine.
+ *
+ * The HPC Engine expects the v0.2 JSON payload. If a legacy prefixed request is
+ * received, this helper strips only the "ANALYZE_GRAPH" command prefix. JSON
+ * requests are forwarded unchanged except for leading whitespace.
+ *
+ * @param request Raw request line received by the server.
+ * @return JSON payload to forward to the HPC Engine.
+ */
+static std::string normalizeAnalyzeGraphRequest(const std::string& request)
+{
+    const std::string trimmed = trimLeftCopy(request);
+    const std::string command = getCmdStringFromCode(CMD_ANALYZE_GRAPH);
+
+    if (trimmed.rfind(command, 0) == 0)
+    {
+        return trimLeftCopy(trimmed.substr(command.size()));
+    }
+
+    return trimmed;
+}
+
+/**
  * @brief Associates a successfully registered node with its active session.
  *
  * Also updates the corresponding node record to ONLINE state.
@@ -598,7 +695,7 @@ static void workerLoop(ServerContext& ctx)
             opName = "LIST_NODES";
         else if (msg.message.rfind(getCmdStringFromCode(CMD_HEARTBEAT), 0) == 0)
             opName = "HEARTBEAT";
-        else if (msg.message.rfind(getCmdStringFromCode(CMD_ANALYZE_GRAPH), 0) == 0)
+        else if (isAnalyzeGraphRequest(msg.message))
             opName = "ANALYZE_GRAPH";
 
         bool shouldTrace =
@@ -1196,7 +1293,7 @@ static void handleAnalyzeGraph(int clientSock, const std::string& line)
         return;
     }
 
-    std::string request = line;
+    std::string request = normalizeAnalyzeGraphRequest(line);
     if (request.empty() || request.back() != '\n')
     {
         request.push_back('\n');
@@ -1285,7 +1382,7 @@ void handleClientMessage(int clientSock, const std::string& clientIp, const std:
         // Skip logging for HEARTBEAT to maintain high performance under load
         handleHeartbeat(clientSock);
     }
-    else if (request.rfind(getCmdStringFromCode(CMD_ANALYZE_GRAPH), 0) == 0)
+    else if (isAnalyzeGraphRequest(request))
     {
         audit_log_write_fmt(INFO_LOG, "Request received: 'ANALYZE_GRAPH ...' from IP=%s", clientIp.c_str());
         updateSessionActivity(serverContext, clientSock);

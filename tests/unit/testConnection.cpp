@@ -310,8 +310,8 @@ TEST_F(EopServerTest, UnknownCommandReturnsError)
 
 TEST_F(EopServerTest, AnalyzeGraphReturnsServiceUnavailableWhenNoHpcEngineIsRegistered)
 {
-    const std::string response =
-        sendAndReceive(getCmdStringFromCode(CMD_ANALYZE_GRAPH) + " request_id=test-offline-engine payload={}");
+    const std::string response = sendAndReceive(
+        R"({"type":"ANALYZE_GRAPH","request_id":"test-offline-engine","payload":{"nodes":["A"],"edges":[],"algorithms":["connected_components"]}})");
 
     EXPECT_NE(response.find(getCmdStringFromCode(CMD_ERROR_SERVICE_UNAVAILABLE)), std::string::npos)
         << "Expected ERROR_SERVICE_UNAVAILABLE, got: " << response;
@@ -714,13 +714,12 @@ TEST_F(EopServerTest, AnalyzeGraphForwardsRequestToRegisteredHpcEngine)
         [&clientResponse]()
         {
             clientResponse = sendAndReceive(
-                getCmdStringFromCode(CMD_ANALYZE_GRAPH) +
-                R"( {"type":"ANALYZE_GRAPH","request_id":"req-dispatch","payload":{"nodes":["A"],"edges":[],"algorithms":["connected_components"]}})");
+                R"({"type":"ANALYZE_GRAPH","request_id":"req-dispatch","payload":{"nodes":["A"],"edges":[],"algorithms":["connected_components"]}})");
         });
 
     const std::string forwardedRequest = receiveFromSocketWithTimeout(engineSock, 2000);
 
-    EXPECT_NE(forwardedRequest.find(getCmdStringFromCode(CMD_ANALYZE_GRAPH)), std::string::npos) << forwardedRequest;
+    EXPECT_NE(forwardedRequest.find(R"("type":"ANALYZE_GRAPH")"), std::string::npos) << forwardedRequest;
     EXPECT_NE(forwardedRequest.find("req-dispatch"), std::string::npos) << forwardedRequest;
 
     const std::string engineResponse =
@@ -753,8 +752,7 @@ TEST_F(EopServerTest, AnalyzeGraphReturnsTimeoutWhenHpcEngineStalls)
     ASSERT_NE(engineAck.find("ACK"), std::string::npos) << engineAck;
 
     const std::string clientResponse = sendAndReceive(
-        getCmdStringFromCode(CMD_ANALYZE_GRAPH) +
-        R"( {"type":"ANALYZE_GRAPH","request_id":"req-timeout","payload":{"nodes":["A"],"edges":[],"algorithms":["connected_components"]}})");
+        R"({"type":"ANALYZE_GRAPH","request_id":"req-timeout","payload":{"nodes":["A"],"edges":[],"algorithms":["connected_components"]}})");
 
     EXPECT_NE(clientResponse.find(getCmdStringFromCode(CMD_ERROR_HPC_TIMEOUT)), std::string::npos) << clientResponse;
     EXPECT_NE(clientResponse.find("HPC engine timeout"), std::string::npos) << clientResponse;
