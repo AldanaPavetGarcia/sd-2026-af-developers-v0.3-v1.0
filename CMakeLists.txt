@@ -166,3 +166,17 @@ endif()
 # HPC Engine (standalone subprocess for graph analysis)
 # =============================================================================
 add_subdirectory(hpc-engine)
+
+
+# =============================================================================
+# Smoke tests
+# =============================================================================
+if(EXODUS_BUILD_TESTS)
+  add_test(
+    NAME smoke_analyze_graph_real_engine
+    COMMAND python3
+      ${CMAKE_SOURCE_DIR}/tests/smoke/analyze_graph_real_engine.py
+      $<TARGET_FILE:eop_server>
+      $<TARGET_FILE:hpc_engine>
+  )
+endif()
