@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hpc-engine
+  labels:
+    app: hpc-engine
+spec:
+  # eopServer.cpp's hpcDispatchMutex serializes all ANALYZE_GRAPH dispatch
+  # globally today, so more replicas would not add throughput — do not scale
+  # this beyond 1 without revisiting that serialization (tracked for #18).
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hpc-engine
+  template:
+    metadata:
+      labels:
+        app: hpc-engine
+    spec:
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: hpc-engine
+          image: hpc-engine:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: eop-global-config
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          # hpc-engine is a pure outbound TCP client (connects to eop-server,
+          # never binds/listens) — no ports:, no Service in front of it.
+          # --server-port is passed explicitly because the CLI default (9090)
+          # does not match eop-server's real Service port (EOP_PORT=9026).
+          args:
+            - "--server-host"
+            - "$(EOP_SERVER_HOST)"
+            - "--server-port"
+            - "$(EOP_PORT)"
+            - "--node-id"
+            - "$(HPC_NODE_ID)"
+            - "--bunker-name"
+            - "$(HPC_BUNKER_NAME)"
+            - "--ip-address"
+            - "$(POD_IP)"
+            - "--capacity"
+            - "$(HPC_CAPACITY)"
+          # No listening port to probe: liveness checks the process is PID 1
+          # (valid because the Dockerfile's exec-form ENTRYPOINT makes
+          # hpc_engine PID 1), readiness checks the heartbeat file hpc_engine
+          # writes every 5s only while registered and holding a session.
+          # Readiness doesn't gate any Service traffic today (no Service
+          # fronts hpc-engine) but still drives `kubectl rollout status`,
+          # `make k8s-apply`'s wait, and the Ready column in `kubectl get pods`.
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "grep -qi hpc_engine /proc/1/comm"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  [ -f /tmp/hpc-engine-heartbeat ] && \
+                  [ $(( $(date +%s) - $(cat /tmp/hpc-engine-heartbeat) )) -lt 20 ]
+            # Generous failureThreshold: covers the worst-case bounded
+            # connect-retry window (up to 5 attempts w/ backoff) before the
+            # first heartbeat write.
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          resources:
+            # CPU-bound (OpenMP graph algorithms) — sized above eop-server's
+            # baseline. OMP_NUM_THREADS in eop-global-config must stay <= this limit.
+            requests:
+              cpu: "250m"
+              memory: "128Mi"
+            limits:
+              cpu: "1"
+              memory: "256Mi"

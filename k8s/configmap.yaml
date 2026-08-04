@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: eop-server-config
+  name: eop-global-config
   labels:
     app: eop-server
 data:
@@ -9,3 +9,12 @@ data:
   EOP_IDLE_TIMEOUT: "30"
   EOP_MAX_CLIENTS: "100"
   EOP_HEARTBEAT_INTERVAL: "5"
+  # In-cluster DNS name of the eop-server Service (see service.yaml) — hpc-engine
+  # is an outbound-only client and discovers eop-server through this, not a Service of its own.
+  EOP_SERVER_HOST: "eop-server"
+  # Must stay <= hpc-engine-deployment.yaml's CPU limit, otherwise OpenMP
+  # defaults to the host's core count and oversubscribes under the cgroup CPU quota.
+  OMP_NUM_THREADS: "1"
+  HPC_NODE_ID: "hpc-engine"
+  HPC_BUNKER_NAME: "HPC-K8S"
+  HPC_CAPACITY: "1"

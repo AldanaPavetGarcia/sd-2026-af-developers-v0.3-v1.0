@@ -22,7 +22,7 @@ spec:
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
-                name: eop-server-config
+                name: eop-global-config
           ports:
             - name: tcp-eop
               containerPort: 9026

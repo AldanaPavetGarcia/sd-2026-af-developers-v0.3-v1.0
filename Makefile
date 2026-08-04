@@ -7,6 +7,7 @@ deploy-local:
 k8s-apply:
 	kubectl apply -f k8s/
 	kubectl rollout status deployment/eop-server --timeout=60s
+	kubectl rollout status deployment/hpc-engine --timeout=60s
 
 k8s-recovery-test:
 	./tests/k8s/pod-recovery-cycle.sh
