@@ -10,20 +10,22 @@ It also documents the local validation workflow for **US-109 · Automatic Pod Re
 
 This guide covers:
 
-- building the local EOP server Docker image;
+- building the local EOP server and hpc-engine Docker images;
 - running the local Compose stack;
-- deploying the EOP server to Kubernetes;
-- validating liveness and readiness probes;
+- deploying the EOP server and hpc-engine to Kubernetes (Deployment and Job/batch modes);
+- validating liveness and readiness probes for both workloads;
 - validating automatic container restart;
 - checking pod logs through `kubectl logs`;
-- validating client reconnect and node re-registration after restart.
+- validating client reconnect and node re-registration after restart;
+- validating hpc-engine's connect/register retry-backoff and self-healing.
 
 This guide does not cover:
 
 - full OpenTelemetry span validation from US-110;
 - production Helm charts or kustomize overlays;
 - persistent registry storage;
-- API Gateway, HPC engine, MQTT, or later milestone services.
+- API Gateway, MQTT, or later milestone services;
+- SLO dashboards / Grafana panels for hpc-engine (issues #17/#18).
 
 ---
 
@@ -45,6 +47,21 @@ To inspect the local image size:
 
 ```bash
 docker images eop-server:local
+```
+
+The hpc-engine image is built the same way, from its own dedicated Dockerfile
+(build context is still the repo root, since `CMakeLists.txt`/`vcpkg.json` are shared):
+
+```bash
+docker build -f hpc-engine/Dockerfile -t hpc-engine:local .
+```
+
+Its runtime stage installs `libgomp` in addition to `libstdc++` (OpenMP runtime for the
+parallel graph algorithms) and has no `EXPOSE` — hpc-engine never binds or listens, it is
+a pure outbound TCP client to eop-server.
+
+```bash
+docker images hpc-engine:local
 ```
 
 ---
@@ -85,9 +102,12 @@ k8s/
 They include:
 
 ```text
-k8s/configmap.yaml
-k8s/deployment.yaml
-k8s/service.yaml
+k8s/configmap.yaml               # shared eop-global-config ConfigMap (eop-server + hpc-engine)
+k8s/deployment.yaml               # eop-server Deployment
+k8s/service.yaml                  # eop-server Service (hpc-engine has no Service — see §6)
+k8s/hpc-engine-deployment.yaml    # hpc-engine Deployment (persistent mode)
+k8s/jobs/                         # hpc-engine Job/batch-mode demo — see §7b, kept out of the
+                                   # default sweep below because Job specs are immutable
 ```
 
 Apply the manifests with:
@@ -102,11 +122,16 @@ Or use the Makefile target:
 make k8s-apply
 ```
 
-The target waits for the Deployment rollout:
+The target waits for both Deployment rollouts:
 
 ```bash
 kubectl rollout status deployment/eop-server --timeout=60s
+kubectl rollout status deployment/hpc-engine --timeout=60s
 ```
+
+`eop-global-config` sets `EOP_SERVER_HOST=eop-server` and pins `--server-port` to
+`$(EOP_PORT)` (`9026`) in `hpc-engine-deployment.yaml`'s `args:` — hpc-engine's CLI default
+of `9090` does not match the real Service port and must never be relied on.
 
 ---
 
@@ -176,6 +201,66 @@ livenessProbe:
 
 The readiness probe also uses a TCP check against the server port. The Pod must not be marked Ready until the server is ready to accept TCP connections.
 
+### 6a. hpc-engine Probes
+
+hpc-engine never binds or listens (it is a pure outbound client to eop-server), so its
+probes cannot use `tcpSocket` checks and instead use `exec`:
+
+```yaml
+livenessProbe:
+  exec:
+    command: ["sh", "-c", "grep -qi hpc_engine /proc/1/comm"]
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+readinessProbe:
+  exec:
+    command:
+      - sh
+      - -c
+      - |
+        [ -f /tmp/hpc-engine-heartbeat ] && \
+        [ $(( $(date +%s) - $(cat /tmp/hpc-engine-heartbeat) )) -lt 20 ]
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  failureThreshold: 12
+```
+
+- **Liveness** checks that `hpc_engine` is PID 1 inside the container. This is valid because
+  the Dockerfile's `ENTRYPOINT` is exec-form (`["./hpc_engine"]`) with no shell wrapper.
+- **Readiness** checks that `hpc_engine` has written to `/tmp/hpc-engine-heartbeat` in the
+  last 20 seconds. The binary only starts writing this file *after* it successfully
+  registers with eop-server and holds an open session (see §6b) — it is a genuine "actively
+  connected" signal, not a fixed always-up check. `failureThreshold: 12` is intentionally
+  generous: it covers the worst case of hpc-engine's bounded connect/register retry loop
+  (up to 5 attempts with exponential backoff) running before the first heartbeat write.
+- Readiness does not gate any Service traffic today — hpc-engine has no Service in front of
+  it — but it still drives `kubectl rollout status`, `make k8s-apply`'s wait, and the Ready
+  column in `kubectl get pods`.
+
+### 6b. hpc-engine Connect/Register Resilience (Two-Tier Model)
+
+hpc-engine has two distinct resilience tiers, and it is important not to confuse them:
+
+- **Tier 1 — bounded startup retry.** Covers the case where the hpc-engine Pod starts before
+  eop-server is Ready (a real race under `kubectl apply -f k8s/`, since both Deployments roll
+  out concurrently). `establishSession()` in `hpc-engine/src/main.cpp` retries
+  connect+REGISTER up to `--retry-max-attempts` times (default 5) with exponential backoff
+  (`--retry-base-delay-ms`, default 250 ms, multiplier 2.0, capped at 5000 ms, ±20% jitter),
+  logging one structured JSON line per attempt to stderr. Socket-level `SO_SNDTIMEO`/
+  `SO_RCVTIMEO` (3s) bound every `connect()`/`recv()` call during this phase so a single
+  attempt can never hang indefinitely.
+- **Tier 2 — steady state, no in-process reconnect.** Once registered, the socket timeouts
+  are cleared (the request loop must block indefinitely waiting for the next
+  `ANALYZE_GRAPH` request) and a clean mid-loop disconnect exits the process with code 0.
+  There is no reconnect-inside-the-loop logic — that would duplicate Tier 1's semantics.
+  Instead, Kubernetes' `restartPolicy: Always` re-enters `main()` on any process exit,
+  which re-runs Tier 1 from scratch. In other words: Kubernetes *is* the Tier 2 recovery
+  mechanism, by design.
+
+This is why `hpc-engine-deployment.yaml` does not need an `initContainer` wait-for-eop-server
+workaround — the retry loop inside `hpc_engine` itself absorbs the startup race.
+
 ---
 
 ## 7. US-109 Pod Recovery Validation
@@ -223,6 +308,59 @@ The output also includes the measured recovery time, for example:
 ```
 
 For US-109 AC3, this value must be lower than 10 seconds.
+
+---
+
+## 7a. hpc-engine Pod Recovery Validation
+
+Run the hpc-engine equivalent of the US-109 self-healing check with:
+
+```bash
+make k8s-hpc-recovery-test
+```
+
+This target executes `./tests/k8s/hpc-engine-recovery-cycle.sh`, which:
+
+1. applies Kubernetes manifests and waits for the hpc-engine Deployment rollout;
+2. waits for an hpc-engine Pod to become Ready and confirms its logs show
+   `HPC Engine registered as node_id=...`;
+3. deletes that Pod;
+4. waits for the Deployment to create a replacement Pod and reach Ready;
+5. confirms the replacement Pod's logs also show a successful registration.
+
+Unlike the eop-server cycle, there is no active client traffic to observe disconnecting —
+hpc-engine carries no client traffic of its own, so the success criterion is simply that the
+replacement Pod re-registers with eop-server on its own, driven entirely by Tier 1 of the
+retry model in §6b.
+
+## 7b. hpc-engine Job/Batch Mode Demo (AC5)
+
+hpc-engine must run in both a persistent Deployment (§4, validated above) and as a one-shot
+Kubernetes `Job` (batch mode). The Job manifests live in `k8s/jobs/`, kept out of the default
+`k8s/` sweep because `kubectl apply -f k8s/` is non-recursive and `Job` specs are immutable —
+including them there would break re-applying.
+
+Run the demo with:
+
+```bash
+make k8s-hpc-batch-demo
+```
+
+This target:
+
+```bash
+kubectl delete job/hpc-engine-batch-demo --ignore-not-found
+kubectl apply -f k8s/jobs/
+kubectl wait --for=condition=complete job/hpc-engine-batch-demo --timeout=60s
+kubectl logs job/hpc-engine-batch-demo
+```
+
+`k8s/jobs/hpc-engine-sample-graph-configmap.yaml` provides a small 5-node/6-edge graph
+(`shortest_paths` + `connected_components`) mounted at `/data/graph.json`. The Job overrides
+the container's `command` to `./hpc_engine < /data/graph.json` — no `--server-*` args are
+passed, so `hasSocketModeArgs()` is false and the binary runs in the same batch mode used for
+local testing (read one request from stdin, write one response to stdout, exit). A successful
+run prints a single `"status":"ACK"` JSON response and the Job reports `Complete`.
 
 ---
 
@@ -289,6 +427,23 @@ This behavior is validated by the recovery script through repeated `REGISTER` sm
 
 ---
 
+## 10a. AC7 — Rollout Restart Under Load
+
+Run with:
+
+```bash
+make k8s-rollout-restart-test
+```
+
+This target executes `./tests/k8s/rollout-restart-under-load.sh`, which applies manifests,
+waits for the eop-server rollout, starts a continuous background client issuing `REGISTER`
+round-trips, triggers `kubectl rollout restart deployment/eop-server` concurrently, waits for
+the new rollout to complete, then stops the client and asserts it observed **zero** failed
+operations. EOP has no HTTP/5xx concept, so AC7's "no 5xx" requirement translates directly to
+"zero failed/dropped client operations during the rollout".
+
+---
+
 ## 11. Useful Commands
 
 Inspect Pods:
@@ -335,23 +490,51 @@ Run the register smoke helper directly through an existing port-forward:
 EOP_HOST=127.0.0.1 EOP_PORT=9026 ./tests/smoke/eop-register-smoke.sh
 ```
 
+hpc-engine equivalents — inspect Pods:
+
+```bash
+kubectl get pods -l app=hpc-engine
+```
+
+Inspect the Deployment:
+
+```bash
+kubectl describe deployment hpc-engine
+```
+
+Check the heartbeat/registration signal directly (mirrors the readiness probe in §6a):
+
+```bash
+POD="$(kubectl get pods -l app=hpc-engine -o jsonpath='{.items[0].metadata.name}')"
+kubectl exec "$POD" -- sh -c 'cat /tmp/hpc-engine-heartbeat; echo'
+kubectl logs "$POD" | grep 'HPC Engine registered'
+```
+
 ---
 
 ## 12. CI Policy
 
-The Kubernetes recovery validation is intentionally not part of the normal pull request CI pipeline.
-
-It requires:
+The Kubernetes recovery and load-restart validations are intentionally not part of the normal
+pull request CI pipeline. They require:
 
 - a running Kubernetes cluster;
 - `kubectl`;
-- a locally available `eop-server:local` image;
+- locally available `eop-server:local` / `hpc-engine:local` images;
 - port-forwarding support.
 
-For this reason, it is provided as a reproducible local/manual validation through:
+For this reason, they are provided as reproducible local/manual validations through:
 
 ```bash
-make k8s-recovery-test
+make k8s-recovery-test          # US-109, eop-server
+make k8s-hpc-recovery-test      # hpc-engine self-healing (§7a)
+make k8s-rollout-restart-test   # AC7, rollout restart under load (§10a)
+make k8s-hpc-batch-demo         # AC5, Job/batch mode demo (§7b)
 ```
 
-The normal CI should remain lightweight and should not depend on minikube or local cluster state.
+The normal CI should remain lightweight and should not depend on minikube or local cluster
+state — with one exception: `k8s-manifest-lint` (in `.github/workflows/ci.yml`) *does* run on
+every pull request. It installs `kubeconform` and validates every manifest under `k8s/`
+(including `k8s/jobs/`) with `-strict`, which does not require a live cluster — only the
+manifests' static schema conformance. Marking this job as a required, merge-blocking status
+check is a GitHub branch-protection setting outside this repo's code and is tracked as a
+manual follow-up.
