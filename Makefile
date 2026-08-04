@@ -1,4 +1,4 @@
-.PHONY: deploy-local k8s-apply k8s-recovery-test observability-test benchmark tsan
+.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo observability-test benchmark tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -11,6 +11,14 @@ k8s-apply:
 
 k8s-recovery-test:
 	./tests/k8s/pod-recovery-cycle.sh
+
+## Runs the hpc-engine Job/batch-mode demo (AC5): applies k8s/jobs/ (kept out of
+## the k8s/ sweep above since Job specs are immutable) and prints its result.
+k8s-hpc-batch-demo:
+	kubectl delete job/hpc-engine-batch-demo --ignore-not-found
+	kubectl apply -f k8s/jobs/
+	kubectl wait --for=condition=complete job/hpc-engine-batch-demo --timeout=60s
+	kubectl logs job/hpc-engine-batch-demo
 
 observability-test:
 	python3 tests/smoke/test_signoz_integration.py

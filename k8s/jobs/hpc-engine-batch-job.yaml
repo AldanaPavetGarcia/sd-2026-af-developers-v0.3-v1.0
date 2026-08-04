@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hpc-engine-batch-demo
+  labels:
+    app: hpc-engine
+    mode: batch
+spec:
+  # Legitimately-failed analyses should surface immediately, not be retried
+  # automatically — this is a one-shot demo/validation run, not a resilient service.
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app: hpc-engine
+        mode: batch
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: hpc-engine-batch
+          image: hpc-engine:local
+          imagePullPolicy: IfNotPresent
+          # No envFrom/args: batch mode needs neither — no --server-* flags
+          # means hasSocketModeArgs() is false, so hpc_engine reads one
+          # request from stdin and writes one response to stdout, then exits.
+          command: ["sh", "-c", "./hpc_engine < /data/graph.json"]
+          volumeMounts:
+            - name: sample-graph
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "128Mi"
+            limits:
+              cpu: "1"
+              memory: "256Mi"
+      volumes:
+        - name: sample-graph
+          configMap:
+            name: hpc-engine-sample-graph
