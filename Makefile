@@ -1,4 +1,4 @@
-.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo observability-test benchmark tsan
+.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test benchmark tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -19,6 +19,14 @@ k8s-hpc-batch-demo:
 	kubectl apply -f k8s/jobs/
 	kubectl wait --for=condition=complete job/hpc-engine-batch-demo --timeout=60s
 	kubectl logs job/hpc-engine-batch-demo
+
+## Self-healing check for hpc-engine (Deployment equivalent of US-109/k8s-recovery-test)
+k8s-hpc-recovery-test:
+	./tests/k8s/hpc-engine-recovery-cycle.sh
+
+## AC7: rollout restart of eop-server under continuous client load, zero failed operations
+k8s-rollout-restart-test:
+	./tests/k8s/rollout-restart-under-load.sh
 
 observability-test:
 	python3 tests/smoke/test_signoz_integration.py
