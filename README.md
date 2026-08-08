@@ -33,14 +33,22 @@ Students work as software engineers within a simulated company environment where
 ```
 
 .
-├── docs/               # Technical documentation
-├── src/                # Source code
-├── tests/              # Test suite
+├── docs/               # Technical documentation, ADRs, protocol specs
+├── src/                # EOP server source code (v0.1)
+├── hpc-engine/          # Parallel HPC graph-analysis engine (v0.2, C++/OpenMP)
+├── include/             # Shared public headers
+├── lib/                 # Shared libraries (Common, Communications, WDog, Logger)
+├── k8s/                 # Kubernetes manifests (Deployments, Jobs, Services, ConfigMaps)
+├── tests/               # Test suite (unit, integration, smoke, k8s validation scripts)
+├── monitoring/          # Observability stack config (SigNoz/OTel)
 ├── .github/            # CI/CD workflows and templates
 ├── README.md
 └── LICENSE
 
 ```
+
+See `docs/README.md` for the full architecture and per-Epic service breakdown, and
+`docs/kubernetes-deployment-and-pod-recovery-guide.md` for build/deploy/validation steps.
 
 Each team is free to extend the project structure depending on the needs of the implementation.
 

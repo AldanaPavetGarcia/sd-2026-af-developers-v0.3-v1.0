@@ -49,7 +49,17 @@ The system is designed as a high-performance, low-latency communication ecosyste
 * **Tracing with SigNoz:** Instruments the C++ code with the OpenTelemetry SDK. Each incoming command creates a "Span" sent to the collector to measure operation latency. Correlates JSON logs with trace IDs.
 * *What it does NOT do:* It does not measure detailed bunker hardware metrics (CPU/RAM) or provide business alerts.
 
+### Epic E5: Parallel HPC Engine (`hpc-engine`)
 
+* **Graph Analysis:** A standalone C++/OpenMP binary that runs `shortest_paths` (parallel Dijkstra), `connected_components`, and `centrality` over a JSON graph payload, per the `ANALYZE_GRAPH` contract in `docs/analyze-graph-protocol-v0.2.md`.
+* **Two execution modes:** invoked with `--server-host`/`--server-port`/`--node-id`, it opens a persistent socket, `REGISTER`s with the v0.1 server as a peer, and keeps servicing `ANALYZE_GRAPH` requests indefinitely (with bounded connect/register retry-backoff and a heartbeat file for external liveness checks). Invoked without those flags, it falls back to a one-shot batch mode: read one request from stdin, write one response to stdout, exit.
+* *What it does NOT do:* It does not accept direct client connections — all requests reach it dispatched through the v0.1 server (`eopServer.cpp`), never directly from a bunker.
+
+### Epic E6: Kubernetes Workload Management
+
+* **Dual-Execution Vector Deployment:** `hpc-engine` is deployed both ways described above — as a long-lived `Deployment` (`k8s/hpc-engine-deployment.yaml`, persistent socket mode, `replicas: 1` — the server's dispatch mutex serializes requests to a single engine today) and as a one-shot `Job` (`k8s/jobs/hpc-engine-batch-job.yaml`, batch mode) — matching the pattern chosen in `docs/ADR011-Kubernetes-workload-management.md`.
+* **Probes, limits, and config:** the Deployment defines a liveness probe (process-alive check), a readiness probe (heartbeat-file freshness, since `hpc-engine` exposes no listening port to probe), CPU/memory requests and limits, and reads its configuration from the shared `eop-global-config` ConfigMap (also used by `eop-server`).
+* *What it does NOT do:* No `Service` fronts `hpc-engine` — it is an outbound-only TCP client, never a listener, so there is nothing to load-balance or route to. See `docs/kubernetes-deployment-and-pod-recovery-guide.md` for the full build/deploy/validate walkthrough of both workloads.
 
 ---
 
