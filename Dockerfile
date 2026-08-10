@@ -23,8 +23,12 @@ ENV PATH="/opt/cmake/bin:${PATH}"
 ENV VCPKG_FORCE_SYSTEM_BINARIES=1
 
 # Install vcpkg
+# Pinned to a fixed release tag (not `master` HEAD): an unpinned clone previously broke CI
+# when vcpkg's SPDX-generation helper (scripts/cmake/z_vcpkg_spdx.cmake) started using
+# `string(JSON ... STRING_ENCODE ...)`, a CMake subcommand our pinned CMake (<3.31) doesn't
+# support. 2026.06.24 is the last release tag before that change landed.
 ENV VCPKG_ROOT=/opt/vcpkg
-RUN git clone https://github.com/microsoft/vcpkg.git $VCPKG_ROOT \
+RUN git clone --branch 2026.06.24 --depth 1 https://github.com/microsoft/vcpkg.git $VCPKG_ROOT \
     && $VCPKG_ROOT/bootstrap-vcpkg.sh -disableMetrics \
     && echo "set(VCPKG_BUILD_TYPE release)" >> $VCPKG_ROOT/triplets/x64-linux.cmake
 
