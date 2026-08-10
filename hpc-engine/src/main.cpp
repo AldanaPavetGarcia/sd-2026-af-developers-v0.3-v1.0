@@ -512,6 +512,40 @@ namespace
         return result.exit_code;
     }
 
+    /**
+     * @brief RAII owner of the heartbeat background thread.
+     *
+     * std::thread's destructor calls std::terminate() if it is destroyed while still
+     * joinable. Without this guard, an exception escaping runSocketMode's request loop
+     * would abort the process before the socket is closed and before main()'s outer
+     * try/catch ever runs. HeartbeatGuard signals the loop to stop and joins the thread
+     * on every exit path from runSocketMode's scope, including exception unwinding.
+     */
+    class HeartbeatGuard
+    {
+    public:
+        HeartbeatGuard(std::atomic<bool>& running, std::thread thread)
+            : m_running(running), m_thread(std::move(thread))
+        {
+        }
+
+        ~HeartbeatGuard()
+        {
+            m_running.store(false);
+            if (m_thread.joinable())
+            {
+                m_thread.join();
+            }
+        }
+
+        HeartbeatGuard(const HeartbeatGuard&) = delete;
+        HeartbeatGuard& operator=(const HeartbeatGuard&) = delete;
+
+    private:
+        std::atomic<bool>& m_running;
+        std::thread m_thread;
+    };
+
     int runSocketMode(const SocketModeConfig& config, const RetryConfig& retryConfig)
     {
         int sock = establishSession(config, retryConfig);
@@ -527,16 +561,7 @@ namespace
         clearSocketTimeouts(sock);
 
         std::atomic<bool> heartbeatRunning{true};
-        std::thread heartbeatThread(runHeartbeatLoop, std::ref(heartbeatRunning));
-
-        auto stopHeartbeat = [&]()
-        {
-            heartbeatRunning.store(false);
-            if (heartbeatThread.joinable())
-            {
-                heartbeatThread.join();
-            }
-        };
+        HeartbeatGuard heartbeatGuard(heartbeatRunning, std::thread(runHeartbeatLoop, std::ref(heartbeatRunning)));
 
         std::string request;
         while (readLine(sock, request))
@@ -550,13 +575,11 @@ namespace
             if (!sendAll(sock, result.payload))
             {
                 std::cerr << "Failed to send HPC Engine response\n";
-                stopHeartbeat();
                 close(sock);
                 return 1;
             }
         }
 
-        stopHeartbeat();
         close(sock);
         return 0;
     }
