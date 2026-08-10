@@ -15,6 +15,15 @@
 namespace hpc
 {
 
+    namespace
+    {
+        // processAnalyzeGraphRequest is a module boundary (called across the hpc-engine /
+        // main.cpp socket-and-batch dispatch): per project convention, exceptions must not
+        // cross it. error_handler_t::replace makes dump() itself unable to throw
+        // type_error.316 on invalid UTF-8, instead of trusting every call site to be safe.
+        constexpr auto DUMP_ERROR_HANDLER = nlohmann::json::error_handler_t::replace;
+    } // namespace
+
     EngineProcessResult processAnalyzeGraphRequest(const std::string& raw_input)
     {
         try
@@ -22,7 +31,7 @@ namespace hpc
             if (raw_input.empty())
             {
                 auto err = hpc::buildErrorResponse("", "ERROR_INVALID_REQUEST", "Empty input received.", "", false);
-                return {err.dump() + "\n", 1};
+                return {err.dump(-1, ' ', false, DUMP_ERROR_HANDLER) + "\n", 1};
             }
 
             auto parse_result = hpc::parseRequest(raw_input);
@@ -33,7 +42,7 @@ namespace hpc
                                                    parse_result.error_message,
                                                    parse_result.error_field,
                                                    false);
-                return {err.dump() + "\n", 1};
+                return {err.dump(-1, ' ', false, DUMP_ERROR_HANDLER) + "\n", 1};
             }
 
             auto& req = parse_result.request;
@@ -43,7 +52,7 @@ namespace hpc
             {
                 auto err = hpc::buildErrorResponse(
                     req.request_id, validation.error_code, validation.error_message, validation.error_field, false);
-                return {err.dump() + "\n", 1};
+                return {err.dump(-1, ' ', false, DUMP_ERROR_HANDLER) + "\n", 1};
             }
 
             const int thread_count = omp_get_max_threads();
@@ -78,13 +87,22 @@ namespace hpc
                                                   thread_count,
                                                   algorithm_results);
 
-            return {response.dump() + "\n", 0};
+            return {response.dump(-1, ' ', false, DUMP_ERROR_HANDLER) + "\n", 0};
         }
         catch (const std::exception& e)
         {
             auto err = hpc::buildErrorResponse(
                 "", "ERROR_ANALYSIS_FAILED", std::string("Internal engine error: ") + e.what(), "", true);
-            return {err.dump() + "\n", 2};
+            return {err.dump(-1, ' ', false, DUMP_ERROR_HANDLER) + "\n", 2};
+        }
+        catch (...)
+        {
+            // Module boundary: must not let a non-std::exception-derived throw escape into
+            // main.cpp's socket-mode request loop (would abort the process, see main.cpp's
+            // HeartbeatGuard doc comment for the concrete crash path this closes).
+            auto err = hpc::buildErrorResponse(
+                "", "ERROR_ANALYSIS_FAILED", "Internal engine error: unknown exception", "", true);
+            return {err.dump(-1, ' ', false, DUMP_ERROR_HANDLER) + "\n", 2};
         }
     }
 
