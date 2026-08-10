@@ -16,6 +16,7 @@
  */
 
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -326,37 +327,60 @@ namespace
 
     constexpr int SOCKET_TIMEOUT_SECONDS = 3;
 
+    /**
+     * @brief Resolves config.serverHost (DNS hostname or IP literal) and connects.
+     *
+     * A Kubernetes Deployment reaches eop-server through the Service's DNS name (e.g.
+     * "eop-server"), not a stable IP — inet_pton() alone cannot resolve that. getaddrinfo()
+     * handles both hostnames and IP literals, so this stays compatible with the
+     * docker-compose/local usage that passes a raw IP directly.
+     */
     int connectToServer(const SocketModeConfig& config)
     {
-        int sock = socket(AF_INET, SOCK_STREAM, 0);
+        struct addrinfo hints = {};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+
+        struct addrinfo* resolved = nullptr;
+        const std::string portStr = std::to_string(config.serverPort);
+        const int gaiResult = getaddrinfo(config.serverHost.c_str(), portStr.c_str(), &hints, &resolved);
+        if (gaiResult != 0)
+        {
+            std::cerr << "Failed to resolve server host '" << config.serverHost << "': " << gai_strerror(gaiResult)
+                       << '\n';
+            return -1;
+        }
+
+        int sock = -1;
+        for (struct addrinfo* addr = resolved; addr != nullptr; addr = addr->ai_next)
+        {
+            sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+            if (sock < 0)
+            {
+                continue;
+            }
+
+            struct timeval socketTimeout = {};
+            socketTimeout.tv_sec = SOCKET_TIMEOUT_SECONDS;
+            socketTimeout.tv_usec = 0;
+            setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &socketTimeout, sizeof(socketTimeout));
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &socketTimeout, sizeof(socketTimeout));
+
+            if (connect(sock, addr->ai_addr, addr->ai_addrlen) == 0)
+            {
+                break;
+            }
+
+            close(sock);
+            sock = -1;
+        }
+
+        freeaddrinfo(resolved);
+
         if (sock < 0)
         {
-            std::cerr << "Failed to create socket\n";
-            return -1;
-        }
-
-        struct timeval socketTimeout = {};
-        socketTimeout.tv_sec = SOCKET_TIMEOUT_SECONDS;
-        socketTimeout.tv_usec = 0;
-        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &socketTimeout, sizeof(socketTimeout));
-        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &socketTimeout, sizeof(socketTimeout));
-
-        struct sockaddr_in serverAddr = {};
-        serverAddr.sin_family = AF_INET;
-        serverAddr.sin_port = htons(static_cast<uint16_t>(config.serverPort));
-
-        if (inet_pton(AF_INET, config.serverHost.c_str(), &serverAddr.sin_addr) != 1)
-        {
-            std::cerr << "Invalid server host: " << config.serverHost << '\n';
-            close(sock);
-            return -1;
-        }
-
-        if (connect(sock, reinterpret_cast<struct sockaddr*>(&serverAddr), sizeof(serverAddr)) < 0)
-        {
-            std::cerr << "Failed to connect to EOP server\n";
-            close(sock);
-            return -1;
+            std::cerr << "Failed to connect to EOP server " << config.serverHost << ':' << config.serverPort
+                       << '\n';
         }
 
         return sock;
