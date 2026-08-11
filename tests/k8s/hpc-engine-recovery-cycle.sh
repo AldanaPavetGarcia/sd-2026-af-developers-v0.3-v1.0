@@ -9,7 +9,10 @@ set -euo pipefail
 
 NAMESPACE="${EOP_K8S_NAMESPACE:-default}"
 DEPLOYMENT="${HPC_K8S_DEPLOYMENT:-hpc-engine}"
-APP_LABEL="${HPC_K8S_APP_LABEL:-app=hpc-engine}"
+# mode=persistent excludes the hpc-engine-batch-demo Job's Pod, which shares
+# app=hpc-engine but runs to Completed and can never satisfy condition=Ready —
+# a bare app=hpc-engine selector would hang/misfire waiting on it.
+APP_LABEL="${HPC_K8S_APP_LABEL:-app=hpc-engine,mode=persistent}"
 
 ROLLOUT_TIMEOUT_SECONDS="${HPC_ROLLOUT_TIMEOUT_SECONDS:-60}"
 

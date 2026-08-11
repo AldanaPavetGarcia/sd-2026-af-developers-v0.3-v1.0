@@ -4,11 +4,20 @@ metadata:
   name: hpc-engine
   labels:
     app: hpc-engine
+    mode: persistent
 spec:
   # eopServer.cpp's hpcDispatchMutex serializes all ANALYZE_GRAPH dispatch
   # globally today, so more replicas would not add throughput — do not scale
   # this beyond 1 without revisiting that serialization (tracked for #18).
   replicas: 1
+  # RollingUpdate's default surge (maxSurge rounds up to 1 pod even at
+  # replicas=1) briefly runs old+new Pods together. Both would register with
+  # the same static HPC_NODE_ID, and eop-server rejects the second REGISTER
+  # as ERROR_DUPLICATE — the new Pod can never become Ready, so the old one
+  # (held by maxUnavailable=0) never gets removed either: a permanent rollout
+  # deadlock. Recreate avoids the overlap entirely by design.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: hpc-engine
@@ -16,6 +25,7 @@ spec:
     metadata:
       labels:
         app: hpc-engine
+        mode: persistent
     spec:
       restartPolicy: Always
       terminationGracePeriodSeconds: 20
