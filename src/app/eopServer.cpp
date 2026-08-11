@@ -812,6 +812,7 @@ static void timeoutMonitorLoop(ServerContext& ctx)
         };
 
         std::vector<ExpiredSessionInfo> expiredSessions;
+        std::vector<int> disconnectedEngineFds;
         const auto now = std::chrono::steady_clock::now();
 
         {
@@ -820,6 +821,19 @@ static void timeoutMonitorLoop(ServerContext& ctx)
             {
                 if (session.reservedForDispatch)
                 {
+                    // HPC Engine sessions send no heartbeat traffic (exempt above) and
+                    // are excluded from the poll() read loop by design (ADR-017), so
+                    // neither passive disconnect path ever fires for them. A
+                    // non-consuming MSG_PEEK detects a dead socket without racing an
+                    // in-flight dispatch read: peeking never removes bytes from the
+                    // kernel receive buffer, so a concurrent receiveHpcEngineResponse()
+                    // still observes the same data afterward.
+                    char probe = 0;
+                    const ssize_t peeked = recv(fd, &probe, 1, MSG_PEEK | MSG_DONTWAIT);
+                    if (peeked == 0 || (peeked < 0 && errno != EAGAIN && errno != EWOULDBLOCK))
+                    {
+                        disconnectedEngineFds.push_back(fd);
+                    }
                     continue;
                 }
                 if (!session.active)
@@ -837,6 +851,12 @@ static void timeoutMonitorLoop(ServerContext& ctx)
                     expiredSessions.push_back({fd, session.clientIp, session.registered, timeoutSeconds});
                 }
             }
+        }
+
+        for (const int fd : disconnectedEngineFds)
+        {
+            auditLogger.writeString("HPC Engine session disconnected (liveness probe)", WARNING_LOG);
+            unregisterSession(ctx, fd, "hpc engine disconnected (liveness probe)");
         }
 
         for (const auto& expired : expiredSessions)
