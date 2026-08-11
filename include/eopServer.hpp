@@ -117,8 +117,12 @@ struct NodeRegistry
     /**
      * @brief Registers a node or reactivates it if it already exists in OFFLINE state.
      *
-     * Reconnection is only allowed when the node_id matches an existing OFFLINE node
-     * and the reported metadata is identical to the original one.
+     * Reconnection is allowed when the node_id matches an existing OFFLINE node and
+     * bunkerName/capacity are unchanged. ipAddress is deliberately NOT part of that
+     * check — per ADR-013's Server Logic rule ("the session.id and IP address are
+     * updated"), a reconnecting node's IP is expected to change (e.g. a Kubernetes
+     * Pod restart always gets a fresh IP) and is refreshed on the record, not
+     * compared against the previous one.
      *
      * @param record Candidate node record.
      * @return NEW_NODE if inserted for the first time,
@@ -136,14 +140,14 @@ struct NodeRegistry
             return RegisterNodeResult::NEW_NODE;
         }
 
-        const bool sameMetadata = (it->second.bunkerName == record.bunkerName) &&
-                                  (it->second.ipAddress == record.ipAddress) &&
-                                  (it->second.capacity == record.capacity);
+        const bool sameMetadata =
+            (it->second.bunkerName == record.bunkerName) && (it->second.capacity == record.capacity);
 
         if (it->second.status == NodeStatus::OFFLINE && sameMetadata)
         {
             it->second.status = NodeStatus::ONLINE;
             it->second.lastSeen = record.lastSeen;
+            it->second.ipAddress = record.ipAddress; // ADR-013: updated, not matched
             return RegisterNodeResult::RECONNECTED_NODE;
         }
 
