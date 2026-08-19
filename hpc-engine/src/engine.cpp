@@ -22,6 +22,13 @@ namespace hpc
         // cross it. error_handler_t::replace makes dump() itself unable to throw
         // type_error.316 on invalid UTF-8, instead of trusting every call site to be safe.
         constexpr auto DUMP_ERROR_HANDLER = nlohmann::json::error_handler_t::replace;
+
+        using Clock = std::chrono::high_resolution_clock;
+
+        double elapsedMilliseconds(const Clock::time_point& start, const Clock::time_point& end)
+        {
+            return std::chrono::duration<double, std::milli>(end - start).count();
+        }
     } // namespace
 
     EngineProcessResult processAnalyzeGraphRequest(const std::string& raw_input)
@@ -56,12 +63,16 @@ namespace hpc
             }
 
             const int thread_count = omp_get_max_threads();
-            const auto start = std::chrono::high_resolution_clock::now();
+            const auto processing_start = Clock::now();
 
             nlohmann::json algorithm_results = nlohmann::json::object();
+            nlohmann::json executed_algorithms = nlohmann::json::array();
+            nlohmann::json algorithm_timings_ms = nlohmann::json::object();
 
             for (const auto& algo : req.algorithms)
             {
+                const auto algorithm_start = Clock::now();
+
                 if (algo == "shortest_paths")
                 {
                     algorithm_results["shortest_paths"] = hpc::computeShortestPaths(req.graph);
@@ -74,10 +85,14 @@ namespace hpc
                 {
                     algorithm_results["centrality"] = hpc::computeCentrality(req.graph);
                 }
+
+                const auto algorithm_end = Clock::now();
+                executed_algorithms.push_back(algo);
+                algorithm_timings_ms[algo] = elapsedMilliseconds(algorithm_start, algorithm_end);
             }
 
-            const auto end = std::chrono::high_resolution_clock::now();
-            const double processing_ms = std::chrono::duration<double, std::milli>(end - start).count();
+            const auto processing_end = Clock::now();
+            const double processing_ms = elapsedMilliseconds(processing_start, processing_end);
 
             auto response = hpc::buildAckResponse(req.request_id,
                                                   req.traceparent,
@@ -85,7 +100,9 @@ namespace hpc
                                                   req.graph.num_edges,
                                                   processing_ms,
                                                   thread_count,
-                                                  algorithm_results);
+                                                  algorithm_results,
+                                                  executed_algorithms,
+                                                  algorithm_timings_ms);
 
             return {response.dump(-1, ' ', false, DUMP_ERROR_HANDLER) + "\n", 0};
         }

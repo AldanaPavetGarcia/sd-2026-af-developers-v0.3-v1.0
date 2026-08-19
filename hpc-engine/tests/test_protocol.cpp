@@ -13,8 +13,22 @@ TEST(ProtocolTest, BuildAckResponse)
         {"shortest_paths", nlohmann::json::object()}
     };
 
+    nlohmann::json executed_algorithms = nlohmann::json::array({"shortest_paths"});
+
+    nlohmann::json algorithm_timings_ms = {
+        {"shortest_paths", 12.75}
+    };
+
     auto res = hpc::buildAckResponse(
-        "req-123", "trace-xyz", 10, 15, 42.5, 4, algo_res);
+        "req-123",
+        "trace-xyz",
+        10,
+        15,
+        42.5,
+        4,
+        algo_res,
+        executed_algorithms,
+        algorithm_timings_ms);
 
     EXPECT_EQ(res["type"], "RESPONSE");
     EXPECT_EQ(res["status"], "ACK");
@@ -25,6 +39,15 @@ TEST(ProtocolTest, BuildAckResponse)
     EXPECT_DOUBLE_EQ(res["result"]["processing_time_ms"], 42.5);
     EXPECT_EQ(res["result"]["thread_count"], 4);
     EXPECT_TRUE(res["result"]["algorithms"].contains("shortest_paths"));
+
+    ASSERT_TRUE(res["result"].contains("executed_algorithms"));
+    ASSERT_TRUE(res["result"]["executed_algorithms"].is_array());
+    ASSERT_EQ(res["result"]["executed_algorithms"].size(), 1);
+    EXPECT_EQ(res["result"]["executed_algorithms"][0], "shortest_paths");
+
+    ASSERT_TRUE(res["result"].contains("algorithm_timings_ms"));
+    ASSERT_TRUE(res["result"]["algorithm_timings_ms"].contains("shortest_paths"));
+    EXPECT_DOUBLE_EQ(res["result"]["algorithm_timings_ms"]["shortest_paths"], 12.75);
 }
 
 TEST(ProtocolTest, BuildErrorResponse)

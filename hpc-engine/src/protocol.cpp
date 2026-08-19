@@ -15,7 +15,9 @@ nlohmann::json buildAckResponse(
     int graph_edges,
     double processing_ms,
     int thread_count,
-    const nlohmann::json& algorithm_results)
+    const nlohmann::json& algorithm_results,
+    const nlohmann::json& executed_algorithms,
+    const nlohmann::json& algorithm_timings_ms)
 {
     nlohmann::json response;
     response["type"] = "RESPONSE";
@@ -32,6 +34,8 @@ nlohmann::json buildAckResponse(
     response["result"]["processing_time_ms"] = processing_ms;
     response["result"]["thread_count"] = thread_count;
     response["result"]["algorithms"] = algorithm_results;
+    response["result"]["executed_algorithms"] = executed_algorithms;
+    response["result"]["algorithm_timings_ms"] = algorithm_timings_ms;
 
     return response;
 }
