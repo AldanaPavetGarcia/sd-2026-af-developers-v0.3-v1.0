@@ -1,4 +1,4 @@
-.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test benchmark tsan
+.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test load-test-hpc benchmark tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -36,6 +36,10 @@ slo-dashboard-test:
 
 hpc-dashboard-test:
 	python3 tests/smoke/test_hpc_dashboard_contract.py
+
+## Runs local concurrent hpc-engine requests and validates US-206 telemetry fields.
+load-test-hpc:
+	python3 tests/load/hpc_load_test.py --engine ./build/hpc-engine/hpc_engine
 
 ## Ejecuta el benchmark completo de OpenMP (Release) y genera BENCHMARK_REPORT.md
 benchmark:
