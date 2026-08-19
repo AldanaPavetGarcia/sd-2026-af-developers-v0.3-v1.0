@@ -143,8 +143,10 @@ The following algorithm names are valid:
 | Field | Type | Required | Description |
 |---|---|---:|---|
 | `graph_size` | object | yes | Number of nodes and edges processed. |
-| `processing_time_ms` | number | yes | Wall-clock processing time in milliseconds. |
-| `thread_count` | number | yes | Number of OpenMP threads used by the HPC engine. |
+| `processing_time_ms` | number | yes | Total wall-clock processing time in milliseconds. |
+| `thread_count` | number | yes | Number of OpenMP threads available to the HPC engine during execution. |
+| `executed_algorithms` | array of strings | yes | Ordered list of algorithm identifiers executed by the engine. |
+| `algorithm_timings_ms` | object | yes | Wall-clock duration in milliseconds for each executed algorithm. |
 | `algorithms` | object | yes | Results grouped by algorithm name. |
 
 ## Successful Response Example
@@ -162,6 +164,16 @@ The following algorithm names are valid:
     },
     "processing_time_ms": 12,
     "thread_count": 4,
+    "executed_algorithms": [
+      "shortest_paths",
+      "connected_components",
+      "centrality"
+    ],
+    "algorithm_timings_ms": {
+      "shortest_paths": 5.1,
+      "connected_components": 1.8,
+      "centrality": 5.1
+    },
     "algorithms": {
       "shortest_paths": {
         "A-C": {
@@ -180,7 +192,6 @@ The following algorithm names are valid:
     }
   }
 }
-```
 
 ## Error Response Schema
 
