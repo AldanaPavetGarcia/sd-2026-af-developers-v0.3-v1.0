@@ -1,0 +1,15 @@
+apiVersion: 1
+
+providers:
+  - name: eop-dashboards
+    orgId: 1
+    folder: EOP
+    folderUid: eop
+    type: file
+    disableDeletion: false
+    editable: false
+    updateIntervalSeconds: 15
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards/eop
+      foldersFromFilesStructure: false

@@ -91,3 +91,39 @@ The test checks that:
 This dashboard provides the general EOP health view required by ADR-012 / US-205.
 
 It does not implement HPC-specific panels such as per-algorithm execution time, graph size, thread count, or OpenMP speedup. Those belong to the separate HPC Performance Grafana Panel.
+
+## Grafana provisioning
+
+Grafana provisioning files are stored in:
+
+```text
+monitoring/grafana/provisioning/
+```
+
+The dashboard provider is defined in:
+
+```text
+monitoring/grafana/provisioning/dashboards/eop-dashboard-provider.yaml
+```
+
+The expected Prometheus datasource is defined in:
+
+```text
+monitoring/grafana/provisioning/datasources/prometheus-datasource.yaml
+```
+
+The dashboard provider disables manual UI updates as the source of truth. The dashboard JSON must remain versioned in the repository.
+
+## Provisioning contract
+
+The SLO dashboard expects Grafana to load:
+
+```text
+/etc/grafana/provisioning/dashboards/eop
+```
+
+and expects a Prometheus datasource with this UID:
+
+```text
+prometheus
+```

@@ -3,7 +3,7 @@
 Contract test for the EOP SLO Grafana dashboard.
 
 This test validates that the dashboard required by ADR-012 / US-205 is
-versioned in the repository and contains the minimum system-health panels.
+versioned in the repository and has provisioning files for Grafana.
 It does not require a running Grafana instance.
 """
 
@@ -13,6 +13,8 @@ from pathlib import Path
 
 
 DASHBOARD_PATH = Path("monitoring/grafana/dashboards/eop-slo-dashboard.json")
+PROVIDER_PATH = Path("monitoring/grafana/provisioning/dashboards/eop-dashboard-provider.yaml")
+DATASOURCE_PATH = Path("monitoring/grafana/provisioning/datasources/prometheus-datasource.yaml")
 
 REQUIRED_TITLES = {
     "Service Availability",
@@ -39,13 +41,18 @@ def fail(message: str) -> None:
     sys.exit(1)
 
 
-def load_dashboard() -> dict:
-    if not DASHBOARD_PATH.exists():
-        fail(f"Dashboard file not found: {DASHBOARD_PATH}")
+def read_required_file(path: Path) -> str:
+    if not path.exists():
+        fail(f"Required file not found: {path}")
+    return path.read_text(encoding="utf-8")
 
+
+def load_dashboard() -> dict:
     try:
         with DASHBOARD_PATH.open(encoding="utf-8") as dashboard_file:
             return json.load(dashboard_file)
+    except FileNotFoundError:
+        fail(f"Dashboard file not found: {DASHBOARD_PATH}")
     except json.JSONDecodeError as exc:
         fail(f"Dashboard JSON is invalid: {exc}")
 
@@ -64,9 +71,7 @@ def collect_prometheus_exprs(dashboard: dict) -> list[str]:
     return exprs
 
 
-def main() -> None:
-    dashboard = load_dashboard()
-
+def validate_dashboard(dashboard: dict) -> None:
     if dashboard.get("uid") != "eop-slo-dashboard":
         fail("Dashboard uid must be 'eop-slo-dashboard'.")
 
@@ -100,9 +105,54 @@ def main() -> None:
     if missing_tokens:
         fail(f"Dashboard queries are missing required metric/query tokens: {', '.join(missing_tokens)}")
 
+
+def validate_dashboard_provider() -> None:
+    provider = read_required_file(PROVIDER_PATH)
+
+    required_tokens = [
+        "apiVersion: 1",
+        "providers:",
+        "name: eop-dashboards",
+        "type: file",
+        "allowUiUpdates: false",
+        "path: /etc/grafana/provisioning/dashboards/eop",
+    ]
+
+    for token in required_tokens:
+        if token not in provider:
+            fail(f"Dashboard provider is missing token: {token}")
+
+
+def validate_prometheus_datasource() -> None:
+    datasource = read_required_file(DATASOURCE_PATH)
+
+    required_tokens = [
+        "apiVersion: 1",
+        "datasources:",
+        "name: Prometheus",
+        "uid: prometheus",
+        "type: prometheus",
+        "url: http://prometheus:9090",
+    ]
+
+    for token in required_tokens:
+        if token not in datasource:
+            fail(f"Prometheus datasource provisioning is missing token: {token}")
+
+
+def main() -> None:
+    dashboard = load_dashboard()
+
+    validate_dashboard(dashboard)
+    validate_dashboard_provider()
+    validate_prometheus_datasource()
+
     print(
         "[slo-dashboard-test] contract passed: "
-        f"dashboard={DASHBOARD_PATH} panels={len(panels)} queries={len(exprs)}"
+        f"dashboard={DASHBOARD_PATH} "
+        f"provider={PROVIDER_PATH} "
+        f"datasource={DATASOURCE_PATH} "
+        f"panels={len(dashboard.get('panels', []))}"
     )
 
 
