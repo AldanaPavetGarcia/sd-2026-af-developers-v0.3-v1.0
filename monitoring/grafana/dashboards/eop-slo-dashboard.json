@@ -1,0 +1,250 @@
+{
+  "uid": "eop-slo-dashboard",
+  "title": "EOP SLO Dashboard",
+  "tags": ["eop", "slo", "system-health"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "type": "custom",
+        "label": "Service",
+        "query": "eop-server,hpc-engine",
+        "current": {
+          "text": "eop-server",
+          "value": "eop-server"
+        },
+        "options": [
+          {
+            "text": "eop-server",
+            "value": "eop-server",
+            "selected": true
+          },
+          {
+            "text": "hpc-engine",
+            "value": "hpc-engine",
+            "selected": false
+          }
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Service Availability",
+      "description": "Availability percentage for the selected EOP service.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg_over_time(up{job=~\"$service\"}[$__range]) * 100",
+          "legendFormat": "availability %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Requests per Second",
+      "description": "Incoming request rate for the selected EOP service.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(eop_requests_total{service=~\"$service\"}[5m]))",
+          "legendFormat": "requests/sec"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "P99 Request Latency",
+      "description": "P99 request latency for the selected EOP service.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le, service) (rate(eop_request_duration_seconds_bucket{service=~\"$service\"}[5m]))) * 1000",
+          "legendFormat": "p99 latency ms"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Error Rate",
+      "description": "Percentage of failed requests for the selected EOP service.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate(eop_requests_total{service=~\"$service\",status=~\"ERROR|5..|TIMEOUT\"}[5m])) / clamp_min(sum(rate(eop_requests_total{service=~\"$service\"}[5m])), 1)) * 100",
+          "legendFormat": "error rate %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Error Budget Remaining",
+      "description": "Estimated remaining error budget against a 99.9% availability target.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(0, 100 - ((1 - (sum(rate(eop_requests_total{service=~\"$service\",result=\"OK\"}[$__range])) / clamp_min(sum(rate(eop_requests_total{service=~\"$service\"}[$__range])), 1))) / 0.001 * 100))",
+          "legendFormat": "error budget remaining %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 6
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Average Request Latency",
+      "description": "Average request latency for the selected EOP service.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate(eop_request_duration_seconds_sum{service=~\"$service\"}[5m])) / clamp_min(sum(rate(eop_request_duration_seconds_count{service=~\"$service\"}[5m])), 1)) * 1000",
+          "legendFormat": "avg latency ms"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 6
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Failed Requests",
+      "description": "Failed request count grouped by service.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service) (rate(eop_requests_total{status=~\"ERROR|5..|TIMEOUT\"}[5m]))",
+          "legendFormat": "{{service}} failures/sec"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 6
+      }
+    }
+  ]
+}
