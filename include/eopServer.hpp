@@ -26,6 +26,11 @@
 
 #include <opentelemetry/trace/span.h>
 
+#include <prometheus/counter.h>
+#include <prometheus/exposer.h>
+#include <prometheus/histogram.h>
+#include <prometheus/registry.h>
+
 #include "../lib/include/commonProtocol.hpp"
 #include "../lib/include/eventAuditLogger.hpp"
 #include "../lib/include/systemTimeValidator.hpp"
@@ -38,6 +43,9 @@
 #endif
 #ifndef EOP_IDLE_TIMEOUT
 #define EOP_IDLE_TIMEOUT 30
+#endif
+#ifndef EOP_METRICS_PORT
+#define EOP_METRICS_PORT 9100 ///< Default port for the Prometheus `/metrics` HTTP exposer (US-206 support).
 #endif
 
 #define EOP_BUFFER_SIZE       1024
@@ -274,11 +282,92 @@ struct ServerContext
 
 extern ServerContext serverContext;
 
+/**
+ * @brief Holds the process-wide Prometheus metrics state (US-206 support).
+ *
+ * @details Mirrors the single-global/`extern` pattern already used by ServerContext and the
+ * OpenTelemetry TracerProvider: one instance for the whole process, defined in eopServer.cpp,
+ * populated by InitMetrics() and torn down by ShutdownMetrics(). The Exposer owns the
+ * `/metrics` HTTP listener socket (RAII: bound in InitMetrics(), released when the
+ * `unique_ptr` is reset in ShutdownMetrics() or on process teardown). Family pointers are
+ * non-owning views into `registry`, valid for as long as `registry` is alive.
+ *
+ * @invariant `exposer`, `requestsTotalFamily`, and `requestDurationFamily` are only non-null
+ * after a successful InitMetrics() call in a non-TEST_MODE build; RecordRequestMetric() must
+ * tolerate them being null (TEST_MODE builds never call InitMetrics(), so metric recording in
+ * unit tests goes through RecordRequestMetric() directly against a test-local registry, not
+ * this global).
+ *
+ * `mutex` protects `registry`/`exposer`/the two Family pointers against concurrent
+ * InitMetrics()/ShutdownMetrics()/RecordRequestMetric() calls — required in production only in
+ * the sense that startServer() could theoretically run more than once in a process (it does in
+ * this codebase's own test suite, where one fixture's server is still live while another test
+ * calls startServer() again), and without it a concurrent RecordRequestMetric() could read a
+ * Family pointer into a Registry that InitMetrics() just replaced/destroyed.
+ */
+struct MetricsRegistry
+{
+    mutable std::mutex mutex;                                                  ///< Protects the members below.
+    std::shared_ptr<prometheus::Registry> registry;                            ///< Owns the metric families below.
+    std::unique_ptr<prometheus::Exposer> exposer;                              ///< RAII owner of the `/metrics` HTTP listener.
+    prometheus::Family<prometheus::Counter>* requestsTotalFamily = nullptr;    ///< `eop_requests_total` family.
+    prometheus::Family<prometheus::Histogram>* requestDurationFamily = nullptr; ///< `eop_request_duration_seconds` family.
+};
+
+extern MetricsRegistry metricsRegistry;
+
 // ---------------------------------------------------------------------------
 // Server function prototypes
 // ---------------------------------------------------------------------------
 void handleClientMessage(int clientSock, const std::string& clientIp, const std::string& request);
 void startServer(int port, int idleTimeout);
 std::string getCurrentTimestamp();
+
+/**
+ * @brief Initializes the Prometheus metrics registry and starts the `/metrics` HTTP exposer.
+ *
+ * @details Mirrors InitTracer()'s self-contained pattern: reads `EOP_METRICS_PORT` from the
+ * environment, falling back to the ::EOP_METRICS_PORT compile-time default (no config.env
+ * tier — like the OTel tracer's own settings, this is read directly from the environment,
+ * since both container runtimes this server ships on (Docker Compose, Kubernetes) already
+ * inject configuration as real environment variables). Registers `eop_requests_total`
+ * (Counter) and `eop_request_duration_seconds` (Histogram) on ::metricsRegistry's registry.
+ * Compiled to a no-op under `TEST_MODE`, so it is safe to call unconditionally from
+ * startServer() regardless of caller (production `main()` or a GTest fixture).
+ *
+ * @pre Called at most once per process — a second call would attempt to bind the exposer's
+ * listening socket twice and fail.
+ * @post On success (non-TEST_MODE), ::metricsRegistry's `registry`, `exposer`,
+ * `requestsTotalFamily`, and `requestDurationFamily` are all non-null.
+ */
+void InitMetrics();
+
+/**
+ * @brief Stops the Prometheus `/metrics` HTTP exposer and releases ::metricsRegistry's state.
+ *
+ * @details Mirrors ShutdownTracer()'s pattern; a no-op under `TEST_MODE`. Safe to call even if
+ * InitMetrics() was never called (e.g. it failed to bind the listener).
+ */
+void ShutdownMetrics();
+
+/**
+ * @brief Records one completed request's outcome and duration in the metrics registry.
+ *
+ * @details Increments `eop_requests_total{command,status,service="eop-server"}` and observes
+ * `eop_request_duration_seconds{command,service="eop-server"}`. Unlike OpenTelemetry span
+ * recording in workerLoop() (which is skipped for `HEARTBEAT` and `unknown_operation` via
+ * `shouldTrace`), this must be called for every dispatched command, including those two —
+ * metrics need full request-volume counting, not a sampled trace view. A no-op if
+ * ::metricsRegistry has not been initialized (`requestsTotalFamily`/`requestDurationFamily`
+ * null), so it is always safe to call from workerLoop() even under `TEST_MODE`.
+ *
+ * @param command         Command name recorded in the `command` label (e.g. `"REGISTER"`,
+ *                         `"HEARTBEAT"`, `"unknown_operation"`).
+ * @param status           Outcome recorded in the `status` label. Only `"OK"` and `"ERROR"`
+ *                         are meaningful today — mirrors the contract of
+ *                         `g_logContext.result` (see eventAuditLogger.hpp).
+ * @param durationSeconds Wall-clock duration of the request, in seconds.
+ */
+void RecordRequestMetric(const std::string& command, const std::string& status, double durationSeconds);
 
 #endif

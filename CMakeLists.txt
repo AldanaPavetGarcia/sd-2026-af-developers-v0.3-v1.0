@@ -49,6 +49,7 @@ target_include_directories(exodus_lib
 )
 
 find_package(opentelemetry-cpp CONFIG REQUIRED)
+find_package(prometheus-cpp CONFIG REQUIRED)
 
 # =============================================================================
 # Ejecutable principal
@@ -62,11 +63,13 @@ add_executable(eop_server
 )
 
 target_include_directories(eop_server PRIVATE include lib/include)
-target_link_libraries(eop_server PRIVATE 
+target_link_libraries(eop_server PRIVATE
   exodus_lib
   opentelemetry-cpp::api
   opentelemetry-cpp::sdk
   opentelemetry-cpp::otlp_http_exporter
+  prometheus-cpp::core
+  prometheus-cpp::pull
 )
 
 # =============================================================================
@@ -100,6 +103,7 @@ if(EXODUS_BUILD_TESTS)
     tests/unit/testLoad.cpp
     tests/unit/testClient.cpp
     tests/unit/testClientDisconnect.cpp
+    tests/unit/testMetrics.cpp
     src/app/eop_client.c
     src/app/eopServer.cpp
     lib/src/eventAuditLogger.cpp
@@ -118,6 +122,8 @@ if(EXODUS_BUILD_TESTS)
     opentelemetry-cpp::api
     opentelemetry-cpp::sdk
     opentelemetry-cpp::otlp_http_exporter
+    prometheus-cpp::core
+    prometheus-cpp::pull
   )
 
   if(EXODUS_ENABLE_COVERAGE)
@@ -178,5 +184,12 @@ if(EXODUS_BUILD_TESTS)
       ${CMAKE_SOURCE_DIR}/tests/smoke/analyze_graph_real_engine.py
       $<TARGET_FILE:eop_server>
       $<TARGET_FILE:hpc_engine>
+  )
+
+  add_test(
+    NAME smoke_metrics_endpoint
+    COMMAND python3
+      ${CMAKE_SOURCE_DIR}/tests/smoke/test_metrics_endpoint.py
+      $<TARGET_FILE:eop_server>
   )
 endif()

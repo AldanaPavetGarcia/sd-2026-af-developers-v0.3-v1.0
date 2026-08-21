@@ -30,6 +30,7 @@
 #include <opentelemetry/trace/scope.h>
 
 ServerContext serverContext;
+MetricsRegistry metricsRegistry;
 
 // ---------------------------------------------------------------------------
 // OpenTelemetry setup
@@ -76,6 +77,94 @@ static void ShutdownTracer()
     }
     opentelemetry::trace::Provider::SetTracerProvider(std::shared_ptr<opentelemetry::trace::TracerProvider>());
 #endif
+}
+
+// ---------------------------------------------------------------------------
+// Prometheus metrics setup (US-206)
+// ---------------------------------------------------------------------------
+void InitMetrics()
+{
+    std::lock_guard<std::mutex> lock(metricsRegistry.mutex);
+
+    // Registry + family registration is pure in-memory bookkeeping (no sockets, no I/O), so it
+    // runs unconditionally — including under TEST_MODE — so that RecordRequestMetric() is
+    // actually exercisable by unit tests. Only the HTTP exposer below (a real listening
+    // socket) is skipped under TEST_MODE, the same way InitTracer() skips its outbound OTLP
+    // export: multiple test suites in the same `unit_tests` binary each start their own
+    // eop-server instance, and binding a fixed metrics port per suite would conflict the same
+    // way a shared OTLP endpoint would.
+    metricsRegistry.registry = std::make_shared<prometheus::Registry>();
+
+    metricsRegistry.requestsTotalFamily = &prometheus::BuildCounter()
+                                                .Name("eop_requests_total")
+                                                .Help("Total number of EOP server requests processed, by command and outcome.")
+                                                .Register(*metricsRegistry.registry);
+
+    // SLO for the C++ core server is P99 < 200ms (ADR-012); boundaries are chosen so 200ms
+    // falls exactly on a bucket edge instead of being interpolated between two wide buckets.
+    metricsRegistry.requestDurationFamily =
+        &prometheus::BuildHistogram()
+             .Name("eop_request_duration_seconds")
+             .Help("EOP server request processing duration in seconds, by command.")
+             .Register(*metricsRegistry.registry);
+
+#ifndef TEST_MODE
+    int metricsPort = EOP_METRICS_PORT;
+    if (const char* env = std::getenv("EOP_METRICS_PORT"))
+    {
+        metricsPort = std::atoi(env);
+        if (metricsPort <= 0)
+        {
+            metricsPort = EOP_METRICS_PORT;
+        }
+    }
+
+    // LCOV_EXCL_START
+    try
+    {
+        metricsRegistry.exposer = std::make_unique<prometheus::Exposer>("0.0.0.0:" + std::to_string(metricsPort));
+        metricsRegistry.exposer->RegisterCollectable(metricsRegistry.registry);
+    }
+    catch (const std::exception& ex)
+    {
+        std::cerr << "Failed to start Prometheus /metrics exposer on port " << metricsPort << ": " << ex.what()
+                   << std::endl;
+        metricsRegistry.exposer.reset();
+    }
+    // LCOV_EXCL_STOP
+#endif
+}
+
+void ShutdownMetrics()
+{
+    std::lock_guard<std::mutex> lock(metricsRegistry.mutex);
+    metricsRegistry.exposer.reset();
+    metricsRegistry.requestsTotalFamily = nullptr;
+    metricsRegistry.requestDurationFamily = nullptr;
+    metricsRegistry.registry.reset();
+}
+
+void RecordRequestMetric(const std::string& command, const std::string& status, double durationSeconds)
+{
+    std::lock_guard<std::mutex> lock(metricsRegistry.mutex);
+
+    if (metricsRegistry.requestsTotalFamily == nullptr || metricsRegistry.requestDurationFamily == nullptr)
+    {
+        // LCOV_EXCL_START
+        return; // metrics not initialized (TEST_MODE, or the exposer failed to bind)
+        // LCOV_EXCL_STOP
+    }
+
+    static const prometheus::Histogram::BucketBoundaries kDurationBuckets = {
+        0.005, 0.01, 0.025, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1, 2.5, 5, 10};
+
+    metricsRegistry.requestsTotalFamily
+        ->Add({{"command", command}, {"status", status}, {"service", "eop-server"}})
+        .Increment();
+
+    metricsRegistry.requestDurationFamily
+        ->Add({{"command", command}, {"service", "eop-server"}}, kDurationBuckets)
+        .Observe(durationSeconds);
 }
 
 // ---------------------------------------------------------------------------
@@ -705,6 +794,15 @@ static void workerLoop(ServerContext& ctx)
         std::unique_ptr<opentelemetry::trace::Scope> scope;
         auto startTime = std::chrono::steady_clock::now();
 
+        // g_logContext is thread_local and persists across loop iterations on this worker
+        // thread. Reset it unconditionally before every dispatch (not just traced commands) —
+        // otherwise an untraced request (HEARTBEAT, unknown_operation: shouldTrace is false
+        // for both, see above) would read a stale .result/.nodeId left over from this worker's
+        // previous request when RecordRequestMetric() below computes its status label.
+        g_logContext.nodeId.clear();
+        g_logContext.event = opName;
+        g_logContext.result.clear();
+
         std::string initialNodeId;
         if (shouldTrace)
         {
@@ -726,21 +824,24 @@ static void workerLoop(ServerContext& ctx)
             scope = std::make_unique<opentelemetry::trace::Scope>(tracer->WithActiveSpan(opSpan));
 
             g_logContext.nodeId = initialNodeId;
-            g_logContext.event = opName;
-            g_logContext.result = ""; // default empty
         }
 
         handleClientMessage(msg.clientFd, msg.clientIp, msg.message);
 
+        auto endTime = std::chrono::steady_clock::now();
+        auto durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+
+        std::string resultStr = g_logContext.result;
+        if (resultStr.empty())
+            resultStr = "OK"; // fallback
+
+        // Metrics must count every dispatched command, including HEARTBEAT and
+        // unknown_operation — unlike OTel span recording below, this is not gated on
+        // shouldTrace (US-206).
+        RecordRequestMetric(opName, resultStr, static_cast<double>(durationMs) / 1000.0);
+
         if (shouldTrace && opSpan)
         {
-            auto endTime = std::chrono::steady_clock::now();
-            auto durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-
-            std::string resultStr = g_logContext.result;
-            if (resultStr.empty())
-                resultStr = "OK"; // fallback
-
             std::string updatedNodeId;
             std::string updatedSessionId;
             {
@@ -778,10 +879,6 @@ static void workerLoop(ServerContext& ctx)
 
             opSpan->End();
             scope.reset();
-
-            g_logContext.nodeId.clear();
-            g_logContext.event.clear();
-            g_logContext.result.clear();
         }
     }
 }
@@ -1019,6 +1116,7 @@ static void handleRegister(int clientSock, const std::string& line)
         const std::string err = "ERROR_BAD_REQUEST desc=Malformed REGISTER\n";
         send(clientSock, err.c_str(), err.size(), 0);
         auditLogger.writeString("Malformed REGISTER message", ERROR_LOG);
+        g_logContext.result = "ERROR";
         return;
         // LCOV_EXCL_STOP
     }
@@ -1083,6 +1181,7 @@ static void handleQueryNode(int clientSock, const std::string& line)
         // LCOV_EXCL_START
         const std::string err = "ERROR_BAD_REQUEST desc=Malformed QUERY_NODE\n";
         send(clientSock, err.c_str(), err.size(), 0);
+        g_logContext.result = "ERROR";
         return;
         // LCOV_EXCL_STOP
     }
@@ -1415,6 +1514,7 @@ void handleClientMessage(int clientSock, const std::string& clientIp, const std:
             audit_log_write_fmt(WARNING_LOG, "Unknown command '%s' from %s", request.c_str(), clientIp.c_str());
             const std::string err = "ERROR_BAD_REQUEST desc=Unknown command\n";
             send(clientSock, err.c_str(), err.size(), 0);
+            g_logContext.result = "ERROR";
         }
     }
 }
@@ -1432,6 +1532,7 @@ void handleClientMessage(int clientSock, const std::string& clientIp, const std:
 void startServer(int port, int idleTimeout)
 {
     InitTracer();
+    InitMetrics();
 
     serverContext.idleTimeoutSeconds = idleTimeout;
     serverContext.running = true;
@@ -1706,6 +1807,7 @@ void startServer(int port, int idleTimeout)
 
     std::cout << "Server stopped." << std::endl;
     ShutdownTracer();
+    ShutdownMetrics();
 }
 
 // ---------------------------------------------------------------------------

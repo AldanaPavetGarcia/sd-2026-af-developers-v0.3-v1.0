@@ -6,6 +6,10 @@
       "name": "opentelemetry-cpp",
       "features": ["otlp-http"]
     },
+    {
+      "name": "prometheus-cpp",
+      "features": ["pull"]
+    },
     "nlohmann-json"
   ],
   "features": {
