@@ -95,5 +95,6 @@ RUN chown exodus:exodus /app/eop_server
 USER exodus
 
 EXPOSE 9026
+EXPOSE 9100
 
 ENTRYPOINT ["./eop_server"]

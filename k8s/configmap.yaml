@@ -6,6 +6,9 @@ metadata:
     app: eop-server
 data:
   EOP_PORT: "9026"
+  # Prometheus /metrics HTTP exposer (US-206) — read directly from the environment in
+  # InitMetrics(), no config.env fallback (see include/eopServer.hpp / src/app/eopServer.cpp).
+  EOP_METRICS_PORT: "9100"
   EOP_IDLE_TIMEOUT: "30"
   EOP_MAX_CLIENTS: "100"
   EOP_HEARTBEAT_INTERVAL: "5"

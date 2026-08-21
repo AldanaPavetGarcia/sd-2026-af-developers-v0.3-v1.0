@@ -13,3 +13,7 @@ spec:
       port: 9026
       targetPort: tcp-eop
       protocol: TCP
+    - name: metrics
+      port: 9100
+      targetPort: metrics
+      protocol: TCP

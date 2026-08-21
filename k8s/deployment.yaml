@@ -27,6 +27,9 @@ spec:
             - name: tcp-eop
               containerPort: 9026
               protocol: TCP
+            - name: metrics
+              containerPort: 9100
+              protocol: TCP
           readinessProbe:
             tcpSocket:
               port: tcp-eop
