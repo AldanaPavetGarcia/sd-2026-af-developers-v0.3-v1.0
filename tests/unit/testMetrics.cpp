@@ -65,7 +65,7 @@ namespace
 
     /// Finds the MetricFamily with the given name in a Collect() result, or nullptr.
     const prometheus::MetricFamily* findFamily(const std::vector<prometheus::MetricFamily>& families,
-                                                const std::string& name)
+                                               const std::string& name)
     {
         for (const auto& family : families)
         {
@@ -79,7 +79,7 @@ namespace
 
     /// Finds the sample within a MetricFamily whose label set matches exactly, or nullptr.
     const prometheus::ClientMetric* findSample(const prometheus::MetricFamily& family,
-                                                const std::map<std::string, std::string>& labels)
+                                               const std::map<std::string, std::string>& labels)
     {
         for (const auto& metric : family.metric)
         {
@@ -106,8 +106,14 @@ namespace
     class MetricsDirectTest : public ::testing::Test
     {
     protected:
-        void SetUp() override { InitMetrics(); }
-        void TearDown() override { ShutdownMetrics(); }
+        void SetUp() override
+        {
+            InitMetrics();
+        }
+        void TearDown() override
+        {
+            ShutdownMetrics();
+        }
     };
 
     /**
@@ -174,7 +180,8 @@ TEST_F(MetricsDirectTest, DifferentLabelsAreCountedSeparately)
     const auto* family = findFamily(families, "eop_requests_total");
     ASSERT_NE(family, nullptr);
 
-    const auto* registerOk = findSample(*family, {{"command", "REGISTER"}, {"status", "OK"}, {"service", "eop-server"}});
+    const auto* registerOk =
+        findSample(*family, {{"command", "REGISTER"}, {"status", "OK"}, {"service", "eop-server"}});
     const auto* registerErr =
         findSample(*family, {{"command", "REGISTER"}, {"status", "ERROR"}, {"service", "eop-server"}});
     const auto* heartbeatOk =
@@ -258,9 +265,10 @@ TEST_F(MetricsServerTest, HeartbeatNeverInheritsStaleErrorStatus)
     const auto* badSample =
         findSample(*family, {{"command", "HEARTBEAT"}, {"status", "ERROR"}, {"service", "eop-server"}});
     EXPECT_EQ(badSample, nullptr) << "HEARTBEAT must never be recorded with status=ERROR "
-                                      "(g_logContext.result leaked from a previous request on this worker thread)";
+                                     "(g_logContext.result leaked from a previous request on this worker thread)";
 
-    const auto* goodSample = findSample(*family, {{"command", "HEARTBEAT"}, {"status", "OK"}, {"service", "eop-server"}});
+    const auto* goodSample =
+        findSample(*family, {{"command", "HEARTBEAT"}, {"status", "OK"}, {"service", "eop-server"}});
     ASSERT_NE(goodSample, nullptr);
     EXPECT_GE(goodSample->counter.value, static_cast<double>(kPairs));
 }

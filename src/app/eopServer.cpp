@@ -95,18 +95,18 @@ void InitMetrics()
     // way a shared OTLP endpoint would.
     metricsRegistry.registry = std::make_shared<prometheus::Registry>();
 
-    metricsRegistry.requestsTotalFamily = &prometheus::BuildCounter()
-                                                .Name("eop_requests_total")
-                                                .Help("Total number of EOP server requests processed, by command and outcome.")
-                                                .Register(*metricsRegistry.registry);
+    metricsRegistry.requestsTotalFamily =
+        &prometheus::BuildCounter()
+             .Name("eop_requests_total")
+             .Help("Total number of EOP server requests processed, by command and outcome.")
+             .Register(*metricsRegistry.registry);
 
     // SLO for the C++ core server is P99 < 200ms (ADR-012); boundaries are chosen so 200ms
     // falls exactly on a bucket edge instead of being interpolated between two wide buckets.
-    metricsRegistry.requestDurationFamily =
-        &prometheus::BuildHistogram()
-             .Name("eop_request_duration_seconds")
-             .Help("EOP server request processing duration in seconds, by command.")
-             .Register(*metricsRegistry.registry);
+    metricsRegistry.requestDurationFamily = &prometheus::BuildHistogram()
+                                                 .Name("eop_request_duration_seconds")
+                                                 .Help("EOP server request processing duration in seconds, by command.")
+                                                 .Register(*metricsRegistry.registry);
 
 #ifndef TEST_MODE
     int metricsPort = EOP_METRICS_PORT;
@@ -128,7 +128,7 @@ void InitMetrics()
     catch (const std::exception& ex)
     {
         std::cerr << "Failed to start Prometheus /metrics exposer on port " << metricsPort << ": " << ex.what()
-                   << std::endl;
+                  << std::endl;
         metricsRegistry.exposer.reset();
     }
     // LCOV_EXCL_STOP
@@ -158,12 +158,10 @@ void RecordRequestMetric(const std::string& command, const std::string& status, 
     static const prometheus::Histogram::BucketBoundaries kDurationBuckets = {
         0.005, 0.01, 0.025, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1, 2.5, 5, 10};
 
-    metricsRegistry.requestsTotalFamily
-        ->Add({{"command", command}, {"status", status}, {"service", "eop-server"}})
+    metricsRegistry.requestsTotalFamily->Add({{"command", command}, {"status", status}, {"service", "eop-server"}})
         .Increment();
 
-    metricsRegistry.requestDurationFamily
-        ->Add({{"command", command}, {"service", "eop-server"}}, kDurationBuckets)
+    metricsRegistry.requestDurationFamily->Add({{"command", command}, {"service", "eop-server"}}, kDurationBuckets)
         .Observe(durationSeconds);
 }
 

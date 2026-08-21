@@ -307,11 +307,12 @@ extern ServerContext serverContext;
  */
 struct MetricsRegistry
 {
-    mutable std::mutex mutex;                                                  ///< Protects the members below.
-    std::shared_ptr<prometheus::Registry> registry;                            ///< Owns the metric families below.
-    std::unique_ptr<prometheus::Exposer> exposer;                              ///< RAII owner of the `/metrics` HTTP listener.
-    prometheus::Family<prometheus::Counter>* requestsTotalFamily = nullptr;    ///< `eop_requests_total` family.
-    prometheus::Family<prometheus::Histogram>* requestDurationFamily = nullptr; ///< `eop_request_duration_seconds` family.
+    mutable std::mutex mutex;                       ///< Protects the members below.
+    std::shared_ptr<prometheus::Registry> registry; ///< Owns the metric families below.
+    std::unique_ptr<prometheus::Exposer> exposer;   ///< RAII owner of the `/metrics` HTTP listener.
+    prometheus::Family<prometheus::Counter>* requestsTotalFamily = nullptr; ///< `eop_requests_total` family.
+    prometheus::Family<prometheus::Histogram>* requestDurationFamily =
+        nullptr; ///< `eop_request_duration_seconds` family.
 };
 
 extern MetricsRegistry metricsRegistry;
