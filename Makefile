@@ -1,4 +1,4 @@
-.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test benchmark tsan
+.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test benchmark tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -33,6 +33,9 @@ observability-test:
 
 slo-dashboard-test:
 	python3 tests/smoke/test_grafana_dashboard_contract.py
+
+hpc-dashboard-test:
+	python3 tests/smoke/test_hpc_dashboard_contract.py
 
 ## Ejecuta el benchmark completo de OpenMP (Release) y genera BENCHMARK_REPORT.md
 benchmark:
