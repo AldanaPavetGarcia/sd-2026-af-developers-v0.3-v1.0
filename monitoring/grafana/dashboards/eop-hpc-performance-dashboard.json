@@ -1,0 +1,300 @@
+{
+  "uid": "eop-hpc-performance-dashboard",
+  "title": "EOP HPC Performance Dashboard",
+  "tags": [
+    "eop",
+    "hpc",
+    "performance",
+    "us-206"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "algorithm",
+        "type": "custom",
+        "label": "Algorithm",
+        "query": "shortest_paths,connected_components,centrality",
+        "current": {
+          "text": "shortest_paths",
+          "value": "shortest_paths"
+        },
+        "options": [
+          {
+            "text": "shortest_paths",
+            "value": "shortest_paths",
+            "selected": true
+          },
+          {
+            "text": "connected_components",
+            "value": "connected_components",
+            "selected": false
+          },
+          {
+            "text": "centrality",
+            "value": "centrality",
+            "selected": false
+          }
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Graphs Processed per Minute",
+      "description": "Number of successful HPC graph analysis requests processed per minute.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(eop_hpc_requests_total{status=\"ACK\"}[1m]))",
+          "legendFormat": "graphs/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "HPC Processing Latency P50/P95/P99",
+      "description": "Percentile latency for complete HPC graph analysis processing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(eop_hpc_processing_duration_seconds_bucket[5m]))) * 1000",
+          "legendFormat": "p50 ms"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(eop_hpc_processing_duration_seconds_bucket[5m]))) * 1000",
+          "legendFormat": "p95 ms"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(eop_hpc_processing_duration_seconds_bucket[5m]))) * 1000",
+          "legendFormat": "p99 ms"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 6,
+        "y": 0
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Average HPC Processing Time",
+      "description": "Average wall-clock processing time for complete HPC graph analysis requests.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate(eop_hpc_processing_duration_seconds_sum[5m])) / clamp_min(sum(rate(eop_hpc_processing_duration_seconds_count[5m])), 1)) * 1000",
+          "legendFormat": "avg ms"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Per-Algorithm Timing P95",
+      "description": "P95 execution time for the selected HPC algorithm.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, algorithm) (rate(eop_hpc_algorithm_duration_seconds_bucket{algorithm=~\"$algorithm\"}[5m]))) * 1000",
+          "legendFormat": "{{algorithm}} p95 ms"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "OpenMP Thread Count",
+      "description": "OpenMP thread count observed by the HPC Engine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg_over_time(eop_hpc_thread_count[$__interval])",
+          "legendFormat": "threads"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 6
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Graph Size",
+      "description": "Average graph size processed by the HPC Engine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg_over_time(eop_hpc_graph_nodes[$__interval])",
+          "legendFormat": "nodes"
+        },
+        {
+          "refId": "B",
+          "expr": "avg_over_time(eop_hpc_graph_edges[$__interval])",
+          "legendFormat": "edges"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 6
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "OpenMP Speedup Ratio",
+      "description": "Speedup ratio when a valid baseline metric is available.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg_over_time(eop_hpc_speedup_ratio[$__interval])",
+          "legendFormat": "speedup"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 12
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "HPC Error Rate",
+      "description": "Percentage of failed HPC graph analysis requests.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate(eop_hpc_requests_total{status!=\"ACK\"}[5m])) / clamp_min(sum(rate(eop_hpc_requests_total[5m])), 1)) * 100",
+          "legendFormat": "error rate %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 12
+      }
+    }
+  ]
+}
