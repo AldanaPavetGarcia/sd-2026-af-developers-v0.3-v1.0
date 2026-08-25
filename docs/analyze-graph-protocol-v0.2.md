@@ -192,6 +192,7 @@ The following algorithm names are valid:
     }
   }
 }
+```
 
 ## Error Response Schema
 
