@@ -17,6 +17,7 @@ option(HPC_BUILD_BENCHMARKS "Build HPC engine benchmarks" OFF)
 # =============================================================================
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(OpenMP REQUIRED)
+find_package(prometheus-cpp CONFIG REQUIRED)
 
 # =============================================================================
 # HPC Engine static library (shared between executable and tests)
@@ -29,6 +30,7 @@ add_library(hpc_engine_lib STATIC
   src/centrality.cpp
   src/protocol.cpp
   src/engine.cpp
+  src/metrics.cpp
 )
 
 target_include_directories(hpc_engine_lib PUBLIC include)
@@ -37,6 +39,8 @@ target_link_libraries(hpc_engine_lib
   PUBLIC
     nlohmann_json::nlohmann_json
     OpenMP::OpenMP_CXX
+    prometheus-cpp::core
+    prometheus-cpp::pull
 )
 
 target_compile_options(hpc_engine_lib PRIVATE -Wall -Wextra -Wpedantic)
