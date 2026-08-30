@@ -86,6 +86,7 @@ if(HPC_BUILD_TESTS)
     tests/test_centrality.cpp
     tests/test_protocol.cpp
     tests/test_concurrent_algorithms.cpp
+    tests/test_metrics.cpp
   )
 
   target_link_libraries(hpc_tests PRIVATE
@@ -108,4 +109,11 @@ if(HPC_BUILD_TESTS)
 
   include(GoogleTest)
   gtest_discover_tests(hpc_tests)
+
+  add_test(
+    NAME smoke_hpc_metrics_endpoint
+    COMMAND python3
+      ${CMAKE_CURRENT_SOURCE_DIR}/../tests/smoke/test_hpc_metrics_endpoint.py
+      $<TARGET_FILE:hpc_engine>
+  )
 endif()

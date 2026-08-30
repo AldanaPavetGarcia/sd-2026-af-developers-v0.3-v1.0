@@ -1,4 +1,4 @@
-.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test load-test-hpc benchmark tsan
+.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc benchmark tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -36,6 +36,10 @@ slo-dashboard-test:
 
 hpc-dashboard-test:
 	python3 tests/smoke/test_hpc_dashboard_contract.py
+
+hpc-metrics-test:
+	./build/hpc-engine/hpc_tests --gtest_filter='*HpcMetrics*:*Metrics*'
+	python3 tests/smoke/test_hpc_metrics_endpoint.py ./build/hpc-engine/hpc_engine
 
 ## Runs local concurrent hpc-engine requests and validates US-206 telemetry fields.
 load-test-hpc:
