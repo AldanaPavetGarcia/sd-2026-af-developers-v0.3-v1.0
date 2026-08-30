@@ -100,8 +100,10 @@ RUN chown exodus:exodus /app/hpc_engine
 
 USER exodus
 
-# No EXPOSE: hpc-engine never binds/listens, it is a pure outbound TCP client
-# to eop-server. Socket-mode flags come entirely from the K8s manifest's
-# `args:` (see k8s/hpc-engine-deployment.yaml); no args at all means batch
-# mode (reads a single request from stdin), used by the Job demo.
+EXPOSE 9101
+
+# hpc-engine is still an outbound TCP client for ANALYZE_GRAPH traffic, but in
+# socket mode it also exposes a Prometheus /metrics endpoint for the HPC
+# dashboard. Socket-mode flags come from the K8s manifest's args; no args means
+# batch mode, used by the Job demo.
 ENTRYPOINT ["./hpc_engine"]

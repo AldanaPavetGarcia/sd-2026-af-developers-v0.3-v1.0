@@ -9,6 +9,8 @@ data:
   # Prometheus /metrics HTTP exposer (US-205 / ADR-012) — read directly from the environment in
   # InitMetrics(), no config.env fallback (see include/eopServer.hpp / src/app/eopServer.cpp).
   EOP_METRICS_PORT: "9100"
+  # Prometheus /metrics HTTP exposer for hpc-engine.
+  EOP_HPC_METRICS_PORT: "9101"
   EOP_IDLE_TIMEOUT: "30"
   EOP_MAX_CLIENTS: "100"
   EOP_HEARTBEAT_INTERVAL: "5"

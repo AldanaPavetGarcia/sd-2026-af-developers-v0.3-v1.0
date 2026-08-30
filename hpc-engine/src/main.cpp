@@ -38,6 +38,7 @@
 #include <nlohmann/json.hpp>
 
 #include "hpc/engine.hpp"
+#include "hpc/metrics.hpp"
 
 namespace
 {
@@ -570,8 +571,27 @@ namespace
         std::thread m_thread;
     };
 
+    class HpcMetricsGuard
+    {
+    public:
+        HpcMetricsGuard()
+        {
+            hpc::InitHpcMetrics();
+        }
+
+        ~HpcMetricsGuard()
+        {
+            hpc::ShutdownHpcMetrics();
+        }
+
+        HpcMetricsGuard(const HpcMetricsGuard&) = delete;
+        HpcMetricsGuard& operator=(const HpcMetricsGuard&) = delete;
+    };
+
     int runSocketMode(const SocketModeConfig& config, const RetryConfig& retryConfig)
     {
+        HpcMetricsGuard metricsGuard;
+
         int sock = establishSession(config, retryConfig);
         if (sock < 0)
         {

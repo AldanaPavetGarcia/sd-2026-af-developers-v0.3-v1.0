@@ -26,6 +26,10 @@ spec:
       labels:
         app: hpc-engine
         mode: persistent
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "9101"
     spec:
       restartPolicy: Always
       terminationGracePeriodSeconds: 20
@@ -41,8 +45,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
-          # hpc-engine is a pure outbound TCP client (connects to eop-server,
-          # never binds/listens) — no ports:, no Service in front of it.
+          ports:
+            - name: metrics
+              containerPort: 9101
+              protocol: TCP
+          # hpc-engine is a pure outbound TCP client for ANALYZE_GRAPH traffic,
+          # but exposes /metrics for Prometheus scraping.
           # --server-port is passed explicitly because the CLI default (9090)
           # does not match eop-server's real Service port (EOP_PORT=9026).
           args:
