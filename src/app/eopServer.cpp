@@ -158,7 +158,8 @@ void RecordRequestMetric(const std::string& command, const std::string& status, 
     static const prometheus::Histogram::BucketBoundaries kDurationBuckets = {
         0.005, 0.01, 0.025, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1, 2.5, 5, 10};
 
-    metricsRegistry.requestsTotalFamily->Add({{"command", command}, {"status", status}, {"service", "eop-server"}})
+    metricsRegistry.requestsTotalFamily
+        ->Add({{"command", command}, {"result", status}, {"service", "eop-server"}, {"status", status}})
         .Increment();
 
     metricsRegistry.requestDurationFamily->Add({{"command", command}, {"service", "eop-server"}}, kDurationBuckets)

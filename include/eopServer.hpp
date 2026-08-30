@@ -354,7 +354,7 @@ void ShutdownMetrics();
 /**
  * @brief Records one completed request's outcome and duration in the metrics registry.
  *
- * @details Increments `eop_requests_total{command,status,service="eop-server"}` and observes
+ * @details Increments `eop_requests_total{command,result,status,service="eop-server"}` and observes
  * `eop_request_duration_seconds{command,service="eop-server"}`. Unlike OpenTelemetry span
  * recording in workerLoop() (which is skipped for `HEARTBEAT` and `unknown_operation` via
  * `shouldTrace`), this must be called for every dispatched command, including those two —

@@ -165,7 +165,7 @@ TEST_F(MetricsDirectTest, CounterIncrementsPerLabelSet)
     const auto* family = findFamily(families, "eop_requests_total");
     ASSERT_NE(family, nullptr);
 
-    const auto* sample = findSample(*family, {{"command", "REGISTER"}, {"status", "OK"}, {"service", "eop-server"}});
+    const auto* sample = findSample(*family, {{"command", "REGISTER"}, {"result", "OK"}, {"service", "eop-server"}, {"status", "OK"}});
     ASSERT_NE(sample, nullptr);
     EXPECT_DOUBLE_EQ(sample->counter.value, 2.0);
 }
@@ -181,11 +181,11 @@ TEST_F(MetricsDirectTest, DifferentLabelsAreCountedSeparately)
     ASSERT_NE(family, nullptr);
 
     const auto* registerOk =
-        findSample(*family, {{"command", "REGISTER"}, {"status", "OK"}, {"service", "eop-server"}});
+        findSample(*family, {{"command", "REGISTER"}, {"result", "OK"}, {"service", "eop-server"}, {"status", "OK"}});
     const auto* registerErr =
-        findSample(*family, {{"command", "REGISTER"}, {"status", "ERROR"}, {"service", "eop-server"}});
+        findSample(*family, {{"command", "REGISTER"}, {"result", "ERROR"}, {"service", "eop-server"}, {"status", "ERROR"}});
     const auto* heartbeatOk =
-        findSample(*family, {{"command", "HEARTBEAT"}, {"status", "OK"}, {"service", "eop-server"}});
+        findSample(*family, {{"command", "HEARTBEAT"}, {"result", "OK"}, {"service", "eop-server"}, {"status", "OK"}});
 
     ASSERT_NE(registerOk, nullptr);
     ASSERT_NE(registerErr, nullptr);
@@ -220,7 +220,7 @@ TEST_F(MetricsDirectTest, ServiceLabelIsConstantAcrossBothFamilies)
     ASSERT_NE(counterFamily, nullptr);
     ASSERT_NE(histogramFamily, nullptr);
 
-    EXPECT_NE(findSample(*counterFamily, {{"command", "QUERY_NODE"}, {"status", "OK"}, {"service", "eop-server"}}),
+    EXPECT_NE(findSample(*counterFamily, {{"command", "QUERY_NODE"}, {"result", "OK"}, {"service", "eop-server"}, {"status", "OK"}}),
               nullptr);
     EXPECT_NE(findSample(*histogramFamily, {{"command", "QUERY_NODE"}, {"service", "eop-server"}}), nullptr);
 }
@@ -263,12 +263,12 @@ TEST_F(MetricsServerTest, HeartbeatNeverInheritsStaleErrorStatus)
     ASSERT_NE(family, nullptr);
 
     const auto* badSample =
-        findSample(*family, {{"command", "HEARTBEAT"}, {"status", "ERROR"}, {"service", "eop-server"}});
+        findSample(*family, {{"command", "HEARTBEAT"}, {"result", "ERROR"}, {"service", "eop-server"}, {"status", "ERROR"}});
     EXPECT_EQ(badSample, nullptr) << "HEARTBEAT must never be recorded with status=ERROR "
                                      "(g_logContext.result leaked from a previous request on this worker thread)";
 
     const auto* goodSample =
-        findSample(*family, {{"command", "HEARTBEAT"}, {"status", "OK"}, {"service", "eop-server"}});
+        findSample(*family, {{"command", "HEARTBEAT"}, {"result", "OK"}, {"service", "eop-server"}, {"status", "OK"}});
     ASSERT_NE(goodSample, nullptr);
     EXPECT_GE(goodSample->counter.value, static_cast<double>(kPairs));
 }

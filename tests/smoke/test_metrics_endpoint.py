@@ -156,9 +156,9 @@ def main():
         required_substrings = [
             "# TYPE eop_requests_total counter",
             "# TYPE eop_request_duration_seconds histogram",
-            'eop_requests_total{command="REGISTER",service="eop-server",status="OK"}',
-            'eop_requests_total{command="REGISTER",service="eop-server",status="ERROR"}',
-            'eop_requests_total{command="HEARTBEAT",service="eop-server",status="OK"}',
+            'eop_requests_total{command="REGISTER",result="OK",service="eop-server",status="OK"}',
+            'eop_requests_total{command="REGISTER",result="ERROR",service="eop-server",status="ERROR"}',
+            'eop_requests_total{command="HEARTBEAT",result="OK",service="eop-server",status="OK"}',
             'eop_request_duration_seconds_bucket{command="REGISTER",service="eop-server"',
             'eop_request_duration_seconds_sum{command="REGISTER",service="eop-server"}',
             'eop_request_duration_seconds_count{command="REGISTER",service="eop-server"}',
