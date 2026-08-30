@@ -165,7 +165,8 @@ TEST_F(MetricsDirectTest, CounterIncrementsPerLabelSet)
     const auto* family = findFamily(families, "eop_requests_total");
     ASSERT_NE(family, nullptr);
 
-    const auto* sample = findSample(*family, {{"command", "REGISTER"}, {"result", "OK"}, {"service", "eop-server"}, {"status", "OK"}});
+    const auto* sample =
+        findSample(*family, {{"command", "REGISTER"}, {"result", "OK"}, {"service", "eop-server"}, {"status", "OK"}});
     ASSERT_NE(sample, nullptr);
     EXPECT_DOUBLE_EQ(sample->counter.value, 2.0);
 }
@@ -182,8 +183,8 @@ TEST_F(MetricsDirectTest, DifferentLabelsAreCountedSeparately)
 
     const auto* registerOk =
         findSample(*family, {{"command", "REGISTER"}, {"result", "OK"}, {"service", "eop-server"}, {"status", "OK"}});
-    const auto* registerErr =
-        findSample(*family, {{"command", "REGISTER"}, {"result", "ERROR"}, {"service", "eop-server"}, {"status", "ERROR"}});
+    const auto* registerErr = findSample(
+        *family, {{"command", "REGISTER"}, {"result", "ERROR"}, {"service", "eop-server"}, {"status", "ERROR"}});
     const auto* heartbeatOk =
         findSample(*family, {{"command", "HEARTBEAT"}, {"result", "OK"}, {"service", "eop-server"}, {"status", "OK"}});
 
@@ -220,7 +221,8 @@ TEST_F(MetricsDirectTest, ServiceLabelIsConstantAcrossBothFamilies)
     ASSERT_NE(counterFamily, nullptr);
     ASSERT_NE(histogramFamily, nullptr);
 
-    EXPECT_NE(findSample(*counterFamily, {{"command", "QUERY_NODE"}, {"result", "OK"}, {"service", "eop-server"}, {"status", "OK"}}),
+    EXPECT_NE(findSample(*counterFamily,
+                         {{"command", "QUERY_NODE"}, {"result", "OK"}, {"service", "eop-server"}, {"status", "OK"}}),
               nullptr);
     EXPECT_NE(findSample(*histogramFamily, {{"command", "QUERY_NODE"}, {"service", "eop-server"}}), nullptr);
 }
@@ -262,8 +264,8 @@ TEST_F(MetricsServerTest, HeartbeatNeverInheritsStaleErrorStatus)
     const auto* family = findFamily(families, "eop_requests_total");
     ASSERT_NE(family, nullptr);
 
-    const auto* badSample =
-        findSample(*family, {{"command", "HEARTBEAT"}, {"result", "ERROR"}, {"service", "eop-server"}, {"status", "ERROR"}});
+    const auto* badSample = findSample(
+        *family, {{"command", "HEARTBEAT"}, {"result", "ERROR"}, {"service", "eop-server"}, {"status", "ERROR"}});
     EXPECT_EQ(badSample, nullptr) << "HEARTBEAT must never be recorded with status=ERROR "
                                      "(g_logContext.result leaked from a previous request on this worker thread)";
 
