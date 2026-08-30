@@ -45,7 +45,7 @@
 #define EOP_IDLE_TIMEOUT 30
 #endif
 #ifndef EOP_METRICS_PORT
-#define EOP_METRICS_PORT 9100 ///< Default port for the Prometheus `/metrics` HTTP exposer (US-206 support).
+#define EOP_METRICS_PORT 9100 ///< Default port for the Prometheus `/metrics` HTTP exposer (US-205 / ADR-012 support).
 #endif
 
 #define EOP_BUFFER_SIZE       1024
@@ -283,7 +283,7 @@ struct ServerContext
 extern ServerContext serverContext;
 
 /**
- * @brief Holds the process-wide Prometheus metrics state (US-206 support).
+ * @brief Holds the process-wide Prometheus metrics state (US-205 / ADR-012 support).
  *
  * @details Mirrors the single-global/`extern` pattern already used by ServerContext and the
  * OpenTelemetry TracerProvider: one instance for the whole process, defined in eopServer.cpp,

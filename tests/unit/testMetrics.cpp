@@ -1,6 +1,6 @@
 /**
  * @file testMetrics.cpp
- * @brief Unit tests for the Prometheus metrics instrumentation (US-206).
+ * @brief Unit tests for the Prometheus metrics instrumentation (US-205 / ADR-012).
  */
 
 #include <arpa/inet.h>

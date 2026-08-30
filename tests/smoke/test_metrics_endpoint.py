@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Smoke test for US-206: Prometheus metrics instrumentation in eop-server.
+Smoke test for US-205 / ADR-012: Prometheus metrics instrumentation in eop-server.
 
 Spawns a real eop_server binary (no Docker Compose required — wired into CTest the same way
 as analyze_graph_real_engine.py), drives a small amount of real TCP protocol traffic, then

@@ -80,7 +80,7 @@ static void ShutdownTracer()
 }
 
 // ---------------------------------------------------------------------------
-// Prometheus metrics setup (US-206)
+// Prometheus metrics setup (US-205 / ADR-012)
 // ---------------------------------------------------------------------------
 void InitMetrics()
 {
@@ -836,7 +836,7 @@ static void workerLoop(ServerContext& ctx)
 
         // Metrics must count every dispatched command, including HEARTBEAT and
         // unknown_operation — unlike OTel span recording below, this is not gated on
-        // shouldTrace (US-206).
+        // shouldTrace (US-205 / ADR-012).
         RecordRequestMetric(opName, resultStr, static_cast<double>(durationMs) / 1000.0);
 
         if (shouldTrace && opSpan)
