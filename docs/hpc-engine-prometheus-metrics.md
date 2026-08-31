@@ -129,3 +129,8 @@ python3 tests/smoke/test_hpc_metrics_endpoint.py ./build/hpc-engine/hpc_engine
 ```
 
 The smoke test starts a fake EOP server, launches `hpc_engine` in socket mode, scrapes `/metrics`, and verifies that the Prometheus metric families required by the HPC Grafana dashboard are exposed.
+
+## Review note
+
+This metrics endpoint belongs to the `hpc_engine` process. It does not replace or modify the `eop-server` `/metrics` endpoint; both services expose independent Prometheus metrics contracts.
+
