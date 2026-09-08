@@ -192,4 +192,12 @@ if(EXODUS_BUILD_TESTS)
       ${CMAKE_SOURCE_DIR}/tests/smoke/test_metrics_endpoint.py
       $<TARGET_FILE:eop_server>
   )
+
+  add_test(
+    NAME smoke_analyze_graph_offline_online_cycle
+    COMMAND python3
+      ${CMAKE_SOURCE_DIR}/tests/smoke/analyze_graph_offline_online_cycle.py
+      $<TARGET_FILE:eop_server>
+      $<TARGET_FILE:hpc_engine>
+  )
 endif()
