@@ -84,6 +84,7 @@ if(HPC_BUILD_TESTS)
     tests/test_dijkstra.cpp
     tests/test_connected_components.cpp
     tests/test_centrality.cpp
+    tests/test_medium_graph.cpp
     tests/test_protocol.cpp
     tests/test_concurrent_algorithms.cpp
     tests/test_metrics.cpp
