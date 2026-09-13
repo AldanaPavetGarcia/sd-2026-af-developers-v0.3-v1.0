@@ -87,6 +87,11 @@ target_include_directories(eop_client_shared PUBLIC include)
 add_executable(connect_basic examples/connect_basic.c)
 target_link_libraries(connect_basic PRIVATE eop_client_static)
 
+# C client used by the smoke_analyze_graph_c_client test below (US-201 AC8 / US-203 AC2) --
+# drives a real ANALYZE_GRAPH request through libeop, not a raw socket.
+add_executable(analyze_graph_c_client tests/smoke/analyze_graph_c_client.c)
+target_link_libraries(analyze_graph_c_client PRIVATE eop_client_static)
+
 # =============================================================================
 # Tests (GTest)
 # =============================================================================
@@ -199,5 +204,14 @@ if(EXODUS_BUILD_TESTS)
       ${CMAKE_SOURCE_DIR}/tests/smoke/analyze_graph_offline_online_cycle.py
       $<TARGET_FILE:eop_server>
       $<TARGET_FILE:hpc_engine>
+  )
+
+  add_test(
+    NAME smoke_analyze_graph_c_client
+    COMMAND python3
+      ${CMAKE_SOURCE_DIR}/tests/smoke/analyze_graph_c_client_e2e.py
+      $<TARGET_FILE:eop_server>
+      $<TARGET_FILE:hpc_engine>
+      $<TARGET_FILE:analyze_graph_c_client>
   )
 endif()
