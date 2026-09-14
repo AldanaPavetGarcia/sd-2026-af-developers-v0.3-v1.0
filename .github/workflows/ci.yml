@@ -336,6 +336,17 @@ jobs:
           echo "FAILED_TESTS=${FAILED:-0 tests failed}" >> $GITHUB_ENV
 
       # -----------------------------------
+      # Dashboard Contract Tests (US-205 AC7 / US-206)
+      # -----------------------------------
+      # Static checks against the committed dashboard JSON + provisioning files — no running
+      # Grafana/Prometheus needed. Kept out of ctest (they're plain make targets, not gtest),
+      # but cheap enough to run on every PR.
+      - name: Dashboard Contract Tests
+        run: |
+          make slo-dashboard-test
+          make hpc-dashboard-test
+
+      # -----------------------------------
       # Coverage (lcov + llvm-cov)
       # -----------------------------------
       - name: Generate Coverage

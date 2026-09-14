@@ -214,4 +214,11 @@ if(EXODUS_BUILD_TESTS)
       $<TARGET_FILE:hpc_engine>
       $<TARGET_FILE:analyze_graph_c_client>
   )
+
+  add_test(
+    NAME smoke_v01_protocol_backward_compat
+    COMMAND python3
+      ${CMAKE_SOURCE_DIR}/tests/smoke/v01_protocol_backward_compat.py
+      $<TARGET_FILE:eop_server>
+  )
 endif()

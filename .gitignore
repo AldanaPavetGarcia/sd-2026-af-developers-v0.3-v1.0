@@ -53,6 +53,9 @@ _assets/
 build_local/
 build_ci_local/
 build-bench/
+# Created by `make tsan`, which builds into its own tree so the sanitizer flags do not
+# leak into build/.
+build-tsan/
 coverage_html/
 run_ci_local.sh
 llvm-gcov.sh

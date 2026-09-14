@@ -9,6 +9,8 @@
 
 #include "hpc/centrality.hpp"
 
+#include "hpc/metrics.hpp"
+
 #include <queue>
 #include <stack>
 #include <vector>
@@ -32,6 +34,8 @@ nlohmann::json computeCentrality(const Graph& graph)
 
 #pragma omp parallel
     {
+        hpc::ActiveThreadScope activeThreadScope;
+
         int tid = omp_get_thread_num();
 
         // Per-thread Brandes data structures (reused across sources)

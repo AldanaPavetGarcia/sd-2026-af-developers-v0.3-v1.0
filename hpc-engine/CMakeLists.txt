@@ -88,6 +88,7 @@ if(HPC_BUILD_TESTS)
     tests/test_protocol.cpp
     tests/test_concurrent_algorithms.cpp
     tests/test_metrics.cpp
+    tests/test_engine.cpp
   )
 
   target_link_libraries(hpc_tests PRIVATE

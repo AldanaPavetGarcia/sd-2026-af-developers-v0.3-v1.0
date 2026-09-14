@@ -1,0 +1,53 @@
+# One-shot ClickHouse schema bootstrap for SigNoz -- must complete before signoz-otel-collector
+# or the signoz app can write/read data. Kept in k8s/ (not k8s/jobs/, unlike the on-demand
+# hpc-engine batch demo) because this one needs to run automatically as part of stack bring-up,
+# not invoked separately. Job specs are immutable: if this ever needs to change, delete it first
+# (`kubectl delete job signoz-telemetrystore-migrator`) before re-applying.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: signoz-telemetrystore-migrator
+  labels:
+    app: signoz-telemetrystore-migrator
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: signoz-telemetrystore-migrator
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-clickhouse
+          image: busybox:1.37
+          command:
+            - sh
+            - -c
+            - until nc -z clickhouse 9000; do echo waiting for clickhouse; sleep 2; done
+      containers:
+        - name: migrator
+          image: signoz/signoz-otel-collector:v0.144.4
+          command: ["/bin/sh"]
+          args:
+            - -c
+            - |
+              /signoz-otel-collector migrate bootstrap &&
+              /signoz-otel-collector migrate sync up &&
+              /signoz-otel-collector migrate async up
+          env:
+            - name: SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_DSN
+              value: "tcp://clickhouse:9000"
+            - name: SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_CLUSTER
+              value: "cluster"
+            - name: SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_REPLICATION
+              value: "true"
+            - name: SIGNOZ_OTEL_COLLECTOR_TIMEOUT
+              value: "10m"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "192Mi"

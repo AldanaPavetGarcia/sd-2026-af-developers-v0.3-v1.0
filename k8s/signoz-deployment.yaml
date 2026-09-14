@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: signoz
+  labels:
+    app: signoz
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: signoz
+  template:
+    metadata:
+      labels:
+        app: signoz
+    spec:
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 20
+      initContainers:
+        - name: wait-for-clickhouse
+          image: busybox:1.37
+          command:
+            - sh
+            - -c
+            - until nc -z clickhouse 9000; do echo waiting for clickhouse; sleep 2; done
+      containers:
+        - name: signoz
+          image: signoz/signoz:v0.126.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SIGNOZ_ALERTMANAGER_PROVIDER
+              value: "signoz"
+            - name: SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_DSN
+              value: "tcp://clickhouse:9000"
+            - name: SIGNOZ_SQLSTORE_SQLITE_PATH
+              value: "/var/lib/signoz/signoz.db"
+            # Same hardcoded value already used in docker-compose.yml for this same field --
+            # not introduced here, just mirrored for consistency between the two deployment
+            # targets. Both should move to a K8s Secret if this stack becomes more than a dev
+            # deployment.
+            - name: SIGNOZ_TOKENIZER_JWT_SECRET
+              value: "secret"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/signoz
+          # SigNoz runs its own DB migrations and initialization on cold start, similar to
+          # Grafana (see grafana-deployment.yaml) -- startupProbe absorbs that instead of
+          # weakening readiness/liveness afterwards.
+          startupProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "384Mi"
+      volumes:
+        # emptyDir, not a PersistentVolumeClaim -- see signoz-clickhouse-deployment.yaml's note;
+        # same convention, same trade-off (no data survival across pod restarts).
+        - name: data
+          emptyDir: {}

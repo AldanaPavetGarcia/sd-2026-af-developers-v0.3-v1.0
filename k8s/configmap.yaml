@@ -23,3 +23,20 @@ data:
   HPC_NODE_ID: "hpc-engine"
   HPC_BUNKER_NAME: "HPC-K8S"
   HPC_CAPACITY: "1"
+  # US-203 AC5 / US-206 AC5: without this, eop-server falls back to its localhost:4318 default
+  # (src/app/eopServer.cpp), which doesn't exist in-cluster -- every span export silently fails.
+  # Points at the otel-collector Service (otel-collector-deployment.yaml), which forwards to
+  # signoz-otel-collector and from there into ClickHouse, same chain as docker-compose.yml.
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318/v1/traces"
+  # US-206 AC1/AC4 (speedup ratio panel + P99-vs-baseline alert): intentionally NOT set here yet.
+  # These three keys need a real single-thread measurement from the OpenMP Benchmark Report
+  # (US-202 AC5, hpc-engine/benchmarks/BENCHMARK_REPORT.md) -- that benchmark hasn't been run on
+  # hardware with enough physical cores to produce a trustworthy number yet (see ADR-018). A
+  # placeholder value here would be exactly the kind of unfounded magic number the SW-Agreement
+  # prohibits; until real data exists, eop_hpc_speedup_ratio and the latency alert correctly
+  # stay unpopulated (see hpc-engine/src/metrics.cpp's ComputeConfiguredSpeedupRatio) rather
+  # than showing a number nobody measured.
+  #
+  # EOP_HPC_BASELINE_P99_MS: "<single-thread P99 latency in ms, from the Benchmark Report>"
+  # EOP_HPC_BASELINE_GRAPH_NODES: "<node count the baseline above was measured at>"
+  # EOP_HPC_BASELINE_BAND_PERCENT: "20"

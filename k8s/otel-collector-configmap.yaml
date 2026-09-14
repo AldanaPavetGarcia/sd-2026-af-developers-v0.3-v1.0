@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eop-otel-collector-config
+  labels:
+    app: otel-collector
+data:
+  # Same content as monitoring/eop-otel-collector-config.yaml (the docker-compose config for
+  # this same collector), kept in sync by hand -- small and stable, same convention as
+  # prometheus-configmap.yaml. This is the collector eop-server/hpc-engine actually talk to
+  # (OTEL_EXPORTER_OTLP_ENDPOINT); it forwards to signoz-otel-collector, the SigNoz-internal
+  # collector that writes to ClickHouse (see signoz-otel-collector-configmap.yaml).
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      batch:
+        send_batch_size: 10000
+        send_batch_max_size: 11000
+        timeout: 10s
+
+    exporters:
+      otlp:
+        endpoint: signoz-otel-collector:4317
+        tls:
+          insecure: true
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 1000
+
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+
+    service:
+      extensions:
+        - health_check
+      pipelines:
+        traces:
+          receivers:
+            - otlp
+          processors:
+            - batch
+          exporters:
+            - otlp

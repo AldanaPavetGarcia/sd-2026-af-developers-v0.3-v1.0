@@ -5,6 +5,8 @@
 
 #include "hpc/connected_components.hpp"
 
+#include "hpc/metrics.hpp"
+
 #include <algorithm>
 #include <queue>
 #include <vector>
@@ -71,12 +73,17 @@ nlohmann::json computeConnectedComponents(const Graph& graph)
     std::vector<std::vector<std::vector<std::string>>> local_components(
         max_threads, std::vector<std::vector<std::string>>(num_components));
 
-#pragma omp parallel for schedule(static)
-    for (int i = 0; i < n; ++i)
+#pragma omp parallel
     {
-        int tid = omp_get_thread_num();
-        int cid = component_id[i];
-        local_components[tid][cid].push_back(graph.node_names[i]);
+        hpc::ActiveThreadScope activeThreadScope;
+
+#pragma omp for schedule(static)
+        for (int i = 0; i < n; ++i)
+        {
+            int tid = omp_get_thread_num();
+            int cid = component_id[i];
+            local_components[tid][cid].push_back(graph.node_names[i]);
+        }
     }
 
     // Serial merge of thread-local buckets (reduction of non-primitive type)

@@ -29,6 +29,26 @@ static hpc::Graph makeValidGraph()
     return g;
 }
 
+// Builds a real, fully-populated graph (not just num_nodes set on an otherwise-empty Graph):
+// validateGraph's later checks (duplicate names, edge bounds) index into
+// node_names/adjacency by num_nodes whenever the size limits themselves don't reject the
+// graph first, so a mismatched Graph reads out of bounds and segfaults instead of testing
+// anything -- confirmed the hard way while writing these tests (see GraphAtMaxNodesPasses).
+static hpc::Graph makeGraphWithNNodes(int n)
+{
+    hpc::Graph g;
+    g.num_nodes = n;
+    g.node_names.reserve(static_cast<size_t>(n));
+    g.adjacency.resize(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i)
+    {
+        const std::string name = "N" + std::to_string(i);
+        g.node_names.push_back(name);
+        g.node_index[name] = i;
+    }
+    return g;
+}
+
 TEST(ValidatorTest, ValidGraphPasses)
 {
     auto g = makeValidGraph();
@@ -284,4 +304,85 @@ TEST(ValidatorTest, ParseRequest_AlgorithmNotString)
     auto r = hpc::parseRequest(R"({"type": "ANALYZE_GRAPH", "request_id": "1", "payload": {"nodes": [], "edges": [], "algorithms": [123]}})");
     EXPECT_FALSE(r.ok);
     EXPECT_EQ(r.error_field, "payload.algorithms");
+}
+
+// --- ERROR_GRAPH_TOO_LARGE (#52/#55: shortest_paths' O(N^3) full-path output froze a real
+// machine at N=1000; these tests cover the size limits added to guard against that). ---
+
+TEST(ValidatorTest, GraphExceedingMaxNodesFails)
+{
+    // num_nodes/num_edges are plain ints checked before any per-node/per-edge vector access,
+    // so this doesn't need to actually allocate 100,001 node names to exercise the limit.
+    hpc::Graph g;
+    g.num_nodes = hpc::kDefaultMaxGraphNodes + 1;
+    auto r = hpc::validateGraph(g, {"connected_components"});
+    EXPECT_FALSE(r.ok);
+    EXPECT_EQ(r.error_code, "ERROR_GRAPH_TOO_LARGE");
+    EXPECT_EQ(r.error_field, "payload.nodes");
+}
+
+TEST(ValidatorTest, GraphAtMaxNodesPasses)
+{
+    auto g = makeGraphWithNNodes(hpc::kDefaultMaxGraphNodes);
+    auto r = hpc::validateGraph(g, {"connected_components"});
+    EXPECT_TRUE(r.ok);
+}
+
+TEST(ValidatorTest, GraphExceedingMaxEdgesFails)
+{
+    hpc::Graph g;
+    g.num_nodes = 1;
+    g.num_edges = hpc::kDefaultMaxGraphEdges + 1;
+    auto r = hpc::validateGraph(g, {"connected_components"});
+    EXPECT_FALSE(r.ok);
+    EXPECT_EQ(r.error_code, "ERROR_GRAPH_TOO_LARGE");
+    EXPECT_EQ(r.error_field, "payload.edges");
+}
+
+TEST(ValidatorTest, ShortestPathsAboveItsStricterLimitFails)
+{
+    hpc::Graph g;
+    g.num_nodes = hpc::kDefaultMaxShortestPathsNodes + 1;
+    auto r = hpc::validateGraph(g, {"shortest_paths"});
+    EXPECT_FALSE(r.ok);
+    EXPECT_EQ(r.error_code, "ERROR_GRAPH_TOO_LARGE");
+    EXPECT_EQ(r.error_field, "payload.algorithms");
+}
+
+TEST(ValidatorTest, SameSizeGraphWithoutShortestPathsIsNotRejectedBySizeCheck)
+{
+    // Same node count that fails ShortestPathsAboveItsStricterLimitFails above, but without
+    // shortest_paths in the algorithm list -- proves the stricter limit is scoped to that one
+    // algorithm, not a blanket rule.
+    auto g = makeGraphWithNNodes(hpc::kDefaultMaxShortestPathsNodes + 1);
+    auto r = hpc::validateGraph(g, {"connected_components"});
+    EXPECT_TRUE(r.ok);
+}
+
+TEST(ValidatorTest, MaxGraphNodesEnvOverrideIsRespected)
+{
+    setenv("EOP_MAX_GRAPH_NODES", "5", 1);
+
+    hpc::Graph g;
+    g.num_nodes = 6;
+    auto r = hpc::validateGraph(g, {"connected_components"});
+
+    unsetenv("EOP_MAX_GRAPH_NODES");
+
+    EXPECT_FALSE(r.ok);
+    EXPECT_EQ(r.error_code, "ERROR_GRAPH_TOO_LARGE");
+}
+
+TEST(ValidatorTest, MalformedMaxGraphNodesEnvFallsBackToDefault)
+{
+    setenv("EOP_MAX_GRAPH_NODES", "not-a-number", 1);
+
+    // 10 real nodes, well under the real default (100,000) -- must not be rejected, and must
+    // fall through every check to genuinely return ok=true (not just skip the size check).
+    auto g = makeGraphWithNNodes(10);
+    auto r = hpc::validateGraph(g, {"connected_components"});
+
+    unsetenv("EOP_MAX_GRAPH_NODES");
+
+    EXPECT_TRUE(r.ok);
 }

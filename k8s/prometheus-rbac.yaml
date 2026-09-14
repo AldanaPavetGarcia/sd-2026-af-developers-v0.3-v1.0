@@ -1,0 +1,35 @@
+# RBAC for Prometheus' pod-annotation service discovery (hpc-engine target, see
+# prometheus-configmap.yaml's "hpc-engine" scrape_config). Namespaced Role, not a
+# ClusterRole — Prometheus only needs to discover pods in this namespace, no reason to
+# grant cluster-wide read access for a scrape target list.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  labels:
+    app: prometheus
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus-pod-discovery
+  labels:
+    app: prometheus
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus-pod-discovery
+  labels:
+    app: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+roleRef:
+  kind: Role
+  name: prometheus-pod-discovery
+  apiGroup: rbac.authorization.k8s.io

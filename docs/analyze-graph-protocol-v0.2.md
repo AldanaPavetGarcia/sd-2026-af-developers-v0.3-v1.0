@@ -276,13 +276,14 @@ The protocol supports large graph payloads, but concrete limits must be configur
 
 Recommended v0.2 configuration keys:
 
-| Configuration | Description |
-|---|---|
-| `EOP_MAX_GRAPH_NODES` | Maximum number of nodes accepted in a request. |
-| `EOP_MAX_GRAPH_EDGES` | Maximum number of edges accepted in a request. |
-| `EOP_HPC_TIMEOUT_MS` | Maximum time the server waits for the HPC engine response. |
+| Configuration | Description | hpc-engine default |
+|---|---|---|
+| `EOP_MAX_GRAPH_NODES` | Maximum number of nodes accepted in a request. | 100,000 |
+| `EOP_MAX_GRAPH_EDGES` | Maximum number of edges accepted in a request. | 500,000 |
+| `EOP_MAX_SHORTEST_PATHS_NODES` | Maximum nodes when `shortest_paths` is one of the requested algorithms — stricter than `EOP_MAX_GRAPH_NODES` on purpose. | 300 |
+| `EOP_HPC_TIMEOUT_MS` | Maximum time the server waits for the HPC engine response. | — |
 
-The default values are implementation-defined and should be aligned with the Milestone 2 performance targets.
+The default values are implementation-defined and should be aligned with the Milestone 2 performance targets. `EOP_MAX_SHORTEST_PATHS_NODES` is not a generic size knob: `shortest_paths` returns the full path (not just the cost) for every reachable node pair, so the total output size grows as O(N³) — confirmed live to exhaust memory and freeze a host at N=1,000, well under `EOP_MAX_GRAPH_NODES`'s general limit. `connected_components` and `centrality` don't carry this risk and are bound by `EOP_MAX_GRAPH_NODES` alone.
 
 ## Trace Context
 

@@ -18,6 +18,16 @@
             <host>zookeeper-3</host>
             <port>2181</port>
         </node> -->
+        <!-- Raised from ClickHouse's 30s default, confirmed live on Kubernetes (minikube,
+             docker driver): under the write burst from the SigNoz schema-migration Job, this
+             client repeatedly missed the default session window and had its ZK session
+             expired server-side, which pushes every Replicated/Distributed table into
+             readonly mode until reconnect (visible in system.replicas.is_readonly). Raising
+             this gives more slack for scheduling/network jitter between pods; it does not
+             mask a real problem elsewhere, since a longer session timeout only delays how
+             fast a genuinely dead connection is noticed. -->
+        <session_timeout_ms>60000</session_timeout_ms>
+        <operation_timeout_ms>20000</operation_timeout_ms>
     </zookeeper>
 
     <!-- Configuration of clusters that could be used in Distributed tables.

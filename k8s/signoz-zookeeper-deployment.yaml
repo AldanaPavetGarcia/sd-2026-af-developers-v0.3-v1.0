@@ -1,0 +1,101 @@
+# Named "zookeeper-1" (not "signoz-zookeeper") because
+# monitoring/signoz-common/clickhouse/cluster.xml hardcodes that exact hostname as ClickHouse's
+# ZooKeeper node -- matches the docker-compose service name for the same reason. zookeeper-2/3
+# are commented out there (single-node ensemble), so only this one Service needs to exist.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zookeeper-1
+  labels:
+    app: zookeeper-1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper-1
+  template:
+    metadata:
+      labels:
+        app: zookeeper-1
+    spec:
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: zookeeper
+          image: signoz/zookeeper:3.7.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ZOO_SERVER_ID
+              value: "1"
+            - name: ALLOW_ANONYMOUS_LOGIN
+              value: "yes"
+            - name: ZOO_AUTOPURGE_INTERVAL
+              value: "1"
+            - name: ZOO_ENABLE_PROMETHEUS_METRICS
+              value: "yes"
+            - name: ZOO_PROMETHEUS_METRICS_PORT_NUMBER
+              value: "9141"
+            # Must be >= cluster.xml's <session_timeout_ms> (60000) -- ZooKeeper's server-side
+            # maxSessionTimeout caps whatever a client negotiates, regardless of what the client
+            # asks for. Default here is 40000ms, which is why raising the client-side timeout
+            # alone wasn't enough (confirmed live: sessions kept expiring at the server's cap).
+            - name: ZOO_MAX_SESSION_TIMEOUT
+              value: "60000"
+          ports:
+            - name: client
+              containerPort: 2181
+              protocol: TCP
+          # JVM cold start (image init + ZK bootstrap) took longer than the original
+          # liveness grace period allowed -- confirmed live: the pod crash-looped on
+          # livenessProbe failures before ZooKeeper ever finished starting, never once
+          # reaching Ready. startupProbe absorbs that, same pattern as grafana-deployment.yaml.
+          startupProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - curl -s -m 2 http://localhost:8080/commands/ruok | grep error | grep null
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - curl -s -m 2 http://localhost:8080/commands/ruok | grep error | grep null
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - curl -s -m 2 http://localhost:8080/commands/ruok | grep error | grep null
+            periodSeconds: 10
+            failureThreshold: 3
+          # CPU limit raised twice -- confirmed live both times via
+          # /sys/fs/cgroup/cpu.stat inside this pod (nr_throttled/throttled_usec climbing
+          # steadily under the write burst from the ClickHouse schema-migration Job): 250m
+          # wasn't enough, then 500m still showed ~40% of periods throttled (24s+ cumulative).
+          # The JVM misses enough ZK session heartbeats under sustained throttling to expire
+          # its own session repeatedly, which pushes every ReplicatedMergeTree/Distributed
+          # table on ClickHouse into readonly mode until reconnect. A JVM-based server is more
+          # sensitive to CPU throttling stalls than the native binaries elsewhere in this
+          # stack. The minikube node itself has no real CPU ceiling on this host (8 logical
+          # cores, `docker inspect minikube` shows NanoCpus=0), so there's headroom to spare.
+          # Memory limit raised from 256Mi -- this was the actual root cause behind the
+          # mysterious stuck distributed-DDL-queue entries chased above: `kubectl describe`
+          # showed this pod OOMKilled (exit 137) repeatedly at 256Mi. A JVM needs headroom
+          # beyond its configured heap for JIT/metaspace/thread stacks/GC bookkeeping, so a
+          # tight container memory limit gets it killed even under light load. Every OOMKill
+          # briefly drops the ZK port; if a ClickHouse DDL task happens to be queued in that
+          # exact window, DDLWorker's watch on the queue path can miss it and the task is
+          # orphaned forever (reproduced live: confirmed via zookeeper-1's own restart count
+          # and OOMKilled reason correlating exactly with a stuck queue entry's timestamp).
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1500m"
+              memory: "512Mi"

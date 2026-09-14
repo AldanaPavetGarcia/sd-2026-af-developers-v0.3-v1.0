@@ -1,0 +1,15 @@
+# Named "zookeeper-1" to match monitoring/signoz-common/clickhouse/cluster.xml's hardcoded
+# ZooKeeper host -- see signoz-zookeeper-deployment.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-1
+  labels:
+    app: zookeeper-1
+spec:
+  selector:
+    app: zookeeper-1
+  ports:
+    - name: client
+      port: 2181
+      targetPort: client

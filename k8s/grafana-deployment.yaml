@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: grafana
+          image: grafana/grafana:13.2.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          volumeMounts:
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/datasources/prometheus-datasource.yaml
+              subPath: prometheus-datasource.yaml
+              readOnly: true
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/dashboards/eop-dashboard-provider.yaml
+              subPath: eop-dashboard-provider.yaml
+              readOnly: true
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/alerting/eop-slo-alerts.yaml
+              subPath: eop-slo-alerts.yaml
+              readOnly: true
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/alerting/eop-hpc-alerts.yaml
+              subPath: eop-hpc-alerts.yaml
+              readOnly: true
+            # eop-grafana-dashboards is generated from monitoring/grafana/dashboards/ by
+            # `make k8s-apply` (kubectl create configmap --from-file), not committed as YAML —
+            # see k8s/grafana-provisioning-configmap.yaml's top comment for why.
+            - name: dashboards
+              mountPath: /etc/grafana/provisioning/dashboards/eop
+              readOnly: true
+          # Grafana runs ~700+ DB migrations and loads plugins on cold start, which can take
+          # well over the readiness/liveness thresholds below (confirmed live: it crash-looped
+          # under those probes alone, killed mid-migration every restart). startupProbe holds
+          # off readiness/liveness entirely until Grafana answers once, giving it up to 2 min
+          # to finish initializing without weakening how fast liveness reacts afterwards.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          # 256Mi was too tight — confirmed live: OOMKilled (exit 137) under real interactive
+          # use (dashboard search indexing alone showed 228-545Mi in the equivalent
+          # docker-compose container, which has no memory limit to hide the ceiling).
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: provisioning
+          configMap:
+            name: eop-grafana-provisioning
+        - name: dashboards
+          configMap:
+            name: eop-grafana-dashboards

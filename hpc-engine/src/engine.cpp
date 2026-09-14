@@ -1,7 +1,10 @@
 #include "hpc/engine.hpp"
 
 #include <chrono>
+#include <iomanip>
+#include <iostream>
 #include <map>
+#include <sstream>
 #include <string>
 
 #include <omp.h>
@@ -30,6 +33,71 @@ namespace hpc
         double elapsedMilliseconds(const Clock::time_point& start, const Clock::time_point& end)
         {
             return std::chrono::duration<double, std::milli>(end - start).count();
+        }
+
+        // Position of the trace-id inside a W3C traceparent ("00-<trace-id>-<span-id>-<flags>").
+        constexpr std::size_t TRACEPARENT_TRACE_ID_OFFSET = 3;
+        constexpr std::size_t TRACEPARENT_TRACE_ID_LENGTH = 32;
+
+        std::string traceIdOf(const std::string& traceparent)
+        {
+            if (traceparent.size() < TRACEPARENT_TRACE_ID_OFFSET + TRACEPARENT_TRACE_ID_LENGTH)
+            {
+                return "";
+            }
+
+            return traceparent.substr(TRACEPARENT_TRACE_ID_OFFSET, TRACEPARENT_TRACE_ID_LENGTH);
+        }
+
+        std::string utcTimestamp()
+        {
+            const auto now = std::chrono::system_clock::now();
+            const auto seconds = std::chrono::system_clock::to_time_t(now);
+            const auto millis =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000;
+
+            std::tm utc {};
+            gmtime_r(&seconds, &utc);
+
+            std::ostringstream out;
+            out << std::put_time(&utc, "%Y-%m-%dT%H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << millis
+                << 'Z';
+            return out.str();
+        }
+
+        // US-201 AC5: every request is logged with the graph size received, the algorithms
+        // executed, the wall-clock processing time and the thread count. Written as one JSON
+        // object per line on stderr, matching the structured-log shape the rest of the engine
+        // already emits (see logRetryEvent in main.cpp) so a log collector can parse it without
+        // a per-service format. stdout is reserved for protocol responses in batch mode, which
+        // is why this cannot go there.
+        void logRequestSummary(const std::string& request_id,
+                               const std::string& traceparent,
+                               int graph_nodes,
+                               int graph_edges,
+                               const nlohmann::json& executed_algorithms,
+                               double processing_ms,
+                               int thread_count)
+        {
+            nlohmann::json entry;
+            entry["timestamp"] = utcTimestamp();
+            entry["level"] = "info";
+            entry["service"] = "hpc-engine";
+            entry["event"] = "analyze_graph_completed";
+            entry["request_id"] = request_id;
+            entry["graph_nodes"] = graph_nodes;
+            entry["graph_edges"] = graph_edges;
+            entry["algorithms"] = executed_algorithms;
+            entry["processing_ms"] = processing_ms;
+            entry["thread_count"] = thread_count;
+
+            const std::string trace_id = traceIdOf(traceparent);
+            if (!trace_id.empty())
+            {
+                entry["trace_id"] = trace_id;
+            }
+
+            std::cerr << entry.dump(-1, ' ', false, DUMP_ERROR_HANDLER) << '\n';
         }
     } // namespace
 
@@ -120,6 +188,14 @@ namespace hpc
             metrics.graph_edges = req.graph.num_edges;
             metrics.algorithm_durations_seconds = algorithm_durations_seconds;
             hpc::RecordHpcRequestMetric(metrics);
+
+            logRequestSummary(req.request_id,
+                              req.traceparent,
+                              req.graph.num_nodes,
+                              req.graph.num_edges,
+                              executed_algorithms,
+                              processing_ms,
+                              thread_count);
 
             return {response.dump(-1, ' ', false, DUMP_ERROR_HANDLER) + "\n", 0};
         }

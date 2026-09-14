@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eop-prometheus-config
+  labels:
+    app: prometheus
+data:
+  # Not identical to monitoring/prometheus/prometheus.yml (the docker-compose one) — that one
+  # only scrapes eop-server, since hpc-engine has no docker-compose service (K8s-only workload,
+  # see #16). In K8s, both workloads are discovered the SAME way: via pod annotations
+  # (prometheus.io/scrape|path|port), unifying the mechanism per US-205 AC4 ("Prometheus scrapes
+  # metrics from all pods via K8s annotations") — eop-server used to have its own static target
+  # here; now it carries the same annotations as hpc-engine and this one job covers both.
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      # Discovers ANY pod in this namespace carrying prometheus.io/scrape: "true" — eop-server
+      # (k8s/deployment.yaml) and hpc-engine (k8s/hpc-engine-deployment.yaml) both opt in this
+      # way, neither needs its own dedicated scrape_config. Requires the RBAC in
+      # prometheus-rbac.yaml (list/watch on pods).
+      #
+      # own_namespace: true scopes discovery to whatever namespace Prometheus itself runs in
+      # (auto-detected, no hardcoded name — this repo doesn't pin a namespace anywhere else).
+      # Without it, role: pod watches at CLUSTER scope by default, which the namespaced Role
+      # in prometheus-rbac.yaml can't satisfy — confirmed live: "pods is forbidden ... at the
+      # cluster scope" even though the Role/RoleBinding existed and were correctly bound.
+      - job_name: annotated-pods
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              own_namespace: true
+        relabel_configs:
+          # Only keep pods that opted in via prometheus.io/scrape: "true".
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          # Respect prometheus.io/path if set (defaults to /metrics otherwise).
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          # Rewrite the scrape address to use prometheus.io/port instead of the pod's default
+          # port (pods have no default port for scraping purposes).
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          # Overwrite the synthetic "job" label (normally just the static job_name,
+          # "annotated-pods" for everything here) with the pod's own app= label instead. Needed
+          # for backward compatibility: the SLO dashboard's own "up{job=~"$service"}" query
+          # (#38, predates this unified job) expects job to equal "eop-server"/"hpc-engine" —
+          # confirmed live this breaks silently (0 results, no error) without this rule.
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: replace
+            target_label: job

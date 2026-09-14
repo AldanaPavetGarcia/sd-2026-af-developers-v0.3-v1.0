@@ -102,13 +102,26 @@ k8s/
 They include:
 
 ```text
-k8s/configmap.yaml               # shared eop-global-config ConfigMap (eop-server + hpc-engine)
-k8s/deployment.yaml               # eop-server Deployment
-k8s/service.yaml                  # eop-server Service (hpc-engine has no Service — see §6)
-k8s/hpc-engine-deployment.yaml    # hpc-engine Deployment (persistent mode)
-k8s/jobs/                         # hpc-engine Job/batch-mode demo — see §7b, kept out of the
-                                   # default sweep below because Job specs are immutable
+k8s/configmap.yaml                      # shared eop-global-config ConfigMap (eop-server + hpc-engine)
+k8s/deployment.yaml                      # eop-server Deployment
+k8s/service.yaml                         # eop-server Service (hpc-engine has no Service — see §6)
+k8s/hpc-engine-deployment.yaml           # hpc-engine Deployment (persistent mode)
+k8s/prometheus-configmap.yaml            # Prometheus scrape config — see §6c
+k8s/prometheus-deployment.yaml           # Prometheus Deployment
+k8s/prometheus-service.yaml              # Prometheus Service (fixed name/port, see §6c)
+k8s/prometheus-rbac.yaml                 # ServiceAccount/Role/RoleBinding for pod discovery
+k8s/grafana-deployment.yaml              # Grafana Deployment (dashboards auto-provisioned)
+k8s/grafana-provisioning-configmap.yaml  # Grafana datasource + dashboard-provider ConfigMaps
+k8s/grafana-service.yaml                 # Grafana Service
+k8s/jobs/                                # hpc-engine Job/batch-mode demo — see §7b, kept out of the
+                                          # default sweep below because Job specs are immutable
 ```
+
+`eop-grafana-dashboards` (the ConfigMap holding the actual dashboard JSON) is **not** a
+committed manifest — `make k8s-apply` generates it on the fly from
+`monitoring/grafana/dashboards/` (`kubectl create configmap --from-file`) so that directory
+stays the single source of truth for panel content, instead of duplicating ~550 lines of JSON
+in two places.
 
 Apply the manifests with:
 
@@ -122,11 +135,13 @@ Or use the Makefile target:
 make k8s-apply
 ```
 
-The target waits for both Deployment rollouts:
+The target waits for all four Deployment rollouts:
 
 ```bash
 kubectl rollout status deployment/eop-server --timeout=60s
 kubectl rollout status deployment/hpc-engine --timeout=60s
+kubectl rollout status deployment/prometheus --timeout=60s
+kubectl rollout status deployment/grafana --timeout=60s
 ```
 
 `eop-global-config` sets `EOP_SERVER_HOST=eop-server` and pins `--server-port` to
@@ -260,6 +275,41 @@ hpc-engine has two distinct resilience tiers, and it is important not to confuse
 
 This is why `hpc-engine-deployment.yaml` does not need an `initContainer` wait-for-eop-server
 workaround — the retry loop inside `hpc_engine` itself absorbs the startup race.
+
+### 6c. Metrics Endpoints (Prometheus)
+
+Both workloads expose a Prometheus `/metrics` HTTP endpoint, on a separate port from their
+main protocol traffic:
+
+| Workload | Metrics port | env var | Container port name |
+|---|---|---|---|
+| eop-server | `9100` | `EOP_METRICS_PORT` | `metrics` (`k8s/deployment.yaml`, `k8s/service.yaml`) |
+| hpc-engine | `9101` | `EOP_HPC_METRICS_PORT` | `metrics` (`k8s/hpc-engine-deployment.yaml`) |
+
+Both env vars are set in `k8s/configmap.yaml` (`eop-global-config`). Prometheus scrapes each
+workload with a **different mechanism**, on purpose — `k8s/prometheus-configmap.yaml` has two
+`scrape_configs`:
+
+- **eop-server** uses a `static_configs` target (`eop-server:9100`) against its fixed Service —
+  the same approach docker-compose uses, since a stable Service name/port already exists.
+- **hpc-engine** has no Service (Deployment pods only — see §4/§6). It advertises itself via
+  `prometheus.io/scrape: "true"` / `prometheus.io/path: "/metrics"` / `prometheus.io/port:
+  "9101"` pod annotations instead, and Prometheus discovers it dynamically through a
+  `kubernetes_sd_configs` (`role: pod`) job with matching `relabel_configs`. This needs the
+  RBAC in `k8s/prometheus-rbac.yaml` (a namespaced `Role` granting `get`/`list`/`watch` on
+  `pods` to a dedicated `prometheus` ServiceAccount — not cluster-wide).
+
+To verify scraping locally:
+
+```bash
+kubectl port-forward svc/prometheus 9090:9090 &
+# open http://localhost:9090/targets — eop-server shows up as a fixed target, hpc-engine
+# shows up per-pod (its label set includes the actual pod name, not a static job entry)
+```
+
+docker-compose only scrapes eop-server — hpc-engine has no docker-compose service (it's a
+Kubernetes-only workload by design, see #16), so `monitoring/prometheus/prometheus.yml` (the
+compose config) deliberately has a single `scrape_config`.
 
 ---
 

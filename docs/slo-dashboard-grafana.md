@@ -70,6 +70,20 @@ eop_request_duration_seconds_count
 
 These metrics represent the minimum system-health contract required for SLO visualization.
 
+## Accessing the dashboard
+
+Access URLs, login, and how to bring the stack up (docker-compose or Kubernetes) are documented
+once, in the repo [`README.md`](../README.md#observability), to avoid keeping two copies in
+sync. Once you're looking at Grafana, this dashboard is under folder **EOP** →
+**EOP SLO Dashboard**.
+
+**No data in the panels?** The dashboard only shows what Prometheus has actually scraped from
+`eop-server` — send it some real traffic first (any `REGISTER`/`HEARTBEAT` round-trip against
+its TCP port works, see `tests/smoke/test_metrics_endpoint.py` for a minimal example), then
+check the panel's time range (top-right) covers when that traffic happened — the default is
+*Last 24 hours*, but a short burst of test traffic can be easier to spot on a narrower window
+like *Last 15 minutes*.
+
 ## Validation
 
 The dashboard JSON contract can be validated without starting Grafana:

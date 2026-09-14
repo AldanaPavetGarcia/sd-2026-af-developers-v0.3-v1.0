@@ -5,6 +5,8 @@
 
 #include "hpc/dijkstra.hpp"
 
+#include "hpc/metrics.hpp"
+
 #include <limits>
 #include <queue>
 #include <vector>
@@ -93,48 +95,53 @@ nlohmann::json computeShortestPaths(const Graph& graph)
     // Thread-local storage for Dijkstra results
     std::vector<nlohmann::json> thread_results(n);
 
-#pragma omp parallel for schedule(dynamic)
-    for (int src = 0; src < n; ++src)
+#pragma omp parallel
     {
-        std::vector<double> dist;
-        std::vector<int> prev;
-        dijkstraSingleSource(graph, src, dist, prev);
+        hpc::ActiveThreadScope activeThreadScope;
 
-        nlohmann::json local_result = nlohmann::json::object();
-
-        for (int dst = 0; dst < n; ++dst)
+#pragma omp for schedule(dynamic)
+        for (int src = 0; src < n; ++src)
         {
-            if (src == dst)
+            std::vector<double> dist;
+            std::vector<int> prev;
+            dijkstraSingleSource(graph, src, dist, prev);
+
+            nlohmann::json local_result = nlohmann::json::object();
+
+            for (int dst = 0; dst < n; ++dst)
             {
-                continue;
-            }
-            if (dist[dst] == std::numeric_limits<double>::infinity())
-            {
-                continue; // No path
+                if (src == dst)
+                {
+                    continue;
+                }
+                if (dist[dst] == std::numeric_limits<double>::infinity())
+                {
+                    continue; // No path
+                }
+
+                std::vector<int> path_indices = reconstructPath(prev, src, dst);
+                if (path_indices.empty())
+                {
+                    continue;
+                }
+
+                // Convert indices to node names
+                nlohmann::json path_names = nlohmann::json::array();
+                for (int idx : path_indices)
+                {
+                    path_names.push_back(graph.node_names[idx]);
+                }
+
+                std::string key =
+                    graph.node_names[src] + "-" + graph.node_names[dst];
+
+                local_result[key] = {
+                    {"path", path_names},
+                    {"cost", dist[dst]}};
             }
 
-            std::vector<int> path_indices = reconstructPath(prev, src, dst);
-            if (path_indices.empty())
-            {
-                continue;
-            }
-
-            // Convert indices to node names
-            nlohmann::json path_names = nlohmann::json::array();
-            for (int idx : path_indices)
-            {
-                path_names.push_back(graph.node_names[idx]);
-            }
-
-            std::string key =
-                graph.node_names[src] + "-" + graph.node_names[dst];
-
-            local_result[key] = {
-                {"path", path_names},
-                {"cost", dist[dst]}};
+            thread_results[src] = std::move(local_result);
         }
-
-        thread_results[src] = std::move(local_result);
     }
 
     // Merge thread-local results

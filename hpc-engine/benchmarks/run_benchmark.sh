@@ -4,9 +4,9 @@
 #
 # Ejecuta el engine con múltiples tamaños de grafo y conteos de hilos,
 # mide tiempos reales, calcula speedups y valida los criterios de aceptación:
-#   AC2a: speedup ≥ 2.0× con 4 hilos sobre grafos de ≥ 5.000 nodos
+#   AC2a: speedup ≥ 2.0× con 4 hilos sobre grafos de ≥ 50.000 nodos
 #   AC2b: speedup ≥ 3.0× con 8 hilos sobre grafos de ≥ 100.000 nodos
-#   AC3:  0 data races (verificado por el paso TSAN en run_ci_local.sh)
+#   AC3:  0 data races (verificado por el paso TSAN en `make tsan`)
 #   AC4:  este script genera BENCHMARK_REPORT.md con tabla + análisis Amdahl
 # =============================================================================
 set -euo pipefail
@@ -21,6 +21,31 @@ cd "$PROJECT_ROOT"
 
 VCPKG_ROOT="${VCPKG_ROOT:-$HOME/vcpkg}"
 BUILD_DIR="build-bench"
+
+# ---------------------------------------------------------------------------
+# vcpkg debe estar en el tag pinneado (el mismo que usan los dos Dockerfiles y,
+# por lo tanto, el job docker-image-build de CI). Con otro commit de vcpkg, la
+# variante *release* de civetweb se instala como bitcode LTO al que le falta
+# CivetServer::getListeningPorts(), que prometheus-cpp-pull necesita: el link
+# del engine muere con decenas de "undefined reference" que no tienen nada que
+# ver con este repo. Se chequea antes de compilar porque el error aparece
+# recién al final, tras compilar todo.
+# ---------------------------------------------------------------------------
+VCPKG_PINNED_TAG="2026.06.24"
+
+if [ -d "$VCPKG_ROOT/.git" ]; then
+    VCPKG_CURRENT="$(git -C "$VCPKG_ROOT" describe --tags 2>/dev/null || echo "desconocido")"
+
+    if [ "$VCPKG_CURRENT" != "$VCPKG_PINNED_TAG" ]; then
+        echo "ERROR: vcpkg en '$VCPKG_ROOT' está en '$VCPKG_CURRENT', se esperaba '$VCPKG_PINNED_TAG'." >&2
+        echo "       El build Release no va a linkear. Corregilo con:" >&2
+        echo "         git -C \"$VCPKG_ROOT\" fetch --depth 1 origin tag $VCPKG_PINNED_TAG" >&2
+        echo "         git -C \"$VCPKG_ROOT\" checkout $VCPKG_PINNED_TAG" >&2
+        echo "       o cloná uno nuevo:" >&2
+        echo "         git clone --branch $VCPKG_PINNED_TAG --depth 1 https://github.com/microsoft/vcpkg.git" >&2
+        exit 1
+    fi
+fi
 
 echo "=========================================================="
 echo "HPC Engine Benchmark (OpenMP Parallelization — US-202)"
@@ -50,17 +75,22 @@ echo "✅ Engine compilado: $ENGINE"
 # ---------------------------------------------------------------------------
 cd "$SCRIPT_DIR"
 
-# Tamaños representativos: 1k, 10k, 100k (como especifica la PR)
-SIZES=(1000 5000 10000 100000)
+# Tamaños que exige el AC5 explícitamente: 10K, 50K y 100K nodos.
+SIZES=(10000 50000 100000)
 THREADS=(1 2 4 8)
 
-# Nodo de referencia para cada criterio (según enunciado US-202)
-AC2A_SIZE=5000
+# Nodo de referencia para cada criterio (US-202 AC2/AC3, no lo que estaba antes: el PRD pide
+# ≥50.000 nodos para el AC2a, no 5.000 — con 5K el reporte pasaba sin probar lo que el AC exige).
+AC2A_SIZE=50000
 AC2B_SIZE=100000
 
 REPORT_FILE="BENCHMARK_REPORT.md"
 PYTHON="${PYTHON:-python3}"
 
+# nproc cuenta hilos lógicos (con hyperthreading, el doble de los núcleos físicos reales) —
+# usar lscpu para el número que realmente importa al leer el reporte (AC3 pide medir el
+# speedup con núcleos físicos, no con hyperthreads).
+CPU_CORES_PHYSICAL="$(lscpu -p=Core,Socket 2>/dev/null | grep -v '^#' | sort -u | wc -l)"
 CPU_CORES="$(nproc)"
 OMP_MAX="$(echo '{"type": "ANALYZE_GRAPH", "request_id": "req-123", "payload": {"nodes": ["N0"], "edges": [], "algorithms": []}}' | OMP_NUM_THREADS=8 "$ENGINE" 2>/dev/null | "$PYTHON" -c \
     "import json,sys; d=json.load(sys.stdin); print(d.get('result',{}).get('thread_count',0))" \
@@ -79,7 +109,8 @@ OMP_MAX="$(echo '{"type": "ANALYZE_GRAPH", "request_id": "req-123", "payload": {
     echo ""
     echo "| Parámetro | Valor |"
     echo "|---|---|"
-    echo "| CPU físicos disponibles | $CPU_CORES |"
+    echo "| CPU físicos disponibles | $CPU_CORES_PHYSICAL |"
+    echo "| CPU hilos lógicos (nproc) | $CPU_CORES |"
     echo "| OMP max threads (engine) | $OMP_MAX |"
     echo "| Compilador | $(clang++ --version 2>/dev/null | head -1) |"
     echo "| Build type | Release |"

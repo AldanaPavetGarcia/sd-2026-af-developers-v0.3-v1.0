@@ -1,0 +1,62 @@
+apiVersion: 1
+
+# US-206 AC4: "An alert fires if processing P99 latency exceeds 2x the single-thread baseline
+# for more than 2 consecutive minutes." Same native-Grafana-alerting approach as
+# eop-slo-alerts.yaml (see that file for why: reuses existing provisioning, Grafana logs every
+# state transition on its own).
+#
+# Depends on the baseline being configured (EOP_HPC_BASELINE_P99_MS /
+# EOP_HPC_BASELINE_GRAPH_NODES, see ADR-018 and hpc-engine/src/metrics.cpp) -- until then,
+# eop_hpc_baseline_seconds has no series, both queries below return no data, and the rule
+# resolves to noDataState (Alerting is never falsely triggered by an absent baseline).
+groups:
+  - orgId: 1
+    name: eop-hpc-alerts
+    folder: EOP
+    interval: 1m
+    rules:
+      - uid: eop-hpc-p99-above-2x-baseline
+        title: "HPC P99 latency above 2x baseline"
+        condition: compare
+        data:
+          - refId: p99
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: p99
+              instant: true
+              expr: histogram_quantile(0.99, sum by (le) (rate(eop_hpc_processing_duration_seconds_bucket[5m])))
+          - refId: threshold
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: threshold
+              instant: true
+              expr: eop_hpc_baseline_seconds * 2
+          - refId: compare
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: "-100"
+            model:
+              refId: compare
+              type: math
+              expression: "$p99 > $threshold"
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "hpc-engine P99 processing latency exceeds 2x its configured single-thread baseline."
+          description: >-
+            Sustained for over 2 minutes. Compare against the OpenMP Benchmark Report
+            (US-202 AC5) -- this usually means either genuine contention/overload, or the
+            configured baseline (EOP_HPC_BASELINE_P99_MS) no longer matches real hardware.

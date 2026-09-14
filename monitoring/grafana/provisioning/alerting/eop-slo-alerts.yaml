@@ -1,0 +1,59 @@
+apiVersion: 1
+
+# US-205 AC3: "An alert fires when the error budget drops below 50%. The alert is visible in
+# Grafana and in the server logs." Implemented as native Grafana alerting (file provisioning),
+# not Prometheus + Alertmanager -- reuses the datasource/dashboard provisioning pattern already
+# in this directory instead of standing up a whole new component, and Grafana already logs
+# every alert state transition (pending/firing/resolved) to its own log on stdout, which
+# satisfies the "visible ... in the server logs" half of the AC without extra wiring.
+#
+# Thresholds match the error budget policy already defined in ADR-012: >50% normal, 10-50%
+# caution, <10% freeze. This rule fires on the boundary the AC calls out (50%).
+groups:
+  - orgId: 1
+    name: eop-slo-alerts
+    folder: EOP
+    interval: 1m
+    rules:
+      - uid: eop-error-budget-below-50
+        title: "EOP error budget below 50%"
+        condition: threshold
+        data:
+          - refId: query
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: query
+              instant: true
+              # Same expression as the "Error Budget Remaining" dashboard panel
+              # (monitoring/grafana/dashboards/eop-slo-dashboard.json) -- one definition of
+              # "error budget", not two that could drift apart.
+              expr: clamp_min(100 - ((1 - (sum(rate(eop_requests_total{result="OK"}[5m])) / clamp_min(sum(rate(eop_requests_total[5m])), 1))) / 0.001 * 100), 0)
+          - refId: threshold
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: "-100"
+            model:
+              refId: threshold
+              type: threshold
+              expression: query
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [50]
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "EOP error budget has dropped below 50% (ADR-012 caution threshold)."
+          description: >-
+            Sustained error rate is eating into the monthly 99.9% availability budget. Per
+            ADR-012's error budget policy, deployments now require additional review; below
+            10% remaining, new feature deployments must freeze.

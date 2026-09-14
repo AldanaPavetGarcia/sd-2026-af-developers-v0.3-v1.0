@@ -1,0 +1,145 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eop-grafana-provisioning
+  labels:
+    app: grafana
+data:
+  # Same content as monitoring/grafana/provisioning/datasources/prometheus-datasource.yaml —
+  # small and stable, kept in sync by hand. Dashboard JSON files (which grow every time a new
+  # dashboard is added) are NOT duplicated here — they're loaded into their own ConfigMap
+  # generated straight from monitoring/grafana/dashboards/ by `make k8s-apply`, so that
+  # directory stays the single source of truth for panel content.
+  prometheus-datasource.yaml: |
+    apiVersion: 1
+
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        editable: false
+  eop-dashboard-provider.yaml: |
+    apiVersion: 1
+
+    providers:
+      - name: eop-dashboards
+        orgId: 1
+        folder: EOP
+        folderUid: eop
+        type: file
+        disableDeletion: false
+        editable: false
+        updateIntervalSeconds: 15
+        allowUiUpdates: false
+        options:
+          path: /etc/grafana/provisioning/dashboards/eop
+          foldersFromFilesStructure: false
+  # Same content as monitoring/grafana/provisioning/alerting/eop-slo-alerts.yaml, kept in sync
+  # by hand (same convention as the two keys above) — US-205 AC3.
+  eop-slo-alerts.yaml: |
+    apiVersion: 1
+
+    groups:
+      - orgId: 1
+        name: eop-slo-alerts
+        folder: EOP
+        interval: 1m
+        rules:
+          - uid: eop-error-budget-below-50
+            title: "EOP error budget below 50%"
+            condition: threshold
+            data:
+              - refId: query
+                queryType: ""
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: prometheus
+                model:
+                  refId: query
+                  instant: true
+                  expr: clamp_min(100 - ((1 - (sum(rate(eop_requests_total{result="OK"}[5m])) / clamp_min(sum(rate(eop_requests_total[5m])), 1))) / 0.001 * 100), 0)
+              - refId: threshold
+                queryType: ""
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: "-100"
+                model:
+                  refId: threshold
+                  type: threshold
+                  expression: query
+                  conditions:
+                    - evaluator:
+                        type: lt
+                        params: [50]
+            noDataState: NoData
+            execErrState: Error
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "EOP error budget has dropped below 50% (ADR-012 caution threshold)."
+              description: >-
+                Sustained error rate is eating into the monthly 99.9% availability budget. Per
+                ADR-012's error budget policy, deployments now require additional review; below
+                10% remaining, new feature deployments must freeze.
+  # Same content as monitoring/grafana/provisioning/alerting/eop-hpc-alerts.yaml, kept in sync
+  # by hand — US-206 AC4.
+  eop-hpc-alerts.yaml: |
+    apiVersion: 1
+
+    groups:
+      - orgId: 1
+        name: eop-hpc-alerts
+        folder: EOP
+        interval: 1m
+        rules:
+          - uid: eop-hpc-p99-above-2x-baseline
+            title: "HPC P99 latency above 2x baseline"
+            condition: compare
+            data:
+              - refId: p99
+                queryType: ""
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: prometheus
+                model:
+                  refId: p99
+                  instant: true
+                  expr: histogram_quantile(0.99, sum by (le) (rate(eop_hpc_processing_duration_seconds_bucket[5m])))
+              - refId: threshold
+                queryType: ""
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: prometheus
+                model:
+                  refId: threshold
+                  instant: true
+                  expr: eop_hpc_baseline_seconds * 2
+              - refId: compare
+                queryType: ""
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: "-100"
+                model:
+                  refId: compare
+                  type: math
+                  expression: "$p99 > $threshold"
+            noDataState: NoData
+            execErrState: Error
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "hpc-engine P99 processing latency exceeds 2x its configured single-thread baseline."
+              description: >-
+                Sustained for over 2 minutes. Compare against the OpenMP Benchmark Report
+                (US-202 AC5) -- this usually means either genuine contention/overload, or the
+                configured baseline (EOP_HPC_BASELINE_P99_MS) no longer matches real hardware.

@@ -166,6 +166,46 @@ However, all repositories must maintain:
 
 ---
 
+# Observability
+
+Prometheus and Grafana ship with the stack (#43), scraping `eop-server` and `hpc-engine`'s
+`/metrics` endpoints and auto-provisioning the SLO and HPC dashboards — no manual import needed.
+
+**docker-compose:**
+
+```bash
+docker compose up -d prometheus grafana eop-server
+```
+
+- Prometheus targets: `http://localhost:9090/targets` — `eop-server` should show as `UP`.
+- Grafana: `http://localhost:3000`, login `admin` / `admin` (default credentials, not changed
+  for this dev/demo stack) → **Dashboards** (left sidebar) → folder **EOP**.
+
+**Kubernetes:**
+
+```bash
+make k8s-apply
+kubectl port-forward svc/prometheus 9090:9090 &
+kubectl port-forward svc/grafana 3000:3000 &
+```
+
+Same URLs and login as above once the port-forwards are up. `eop-server` and `hpc-engine` are
+both discovered dynamically via pod annotations (`prometheus.io/scrape|path|port`) — same
+mechanism for both workloads, no static targets to keep in sync.
+
+Two dashboards are provisioned:
+
+- **EOP SLO Dashboard** — system-level health (availability, error budget, request latency).
+  Panel-by-panel reference: [`docs/slo-dashboard-grafana.md`](docs/slo-dashboard-grafana.md).
+- **EOP HPC Performance Dashboard** — `hpc-engine` graph-processing performance. Panel-by-panel
+  reference: [`docs/hpc-performance-grafana-panel.md`](docs/hpc-performance-grafana-panel.md).
+
+**No data in the panels?** Send some real traffic first — the dashboards only show what
+Prometheus has actually scraped, they don't backfill history. See the linked docs above for a
+minimal example per service and what a normal "empty panel" (vs. a broken one) looks like.
+
+---
+
 # License
 
 This repository is part of an **academic engineering program** and is intended exclusively for educational purposes.

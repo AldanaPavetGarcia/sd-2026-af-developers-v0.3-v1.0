@@ -1,0 +1,128 @@
+# eop-clickhouse-config is generated from monitoring/signoz-common/clickhouse/ by `make
+# k8s-apply` (kubectl create configmap --from-file), the same convention as
+# eop-grafana-dashboards (see k8s/grafana-provisioning-configmap.yaml) -- config.xml alone is
+# over 1000 lines, too large to duplicate as an embedded YAML block without drifting from the
+# docker-compose source of truth.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clickhouse
+  labels:
+    app: clickhouse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clickhouse
+  template:
+    metadata:
+      labels:
+        app: clickhouse
+    spec:
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 20
+      initContainers:
+        - name: wait-for-zookeeper
+          image: busybox:1.37
+          command:
+            - sh
+            - -c
+            - until nc -z zookeeper-1 2181; do echo waiting for zookeeper-1; sleep 2; done
+        # Docker-compose equivalent of this is a separate one-shot "init-clickhouse" service
+        # sharing a named volume with the clickhouse container -- two separate Pods can't share
+        # an emptyDir in K8s, so this becomes an initContainer in the same Pod instead, sharing
+        # the user-scripts emptyDir with the main container below.
+        - name: fetch-histogram-quantile
+          image: clickhouse/clickhouse-server:25.5.6
+          command:
+            - bash
+            - -c
+            - |
+              set -e
+              version="v0.0.1"
+              node_os=$(uname -s | tr '[:upper:]' '[:lower:]')
+              node_arch=$(uname -m | sed s/aarch64/arm64/ | sed s/x86_64/amd64/)
+              echo "Fetching histogram-quantile-binary for ${node_os}/${node_arch}"
+              cd /tmp
+              wget -O histogram-quantile.tar.gz "https://github.com/SigNoz/signoz/releases/download/histogram-quantile%2F${version}/histogram-quantile_${node_os}_${node_arch}.tar.gz"
+              tar -xvzf histogram-quantile.tar.gz
+              mv histogram-quantile /user_scripts/histogramQuantile
+          volumeMounts:
+            - name: user-scripts
+              mountPath: /user_scripts
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:25.5.6
+          imagePullPolicy: IfNotPresent
+          tty: true
+          env:
+            - name: CLICKHOUSE_SKIP_USER_SETUP
+              value: "1"
+          ports:
+            - name: http
+              containerPort: 8123
+              protocol: TCP
+            - name: native
+              containerPort: 9000
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/clickhouse-server/config.xml
+              subPath: config.xml
+              readOnly: true
+            - name: config
+              mountPath: /etc/clickhouse-server/users.xml
+              subPath: users.xml
+              readOnly: true
+            - name: config
+              mountPath: /etc/clickhouse-server/custom-function.xml
+              subPath: custom-function.xml
+              readOnly: true
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d/cluster.xml
+              subPath: cluster.xml
+              readOnly: true
+            - name: user-scripts
+              mountPath: /var/lib/clickhouse/user_scripts
+            - name: data
+              mountPath: /var/lib/clickhouse
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+          # ClickHouse is the heaviest component of this stack -- kept modest since this is a
+          # small single-node dev deployment (own_namespace, no replication load), not a
+          # production sizing. Raise if pods get OOMKilled under real trace volume.
+          # CPU limit raised from 1 core: cgroup cpu.stat showed ~8% of periods throttled
+          # (1.7s+ cumulative) even at that level during the schema-migration Job's DDL burst.
+          # Less sensitive to this than zookeeper-1's JVM, but the same host headroom argument
+          # applies (see that file's resources comment) -- no reason to run this tight.
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "2"
+              memory: "768Mi"
+      volumes:
+        - name: config
+          configMap:
+            name: eop-clickhouse-config
+        # NOTE: emptyDir, not a PersistentVolumeClaim -- matches this repo's existing k8s/
+        # convention (no PVCs anywhere else either). Trace/log data does not survive a pod
+        # restart, which is acceptable for this dev/demo deployment but would need revisiting
+        # for anything closer to production.
+        - name: user-scripts
+          emptyDir: {}
+        - name: data
+          emptyDir: {}

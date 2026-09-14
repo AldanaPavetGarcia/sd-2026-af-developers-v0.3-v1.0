@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: signoz-otel-collector
+  labels:
+    app: signoz-otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: signoz-otel-collector
+  template:
+    metadata:
+      labels:
+        app: signoz-otel-collector
+    spec:
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 20
+      # ClickHouse and the migrator Job aren't native K8s "depends_on" -- this collector fails
+      # fast against a ClickHouse that isn't ready yet, so the initContainer below blocks until
+      # the port answers instead of crash-looping the main container while it warms up.
+      initContainers:
+        - name: wait-for-clickhouse
+          image: busybox:1.37
+          command:
+            - sh
+            - -c
+            - until nc -z clickhouse 9000; do echo waiting for clickhouse; sleep 2; done
+      containers:
+        - name: signoz-otel-collector
+          image: signoz/signoz-otel-collector:v0.144.4
+          imagePullPolicy: IfNotPresent
+          command: ["/signoz-otel-collector"]
+          args:
+            - --config=/etc/otel-collector-config.yaml
+          env:
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "host.name=eop-signoz-host,os.type=linux"
+            - name: LOW_CARDINAL_EXCEPTION_GROUPING
+              value: "false"
+            - name: SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_DSN
+              value: "tcp://clickhouse:9000"
+            - name: SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_CLUSTER
+              value: "cluster"
+            - name: SIGNOZ_OTEL_COLLECTOR_CLICKHOUSE_REPLICATION
+              value: "true"
+            - name: SIGNOZ_OTEL_COLLECTOR_TIMEOUT
+              value: "10m"
+          ports:
+            - name: grpc
+              containerPort: 4317
+              protocol: TCP
+            - name: http
+              containerPort: 4318
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel-collector-config.yaml
+              subPath: otel-collector-config.yaml
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "192Mi"
+      volumes:
+        - name: config
+          configMap:
+            name: eop-signoz-otel-collector-config

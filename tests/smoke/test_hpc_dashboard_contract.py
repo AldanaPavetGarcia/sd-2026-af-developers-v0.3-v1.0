@@ -23,6 +23,7 @@ REQUIRED_TITLES = {
     "Graph Size",
     "OpenMP Speedup Ratio",
     "HPC Error Rate",
+    "OpenMP Thread Utilization",
 }
 
 REQUIRED_QUERY_TOKENS = {
@@ -36,6 +37,8 @@ REQUIRED_QUERY_TOKENS = {
     "eop_hpc_graph_nodes",
     "eop_hpc_graph_edges",
     "eop_hpc_speedup_ratio",
+    "eop_hpc_thread_busy_seconds_total",
+    "eop_hpc_active_threads",
 }
 
 

@@ -1,0 +1,26 @@
+# Headless (clusterIP: None), not a normal ClusterIP Service. monitoring/signoz-common/
+# clickhouse/cluster.xml names "clickhouse:9000" as this single-node "cluster"'s only replica --
+# ClickHouse decides whether a distributed DDL task is local by comparing that hostname's
+# resolved address against its own interfaces. A normal Service's virtual ClusterIP never
+# matches a pod's real IP (confirmed live: system.clusters showed is_local=0 for the pod's own
+# entry, and every distributed DDL query then hung for the full 180s
+# distributed_ddl_task_timeout, since no host ever "claims" the task). A headless Service
+# resolves DNS straight to the backing pod's IP instead, which does match -- the standard
+# pattern for any self-referencing clustered datastore on Kubernetes.
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  labels:
+    app: clickhouse
+spec:
+  clusterIP: None
+  selector:
+    app: clickhouse
+  ports:
+    - name: http
+      port: 8123
+      targetPort: http
+    - name: native
+      port: 9000
+      targetPort: native

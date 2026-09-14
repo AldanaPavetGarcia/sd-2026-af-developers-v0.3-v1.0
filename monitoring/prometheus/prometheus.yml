@@ -1,0 +1,14 @@
+global:
+  # ADR012 evaluates the C++ core server SLO (P99 < 200ms) over a 5-minute rolling window;
+  # 15s keeps enough resolution for that window without over-scraping a low-traffic target.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: eop-server
+    static_configs:
+      - targets: ["eop-server:9100"]
+  # hpc-engine is intentionally NOT scraped here: it has no docker-compose service (K8s-only
+  # workload by design, see #16 — Deployment + batch Job, nothing in docker-compose.yml). Its
+  # /metrics is scraped in k8s/prometheus-configmap.yaml instead, via pod-annotation discovery
+  # (kubernetes_sd_configs), since that's the only environment it actually runs in.
