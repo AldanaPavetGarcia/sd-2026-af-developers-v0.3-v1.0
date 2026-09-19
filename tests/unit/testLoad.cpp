@@ -9,10 +9,14 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -25,9 +29,52 @@ namespace
 {
     // Use a unique port for this test to avoid conflicts
     const int kLoadTestPort = 11000 + (getpid() % 5000);
-    constexpr int kNumClients = 20;
-    constexpr int kRequestsPerClient = 50;
-    constexpr rlim_t kRequiredFds = 1024;
+
+    // CI runs a reduced load (ADR-015); the original US-102 AC8 figures -- 1000 clients x 10,000
+    // requests -- are reproduced by setting EOP_LOAD_CLIENTS / EOP_LOAD_REQUESTS_PER_CLIENT.
+    constexpr int CI_NUM_CLIENTS = 20;
+    constexpr int CI_REQUESTS_PER_CLIENT = 50;
+
+    // Each client holds one socket and the server another, plus headroom for the process itself.
+    constexpr int FDS_PER_CLIENT = 2;
+    constexpr rlim_t FD_HEADROOM = 256;
+    constexpr int MAX_CLIENTS_HEADROOM = 200;
+
+    // Latencies are sampled, not all kept: 10 million requests would otherwise need 80 MB just
+    // for the percentiles.
+    constexpr long MAX_LATENCY_SAMPLES = 200000;
+
+    int positiveEnv(const char* name, int fallback)
+    {
+        const char* raw = std::getenv(name);
+        if (raw == nullptr)
+        {
+            return fallback;
+        }
+        const int value = std::atoi(raw);
+        return value > 0 ? value : fallback;
+    }
+
+    // 0 = each client sends its next request as soon as the previous reply arrives (saturation).
+    // A positive value paces every client at the same fixed rate, which is what US-102 AC2's
+    // "identical workload" comparison between 1 and 100 clients needs: at saturation, latency
+    // grows with the queue, not with how the server treats each client.
+    const int kRequestIntervalMs = positiveEnv("EOP_LOAD_REQUEST_INTERVAL_MS", 0);
+
+    const int kNumClients = positiveEnv("EOP_LOAD_CLIENTS", CI_NUM_CLIENTS);
+    const int kRequestsPerClient = positiveEnv("EOP_LOAD_REQUESTS_PER_CLIENT", CI_REQUESTS_PER_CLIENT);
+    const rlim_t kRequiredFds = static_cast<rlim_t>(kNumClients) * FDS_PER_CLIENT + FD_HEADROOM;
+    const int kMaxClients = kNumClients + MAX_CLIENTS_HEADROOM;
+
+    double percentile(std::vector<double>& sorted, double fraction)
+    {
+        if (sorted.empty())
+        {
+            return 0.0;
+        }
+        const auto index = static_cast<size_t>(fraction * static_cast<double>(sorted.size() - 1));
+        return sorted[index];
+    }
 
     class EopLoadTest : public ::testing::Test
     {
@@ -62,10 +109,10 @@ namespace
             isTerminationSignalReceived = false;
 
             // Relax runtime configuration for this stress test
-            setenv("EOP_MAX_CLIENTS", "1200", 1);
+            setenv("EOP_MAX_CLIENTS", std::to_string(kMaxClients).c_str(), 1);
             setenv("EOP_HEARTBEAT_INTERVAL", "30", 1);
             setenv("EOP_IDLE_TIMEOUT", "60", 1);
-            serverContext.maxClients = 1200;
+            serverContext.maxClients = kMaxClients;
             serverContext.heartbeatIntervalSeconds = 30;
             serverContext.idleTimeoutSeconds = 60;
 
@@ -119,6 +166,13 @@ namespace
 
         std::vector<std::thread> clients;
         clients.reserve(kNumClients);
+
+        const long totalRequests = static_cast<long>(kNumClients) * kRequestsPerClient;
+        const long sampleStride = std::max(1L, totalRequests / MAX_LATENCY_SAMPLES);
+        std::mutex latenciesMutex;
+        std::vector<double> latenciesMs;
+        latenciesMs.reserve(static_cast<size_t>(std::min(totalRequests, MAX_LATENCY_SAMPLES) + kNumClients));
+        std::atomic<int> errorResponses {0};
 
         std::cout << "[ INFO ] Spawning " << kNumClients << " clients..." << std::endl;
 
@@ -181,10 +235,11 @@ namespace
                         return;
                     }
 
-                    // Send 10,000 heartbeats
+                    std::vector<double> localLatenciesMs;
                     for (int j = 0; j < kRequestsPerClient; ++j)
                     {
                         static const std::string hbMsg = "HEARTBEAT\n";
+                        const auto sentAt = std::chrono::steady_clock::now();
                         if (send(sock, hbMsg.c_str(), hbMsg.size(), 0) < 0)
                         {
                             ok = false;
@@ -192,13 +247,42 @@ namespace
                             break;
                         }
 
-                        r = recv(sock, buf, sizeof(buf), 0);
+                        r = recv(sock, buf, sizeof(buf) - 1, 0);
                         if (r <= 0)
                         {
                             ok = false;
                             errorCount++;
                             break;
                         }
+                        buf[r] = '\0';
+
+                        // US-102 AC8 asks for zero server-side errors, not only for a reply: a
+                        // server that answered every heartbeat with ERROR would otherwise pass.
+                        if (std::strstr(buf, "ERROR") != nullptr)
+                        {
+                            ok = false;
+                            errorResponses++;
+                            break;
+                        }
+
+                        // Taken before any pacing sleep, so it is the request's own round trip.
+                        const double latencyMs =
+                            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - sentAt)
+                                .count();
+                        if ((static_cast<long>(i) * kRequestsPerClient + j) % sampleStride == 0)
+                        {
+                            localLatenciesMs.push_back(latencyMs);
+                        }
+
+                        if (kRequestIntervalMs > 0)
+                        {
+                            std::this_thread::sleep_until(sentAt + std::chrono::milliseconds(kRequestIntervalMs));
+                        }
+                    }
+
+                    {
+                        std::lock_guard<std::mutex> lock(latenciesMutex);
+                        latenciesMs.insert(latenciesMs.end(), localLatenciesMs.begin(), localLatenciesMs.end());
                     }
 
                     close(sock);
@@ -228,19 +312,42 @@ namespace
         auto endTime = std::chrono::steady_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
 
-        std::cout << "[ INFO ] Load test finished." << std::endl;
-        std::cout << "[ INFO ] Total time: " << duration << " ms" << std::endl;
-        std::cout << "[ INFO ] Error count: " << errorCount.load() << std::endl;
-        std::cout << "[ INFO ] Completed clients: " << completedCount.load() << std::endl;
+        std::sort(latenciesMs.begin(), latenciesMs.end());
 
-        EXPECT_EQ(errorCount.load(), 0) << "There were errors during the load test.";
-        EXPECT_EQ(completedCount.load(), kNumClients) << "Not all clients completed successfully.";
-
+        // The in-process server logs to stdout from its own threads; building each line first and
+        // writing it in one call keeps these results from being interleaved with its JSON logs.
+        const auto report = [](const std::string& line)
+        {
+            std::cout << line + "\n" << std::flush;
+        };
+        std::ostringstream summary;
+        summary << "[ LOAD ] clients=" << kNumClients << " requests_per_client=" << kRequestsPerClient
+                << " interval_ms=" << kRequestIntervalMs << " duration_ms=" << duration
+                << " completed_clients=" << completedCount.load() << " errors=" << errorCount.load()
+                << " server_error_responses=" << errorResponses.load();
+        report(summary.str());
+        std::ostringstream latency;
+        latency << "[ LOAD ] latency_ms samples=" << latenciesMs.size() << " p50=" << percentile(latenciesMs, 0.50)
+                << " p95=" << percentile(latenciesMs, 0.95) << " p99=" << percentile(latenciesMs, 0.99)
+                << " max=" << (latenciesMs.empty() ? 0.0 : latenciesMs.back());
+        report(latency.str());
         if (duration > 0)
         {
-            double totalRequests = static_cast<double>(completedCount.load()) * kRequestsPerClient;
-            double rps = totalRequests / (duration / 1000.0);
-            std::cout << "[ INFO ] Throughput: " << rps << " requests/second" << std::endl;
+            std::ostringstream throughput;
+            throughput << "[ LOAD ] throughput_rps="
+                       << static_cast<double>(completedCount.load()) * kRequestsPerClient / (duration / 1000.0);
+            report(throughput.str());
         }
+
+        // The P99 < 200 ms NFR is asserted only when requested: sanitizer builds in CI run this
+        // same test many times slower, and a latency bound there would measure the sanitizer.
+        if (const int maxP99Ms = positiveEnv("EOP_LOAD_MAX_P99_MS", 0); maxP99Ms > 0)
+        {
+            EXPECT_LE(percentile(latenciesMs, 0.99), maxP99Ms) << "P99 latency above " << maxP99Ms << " ms";
+        }
+
+        EXPECT_EQ(errorCount.load(), 0) << "There were errors during the load test.";
+        EXPECT_EQ(errorResponses.load(), 0) << "The server answered with ERROR during the load test.";
+        EXPECT_EQ(completedCount.load(), kNumClients) << "Not all clients completed successfully.";
     }
 } // namespace
