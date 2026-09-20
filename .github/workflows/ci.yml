@@ -347,6 +347,15 @@ jobs:
           make hpc-dashboard-test
 
       # -----------------------------------
+      # Benchmark Report analysis (US-202 AC5/AC6)
+      # -----------------------------------
+      # The benchmark itself takes hours and needs 8 physical cores, so it cannot run here. What
+      # can is the analysis that turns its measurements into the report -- Amdahl fit, "when not
+      # to parallelize", AC verdicts -- tested on synthetic data and on a real past run.
+      - name: Benchmark Report Analysis Tests
+        run: make benchmark-report-test
+
+      # -----------------------------------
       # Coverage (lcov + llvm-cov)
       # -----------------------------------
       - name: Generate Coverage

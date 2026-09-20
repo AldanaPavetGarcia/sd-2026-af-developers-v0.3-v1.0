@@ -1,4 +1,4 @@
-.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark tsan
+.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -73,6 +73,10 @@ load-test-hpc:
 
 prometheus-test:
 	python3 tests/smoke/test_prometheus_config_contract.py
+
+## Tests del análisis del Benchmark Report (Amdahl, AC6, veredictos): no corren el engine
+benchmark-report-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/smoke/test_benchmark_report.py
 
 ## Ejecuta el benchmark completo de OpenMP (Release) y genera BENCHMARK_REPORT.md
 benchmark:

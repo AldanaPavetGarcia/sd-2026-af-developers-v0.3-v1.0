@@ -74,6 +74,16 @@ def main() -> None:
     parser.add_argument("num_nodes", type=int, help="Número de nodos del grafo")
     parser.add_argument("output_file", help="Archivo JSON de salida")
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help=(
+            "Semilla del generador aleatorio. Con la misma semilla, tamaño y densidad se obtiene "
+            "exactamente el mismo grafo, lo que permite comparar mediciones entre máquinas. "
+            "Sin semilla, cada ejecución genera un grafo distinto."
+        ),
+    )
+    parser.add_argument(
         "--density",
         type=float,
         default=2.0,
@@ -84,6 +94,9 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+
+    if args.seed is not None:
+        random.seed(args.seed)
 
     payload = generate_graph(args.num_nodes, args.density)
     edge_count = len(payload["payload"]["edges"])
