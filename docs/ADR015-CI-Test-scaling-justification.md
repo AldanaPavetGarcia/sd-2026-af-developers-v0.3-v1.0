@@ -49,5 +49,7 @@ any of them and stops the run before the machine runs out of memory or overheats
 
 Measured on 2026-09-19 (i7-8550U, 4 cores, plugged in): 10,000,000 requests from 1,000 clients in
 445 s with 0 errors; P99 1.72 ms with 100 clients against 1.03 ms with 1 (x1.67, limit x2); P99
-3.1 ms with 10 clients at saturation; and 1,020,000 connect/disconnect cycles with the server's
-descriptor count unchanged (5 → 5).
+3.1 ms with 10 clients at saturation; and 1,020,000 of 1,020,000 connect/disconnect cycles
+completed at the application level, 0 failed, with the server's descriptor count unchanged
+(5 → 5). A cycle whose connect or banner fails is not counted: the verdict requires completed
+to equal attempted.

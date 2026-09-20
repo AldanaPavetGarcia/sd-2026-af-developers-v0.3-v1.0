@@ -12,6 +12,9 @@ cierre en el server:
   normal, los ~28K puertos efímeros se agotan a los pocos segundos.
 - ordenado: close() normal con FIN. Se corre en menos ciclos por el mismo motivo.
 
+El veredicto exige que TODOS los ciclos intentados se hayan completado: un connect que falla, o un
+banner que no llega, no recorrió el camino que el AC mide y no cuenta como evidencia.
+
 Uso: fd_leak_cycles.py <eop_server> [--abrupt N] [--graceful N]
 """
 import argparse
@@ -71,6 +74,7 @@ def server_answers(port):
 def cycles(port, count, abrupt, pid, label):
     linger = struct.pack("ii", 1, 0)
     failures = 0
+    completed = 0
     start = time.time()
     for i in range(1, count + 1):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -83,7 +87,9 @@ def cycles(port, count, abrupt, pid, label):
             # y que el cliente no pueda adelantarse al accept() del server: sin esto, una ráfaga de
             # connect+RST llena la cola de listen, el kernel descarta SYNs y cada descarte cuesta 1 s
             # de reintento TCP (medido: 624 descartes ≈ 10 minutos perdidos en ~95.000 ciclos).
-            if not s.recv(64).startswith(b"WELCOME"):
+            if s.recv(64).startswith(b"WELCOME"):
+                completed += 1
+            else:
                 failures += 1
         except OSError:
             failures += 1
@@ -93,7 +99,7 @@ def cycles(port, count, abrupt, pid, label):
             rate = i / (time.time() - start)
             print(f"   {label}: {i:>9,} ciclos  ({rate:,.0f}/s)  fds del server={fd_count(pid)}  "
                   f"fallas de connect={failures}", flush=True)
-    return failures, time.time() - start
+    return completed, failures, time.time() - start
 
 
 def main():
@@ -116,23 +122,30 @@ def main():
         before, rss_before = fd_count(server.pid), rss_mb(server.pid)
         print(f"fds antes: {before}   RSS antes: {rss_before:.1f} MB")
 
+        attempted = 0
+        completed_total = 0
         failures = 0
         for label, count, abrupt in (("abrupto (RST)", args.abrupt, True), ("ordenado (FIN)", args.graceful, False)):
             if count <= 0:
                 continue
-            f, elapsed = cycles(port, count, abrupt, server.pid, label)
+            done, f, elapsed = cycles(port, count, abrupt, server.pid, label)
+            attempted += count
+            completed_total += done
             failures += f
-            print(f"   {label}: {count:,} ciclos en {elapsed:.0f} s, {f} fallas de connect")
+            print(f"   {label}: {done:,} de {count:,} ciclos completos en {elapsed:.0f} s, {f} fallidos")
 
         time.sleep(SETTLE_S)
         after, rss_after = fd_count(server.pid), rss_mb(server.pid)
         healthy = server.poll() is None and server_answers(port)
-        total = args.abrupt + args.graceful
         print(f"fds después: {after}   RSS después: {rss_after:.1f} MB")
-        print(f"RESULTADO: {total:,} ciclos, fds {before} -> {after} (diferencia {after - before}), "
-              f"server sano después: {healthy}, fallas de connect: {failures}")
-        ok = after == before and healthy
+        print(f"RESULTADO: {completed_total:,} de {attempted:,} ciclos completos ({failures} fallidos), "
+              f"fds {before} -> {after} (diferencia {after - before}), server sano después: {healthy}")
+        # Un ciclo fallido no recorrió el camino que el AC mide, así que no puede contarse como
+        # evidencia: el veredicto exige que los completos sean todos los intentados.
+        ok = completed_total == attempted and after == before and healthy
         print("US-102 AC4:", "CUMPLE" if ok else "NO CUMPLE")
+        if completed_total != attempted:
+            print(f"  ({attempted - completed_total:,} ciclos no completaron el connect/disconnect a nivel aplicación)")
         return 0 if ok else 1
     finally:
         server.terminate()
