@@ -39,6 +39,7 @@
 
 #include "hpc/engine.hpp"
 #include "hpc/metrics.hpp"
+#include "hpc/tracing.hpp"
 
 namespace
 {
@@ -571,26 +572,31 @@ namespace
         std::thread m_thread;
     };
 
-    class HpcMetricsGuard
+    /// RAII for the engine's telemetry: the Prometheus registry/exposer and the OTel tracer.
+    /// The tracer especially needs the deterministic teardown, since its batch processor only
+    /// flushes pending spans on shutdown — without it a short run exports nothing at all.
+    class HpcTelemetryGuard
     {
     public:
-        HpcMetricsGuard()
+        HpcTelemetryGuard()
         {
             hpc::InitHpcMetrics();
+            hpc::InitHpcTracer();
         }
 
-        ~HpcMetricsGuard()
+        ~HpcTelemetryGuard()
         {
+            hpc::ShutdownHpcTracer();
             hpc::ShutdownHpcMetrics();
         }
 
-        HpcMetricsGuard(const HpcMetricsGuard&) = delete;
-        HpcMetricsGuard& operator=(const HpcMetricsGuard&) = delete;
+        HpcTelemetryGuard(const HpcTelemetryGuard&) = delete;
+        HpcTelemetryGuard& operator=(const HpcTelemetryGuard&) = delete;
     };
 
     int runSocketMode(const SocketModeConfig& config, const RetryConfig& retryConfig)
     {
-        HpcMetricsGuard metricsGuard;
+        HpcTelemetryGuard telemetryGuard;
 
         int sock = establishSession(config, retryConfig);
         if (sock < 0)

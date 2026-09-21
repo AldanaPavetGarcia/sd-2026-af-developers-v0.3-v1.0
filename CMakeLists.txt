@@ -221,4 +221,27 @@ if(EXODUS_BUILD_TESTS)
       ${CMAKE_SOURCE_DIR}/tests/smoke/v01_protocol_backward_compat.py
       $<TARGET_FILE:eop_server>
   )
+
+  add_test(
+    NAME smoke_message_framing_split_recv
+    COMMAND python3
+      ${CMAKE_SOURCE_DIR}/tests/smoke/message_framing_split_recv.py
+      $<TARGET_FILE:eop_server>
+  )
+
+  add_test(
+    NAME smoke_trace_context_propagation
+    COMMAND python3
+      ${CMAKE_SOURCE_DIR}/tests/smoke/trace_context_propagation.py
+      $<TARGET_FILE:eop_server>
+      $<TARGET_FILE:hpc_engine>
+  )
+
+  add_test(
+    NAME smoke_analyze_graph_large_response
+    COMMAND python3
+      ${CMAKE_SOURCE_DIR}/tests/smoke/analyze_graph_large_response.py
+      $<TARGET_FILE:eop_server>
+      $<TARGET_FILE:hpc_engine>
+  )
 endif()

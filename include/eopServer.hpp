@@ -213,6 +213,18 @@ struct SessionContext
     bool active;                                        ///< True while the session is considered alive.
     bool reservedForDispatch;                           ///< True when the session is reserved for server-side dispatch.
 
+    /**
+     * @brief Bytes received from this client that do not yet form a complete `\n`-terminated message.
+     *
+     * @details ADR-003 frames messages by a trailing `\n`, but a single `recv()` returns whatever
+     * happens to have arrived: a message larger than the read buffer, or one delayed mid-flight,
+     * comes back split across several calls. Anything left after the last `\n` in a given read is
+     * a partial message, so it is accumulated here and prepended to the next read instead of being
+     * dispatched. Only ever holds an incomplete tail — it is emptied as soon as its content
+     * completes a line.
+     */
+    std::string pendingInput;
+
     opentelemetry::nostd::shared_ptr<opentelemetry::trace::Span>
         connectionSpan; ///< Span tracking the lifetime of the session.
 

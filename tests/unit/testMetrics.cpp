@@ -30,6 +30,18 @@ namespace
     const int kMetricsTestPort = 20100 + (getpid() % 2000);
     constexpr int kIdleTimeout = 5;
 
+    /// Appends the '\n' that ADR-003 uses to frame messages, unless the caller already sent one.
+    /// The server buffers anything without it as a partial message (see issue #55), so a command
+    /// missing its terminator would simply never be dispatched.
+    std::string withProtocolTerminator(const std::string& msg)
+    {
+        if (!msg.empty() && msg.back() == '\n')
+        {
+            return msg;
+        }
+        return msg + "\n";
+    }
+
     /// One-shot: connect, send msg, receive response, close. Returns the response.
     std::string sendAndReceive(const std::string& msg, int port = kMetricsTestPort)
     {
@@ -50,7 +62,8 @@ namespace
             return "";
         }
 
-        send(sock, msg.c_str(), msg.size(), 0);
+        const std::string framed = withProtocolTerminator(msg);
+        send(sock, framed.c_str(), framed.size(), 0);
 
         char buf[1024] = {0};
         ssize_t bytes = recv(sock, buf, sizeof(buf) - 1, 0);

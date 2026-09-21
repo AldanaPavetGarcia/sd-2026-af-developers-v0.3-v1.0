@@ -522,3 +522,51 @@ TEST(HpcMetricsExposerTest, SurvivesAMetricsPortThatIsAlreadyTaken)
 
     hpc::ShutdownHpcMetrics();
 }
+
+// Each algorithm's parallel region carries its own scope, so each one needs its own check: the
+// test above runs connected_components alongside centrality, and connected_components alone is
+// enough to make it pass. That blind spot is not hypothetical -- centrality.cpp was rewritten on
+// one branch while the scope was added to the old version on another, and resolving that merge by
+// keeping the rewrite silently drops the instrumentation from the heaviest algorithm.
+TEST_F(HpcMetricsTest, CentralityAloneReportsItsWorkersAsBusy)
+{
+    const std::string request = R"({"type":"ANALYZE_GRAPH","request_id":"ac6-centrality",)"
+                                R"("payload":{"nodes":["a","b","c","d"],)"
+                                R"("edges":[{"from":"a","to":"b","weight":1},)"
+                                R"({"from":"b","to":"c","weight":1},)"
+                                R"({"from":"c","to":"d","weight":1}],)"
+                                R"("algorithms":["centrality"]}})";
+
+    testing::internal::CaptureStderr();
+    const auto result = hpc::processAnalyzeGraphRequest(request);
+    testing::internal::GetCapturedStderr();
+    ASSERT_EQ(result.exit_code, 0) << result.payload;
+
+    const auto families = hpc::hpcMetricsRegistry.registry->Collect();
+    const auto* busy = findFamily(families, "eop_hpc_thread_busy_seconds_total");
+    ASSERT_NE(busy, nullptr);
+    const auto* busySample = findSample(*busy, {{"service", "hpc-engine"}});
+    ASSERT_NE(busySample, nullptr);
+    EXPECT_GT(busySample->counter.value, 0.0) << "centrality's parallel region is not instrumented";
+}
+
+TEST_F(HpcMetricsTest, ShortestPathsAloneReportsItsWorkersAsBusy)
+{
+    const std::string request = R"({"type":"ANALYZE_GRAPH","request_id":"ac6-shortest",)"
+                                R"("payload":{"nodes":["a","b","c"],)"
+                                R"("edges":[{"from":"a","to":"b","weight":1},)"
+                                R"({"from":"b","to":"c","weight":1}],)"
+                                R"("algorithms":["shortest_paths"]}})";
+
+    testing::internal::CaptureStderr();
+    const auto result = hpc::processAnalyzeGraphRequest(request);
+    testing::internal::GetCapturedStderr();
+    ASSERT_EQ(result.exit_code, 0) << result.payload;
+
+    const auto families = hpc::hpcMetricsRegistry.registry->Collect();
+    const auto* busy = findFamily(families, "eop_hpc_thread_busy_seconds_total");
+    ASSERT_NE(busy, nullptr);
+    const auto* busySample = findSample(*busy, {{"service", "hpc-engine"}});
+    ASSERT_NE(busySample, nullptr);
+    EXPECT_GT(busySample->counter.value, 0.0) << "shortest_paths' parallel region is not instrumented";
+}

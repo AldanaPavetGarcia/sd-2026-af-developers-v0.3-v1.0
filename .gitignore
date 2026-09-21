@@ -63,6 +63,8 @@ coverage_summary.txt
 coverage.info
 connections.json
 connections.log
+# Runtime logs written by eop_server (SW-Agreement forbids committing logs)
+logs/
 
 # Python bytecode (benchmark_report.py y sus tests)
 __pycache__/

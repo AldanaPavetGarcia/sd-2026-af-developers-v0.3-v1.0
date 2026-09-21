@@ -138,6 +138,27 @@ The following algorithm names are valid:
 | `traceparent` | string | recommended | Trace context associated with the response. |
 | `result` | object | yes | Graph analysis result payload. |
 
+### Optional Result Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `algorithm_metadata` | object | Per-algorithm notes on how a result was produced. Present only when an algorithm has something to declare, so responses with nothing to report keep their previous shape. Currently emitted by `centrality` when scores are estimated rather than computed exactly (see `ADR019-Approximate-Betweenness-Centrality.md`). |
+
+```json
+"algorithm_metadata": {
+  "centrality": {
+    "approximate": true,
+    "method": "brandes_pivot_sampling",
+    "sampled_sources": 1024,
+    "total_sources": 10000
+  }
+}
+```
+
+A consumer that treats `centrality` values as exact figures **must** check
+`result.algorithm_metadata.centrality.approximate` first: above
+`EOP_HPC_CENTRALITY_EXACT_MAX_NODES` nodes the scores carry a documented margin of error.
+
 ### Required Result Fields
 
 | Field | Type | Required | Description |
@@ -281,7 +302,12 @@ Recommended v0.2 configuration keys:
 | `EOP_MAX_GRAPH_NODES` | Maximum number of nodes accepted in a request. | 100,000 |
 | `EOP_MAX_GRAPH_EDGES` | Maximum number of edges accepted in a request. | 500,000 |
 | `EOP_MAX_SHORTEST_PATHS_NODES` | Maximum nodes when `shortest_paths` is one of the requested algorithms — stricter than `EOP_MAX_GRAPH_NODES` on purpose. | 300 |
+| `EOP_HPC_CENTRALITY_EXACT_MAX_NODES` | Node count up to which `centrality` is computed exactly. Above it, scores are estimated from sampled sources (ADR-019). | 2,000 |
+| `EOP_HPC_CENTRALITY_SAMPLES` | Number of source nodes sampled when `centrality` is estimated. Higher is more accurate and slower. | 1,024 |
 | `EOP_HPC_TIMEOUT_MS` | Maximum time the server waits for the HPC engine response. | — |
+| `EOP_MAX_REQUEST_BYTES` | **eop-server**, not the engine: largest message it will buffer while waiting for the terminating `\n`. A guard against a client that never terminates a message, not a size policy — what a graph may contain is decided by the keys above, which answer with `ERROR_GRAPH_TOO_LARGE`. It must therefore stay above any request the engine accepts: at the defaults above a request serializes to roughly 25-30 MiB. | 64 MiB |
+
+A message that exceeds `EOP_MAX_REQUEST_BYTES` before its terminator arrives is answered with `ERROR_BAD_REQUEST desc=Message too long` and the buffered bytes are dropped.
 
 The default values are implementation-defined and should be aligned with the Milestone 2 performance targets. `EOP_MAX_SHORTEST_PATHS_NODES` is not a generic size knob: `shortest_paths` returns the full path (not just the cost) for every reachable node pair, so the total output size grows as O(N³) — confirmed live to exhaust memory and freeze a host at N=1,000, well under `EOP_MAX_GRAPH_NODES`'s general limit. `connected_components` and `centrality` don't carry this risk and are bound by `EOP_MAX_GRAPH_NODES` alone.
 

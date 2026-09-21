@@ -15,6 +15,7 @@
 #include "hpc/json_parser.hpp"
 #include "hpc/metrics.hpp"
 #include "hpc/protocol.hpp"
+#include "hpc/tracing.hpp"
 #include "hpc/validator.hpp"
 
 namespace hpc
@@ -136,15 +137,24 @@ namespace hpc
             }
 
             const int thread_count = omp_get_max_threads();
+
+            // Attaches to the caller's trace via the envelope's traceparent, so engine work shows
+            // up as a child of the request that caused it (US-203 AC5 / US-206 AC5).
+            auto requestSpan =
+                hpc::StartAnalyzeGraphSpan(req.traceparent, req.request_id, req.graph.num_nodes, req.graph.num_edges);
+            requestSpan->SetAttribute("thread.count", thread_count);
+
             const auto processing_start = Clock::now();
 
             nlohmann::json algorithm_results = nlohmann::json::object();
             nlohmann::json executed_algorithms = nlohmann::json::array();
             nlohmann::json algorithm_timings_ms = nlohmann::json::object();
+            nlohmann::json algorithm_metadata = nlohmann::json::object();
             std::map<std::string, double> algorithm_durations_seconds;
 
             for (const auto& algo : req.algorithms)
             {
+                auto algorithmSpan = hpc::StartAlgorithmSpan(requestSpan, algo);
                 const auto algorithm_start = Clock::now();
 
                 if (algo == "shortest_paths")
@@ -157,7 +167,23 @@ namespace hpc
                 }
                 else if (algo == "centrality")
                 {
-                    algorithm_results["centrality"] = hpc::computeCentrality(req.graph);
+                    hpc::CentralityStats centrality_stats;
+                    algorithm_results["centrality"] = hpc::computeCentrality(req.graph, centrality_stats);
+
+                    // Above the exact-computation threshold the scores are an estimate. Saying so
+                    // in the response is what keeps a caller from reading them as exact figures
+                    // (ADR-019).
+                    if (centrality_stats.approximate)
+                    {
+                        algorithm_metadata["centrality"] = {
+                            {"approximate", true},
+                            {"method", "brandes_pivot_sampling"},
+                            {"sampled_sources", centrality_stats.sampled_sources},
+                            {"total_sources", centrality_stats.total_sources},
+                        };
+                        algorithmSpan->SetAttribute("centrality.approximate", true);
+                        algorithmSpan->SetAttribute("centrality.sampled_sources", centrality_stats.sampled_sources);
+                    }
                 }
 
                 const auto algorithm_end = Clock::now();
@@ -165,10 +191,17 @@ namespace hpc
                 executed_algorithms.push_back(algo);
                 algorithm_timings_ms[algo] = algorithm_ms;
                 algorithm_durations_seconds[algo] = algorithm_ms / 1000.0;
+
+                algorithmSpan->SetAttribute("duration.ms", algorithm_ms);
+                algorithmSpan->End();
             }
 
             const auto processing_end = Clock::now();
             const double processing_ms = elapsedMilliseconds(processing_start, processing_end);
+
+            requestSpan->SetAttribute("processing.ms", processing_ms);
+            requestSpan->SetAttribute("result", "ACK");
+            requestSpan->End();
 
             auto response = hpc::buildAckResponse(req.request_id,
                                                   req.traceparent,
@@ -178,7 +211,8 @@ namespace hpc
                                                   thread_count,
                                                   algorithm_results,
                                                   executed_algorithms,
-                                                  algorithm_timings_ms);
+                                                  algorithm_timings_ms,
+                                                  algorithm_metadata);
 
             HpcRequestMetrics metrics;
             metrics.status = "ACK";

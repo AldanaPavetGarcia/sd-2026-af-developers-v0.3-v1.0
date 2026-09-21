@@ -33,16 +33,15 @@ static const char* kRequestId = "c-client-e2e";
 /**
  * eop_send_command() does one raw recv() per call with no line-buffering or request/response
  * correlation: whatever bytes happen to be sitting in the kernel receive buffer at that moment
- * come back, even if they're the reply to an earlier, already-sent command (confirmed live:
- * eop_connect() also never reads/discards the server's unsolicited WELCOME banner, so the very
- * first read after connecting is already one behind). On a single connection responses still
- * arrive in FIFO order, but ANALYZE_GRAPH's reply is slower than a HEARTBEAT's (it makes a real
- * round trip to hpc-engine), so a naive send-then-immediately-recv pairing can reliably read
- * back a stale, already-queued response instead of the one that was just requested.
+ * come back, even if they're the reply to an earlier, already-sent command. On a single
+ * connection responses still arrive in FIFO order, but ANALYZE_GRAPH's reply is slower than a
+ * HEARTBEAT's (it makes a real round trip to hpc-engine), so a single recv() is not guaranteed
+ * to be the reply to the command that was just sent.
  *
- * The protocol already carries a request_id specifically to correlate responses -- read in a
- * small retry loop and check each response for the expected request_id, rather than assuming a
- * fixed number of reads lines up with the command that was just sent.
+ * The protocol already carries a request_id specifically to correlate responses -- this is the
+ * fallback when the reply to the send itself was not the expected one: read in a small retry
+ * loop and check each response for the expected request_id, rather than assuming a fixed number
+ * of reads lines up with the command that was just sent.
  */
 static int drainUntilRequestId(eop_client_t* client, const char* requestId, char* outBody, size_t outBodyLen)
 {
@@ -95,11 +94,8 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    /* Small on purpose: stays well under MESSAGE_BUFFER_SIZE (256 bytes) server-side, so the
-     * whole line always lands in a single recv() -- see the framing note above eop_send_command
-     * in eop_client.c: it never appends the protocol's '\n' terminator itself, so callers must
-     * supply one, and messages that don't fit in one recv() are mishandled server-side
-     * regardless (tracked separately). */
+    /* The trailing '\n' is the protocol terminator (ADR-003). eop_send_command() appends it when
+     * it is missing, and does not add a second one when the caller already supplied it. */
     char payload[256];
     snprintf(payload,
              sizeof(payload),
@@ -108,16 +104,33 @@ int main(int argc, char** argv)
              "\"connected_components\"]}}\n",
              kRequestId);
 
+    char body[2048] = {0};
+    int exitCode = 1;
+    int found = 0;
+
+    /* eop_connect() drains the WELCOME banner, so the read that belongs to this send is normally
+     * the ANALYZE_GRAPH reply itself. It has to be checked, not discarded: before the banner was
+     * drained this read always returned the banner, the real reply arrived one read later and
+     * was picked up by the drain loop -- so discarding it looked harmless, but only because the
+     * client was one response behind. */
     eop_response_t* sendResp = eop_send_command(client, EOP_CMD_RAW, (const uint8_t*)payload, strlen(payload), 5000);
     if (sendResp)
     {
+        if (sendResp->status_code == EOP_OK && sendResp->payload &&
+            strstr((const char*)sendResp->payload, kRequestId) != NULL)
+        {
+            snprintf(body, sizeof(body), "%s", (const char*)sendResp->payload);
+            found = 1;
+        }
         eop_response_free(sendResp);
     }
 
-    char body[2048] = {0};
-    int exitCode = 1;
+    if (!found)
+    {
+        found = drainUntilRequestId(client, kRequestId, body, sizeof(body));
+    }
 
-    if (!drainUntilRequestId(client, kRequestId, body, sizeof(body)))
+    if (!found)
     {
         fprintf(
             stderr, "ERROR: never saw a response for request_id=%s within %d reads\n", kRequestId, MAX_FLUSH_ATTEMPTS);

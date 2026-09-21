@@ -16,6 +16,13 @@
 
 __thread char g_last_error[256] = {0};
 
+/** Longest WELCOME banner line the client will look at while draining it on connect. */
+#define EOP_WELCOME_BANNER_MAX_BYTES 512
+/** How long to wait for the banner before assuming the server did not send one (microseconds). */
+#define EOP_WELCOME_BANNER_TIMEOUT_US 200000
+/** Literal the server's greeting starts with; anything else is left for the caller to read. */
+#define EOP_WELCOME_BANNER_PREFIX "WELCOME"
+
 static void set_last_error(const char* msg)
 {
     strncpy(g_last_error, msg, sizeof(g_last_error) - 1);
@@ -47,6 +54,58 @@ static int set_nonblocking(int fd, int nonblocking)
         flags &= ~O_NONBLOCK;
     }
     return fcntl(fd, F_SETFL, flags);
+}
+
+/**
+ * @brief Drains the server's unsolicited WELCOME banner, if it sends one.
+ *
+ * The server greets a new connection with a WELCOME line before any command is issued. Left in
+ * the socket, that line is what the next eop_send_command() reads back instead of its own
+ * response, shifting every reply by one. The banner is optional (the server can be configured
+ * not to send it), so a short timeout is used and an empty read is not an error.
+ *
+ * @param fd Connected socket file descriptor.
+ */
+static void discard_welcome_banner(int fd)
+{
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = EOP_WELCOME_BANNER_TIMEOUT_US;
+
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(fd, &rfds);
+
+    if (select(fd + 1, &rfds, NULL, NULL, &tv) <= 0)
+    {
+        return; /* no banner sent, nothing to discard */
+    }
+
+    /* Peeked first so that anything which is not a banner stays in the socket for the caller. */
+    char peeked[EOP_WELCOME_BANNER_MAX_BYTES];
+    ssize_t available = recv(fd, peeked, sizeof(peeked) - 1, MSG_PEEK);
+    if (available <= 0)
+    {
+        return;
+    }
+    peeked[available] = '\0';
+
+    if (strncmp(peeked, EOP_WELCOME_BANNER_PREFIX, strlen(EOP_WELCOME_BANNER_PREFIX)) != 0)
+    {
+        return; /* not a banner: leave it untouched */
+    }
+
+    const char* newline = memchr(peeked, '\n', (size_t)available);
+    if (newline == NULL)
+    {
+        return; /* banner still arriving; leave it rather than consume half a line */
+    }
+
+    /* Consume exactly the banner line, so any command response already queued behind it is
+     * left for the caller to read. */
+    size_t banner_len = (size_t)(newline - peeked) + 1;
+    char drain[EOP_WELCOME_BANNER_MAX_BYTES];
+    (void)recv(fd, drain, banner_len, 0);
 }
 
 eop_client_t* eop_connect(const char* host, uint16_t port, uint32_t timeout_ms)
@@ -132,6 +191,8 @@ eop_client_t* eop_connect(const char* host, uint16_t port, uint32_t timeout_ms)
     client->fd = fd;
     pthread_mutex_init(&client->lock, NULL);
 
+    discard_welcome_banner(client->fd);
+
     return client;
 }
 
@@ -211,6 +272,26 @@ eop_send_command(eop_client_t* client, uint8_t cmd_type, const uint8_t* payload,
         else
         {
             to_send = snprintf(buffer, sizeof(buffer), "%s", cmd_str);
+        }
+    }
+
+    /* ADR-003 frames every message with a trailing '\n'. Without it the server treats what it
+     * received as a message still in flight and waits for the rest, so the command is never
+     * dispatched (see issue #55). Raw payloads (cmd_type 255) may already carry their own
+     * terminator, so one is only appended when it is actually missing. */
+    if (to_send == 0 || buffer[to_send - 1] != '\n')
+    {
+        if (to_send < sizeof(buffer) - 1)
+        {
+            buffer[to_send] = '\n';
+            to_send++;
+        }
+        else
+        {
+            /* Full buffer: overwrite the last byte so the message is at least well-framed
+             * rather than silently unterminated. */
+            buffer[sizeof(buffer) - 1] = '\n';
+            to_send = sizeof(buffer);
         }
     }
 

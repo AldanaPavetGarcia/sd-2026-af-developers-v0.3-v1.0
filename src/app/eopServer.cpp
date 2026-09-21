@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -18,6 +19,8 @@
 #include <sstream>
 #include <string>
 #include <thread>
+
+#include <nlohmann/json.hpp>
 
 #include <opentelemetry/exporters/otlp/otlp_http_exporter_factory.h>
 #include <opentelemetry/exporters/otlp/otlp_http_exporter_options.h>
@@ -170,6 +173,56 @@ void RecordRequestMetric(const std::string& command, const std::string& status, 
 // Helpers
 // ---------------------------------------------------------------------------
 static constexpr int GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS = 15;
+
+/**
+ * @brief Upper bound on how much unterminated input one connection may accumulate.
+ *
+ * Buffering partial messages until their '\n' arrives (ADR-003) means a client that never sends
+ * one would otherwise grow this buffer without limit, so a single connection could exhaust the
+ * server's memory.
+ *
+ * This is a guard against a stream that never terminates, not a size policy: what a graph may
+ * contain is the engine's decision, and it answers with ERROR_GRAPH_TOO_LARGE. The cap therefore
+ * has to sit above any request the engine would accept, or the framing layer rejects valid work
+ * before the terminator even arrives. At the engine's defaults (EOP_MAX_GRAPH_NODES=100,000 and
+ * EOP_MAX_GRAPH_EDGES=500,000) a request serializes to roughly 25-30 MiB — a 100,000-node
+ * benchmark graph alone is 13 MiB — so the default is 64 MiB, and deployments that raise the
+ * engine's limits can raise this one with EOP_MAX_REQUEST_BYTES.
+ */
+static constexpr size_t DEFAULT_MAX_REQUEST_BYTES = 64UL * 1024UL * 1024UL;
+
+// Cuánto se lee del socket por vuelta del poll(). Era MESSAGE_BUFFER_SIZE (256), que es el largo de
+// una entrada del log de auditoría y no tiene nada que ver con la red: ingerir un ANALYZE_GRAPH de
+// 13 MiB pedía ~54.000 vueltas del bucle de eventos, y el cliente se quedaba esperando a que el
+// server leyera. Con 64 KiB son ~210.
+static constexpr size_t SOCKET_READ_BUFFER_BYTES = 64UL * 1024UL;
+
+static size_t maxRequestBytes()
+{
+    static const size_t configured = []() -> size_t
+    {
+        const char* raw = std::getenv("EOP_MAX_REQUEST_BYTES");
+        if (raw == nullptr)
+        {
+            return DEFAULT_MAX_REQUEST_BYTES;
+        }
+
+        char* end = nullptr;
+        const unsigned long long parsed = std::strtoull(raw, &end, 10);
+        if (end == raw || *end != '\0' || parsed == 0)
+        {
+            return DEFAULT_MAX_REQUEST_BYTES;
+        }
+
+        return static_cast<size_t>(parsed);
+    }();
+
+    return configured;
+}
+
+// Largest HPC Engine response relayed to a client. Centrality for the 100K-node graphs US-202 targets
+// is a few MB; the cap only exists so a malformed, never-terminated stream cannot grow without bound.
+static constexpr size_t MAX_HPC_RESPONSE_BYTES = 64UL * 1024UL * 1024UL;
 
 /**
  * @brief Loads concurrency and liveness-related configuration from environment variables.
@@ -502,6 +555,78 @@ static std::string normalizeAnalyzeGraphRequest(const std::string& request)
     }
 
     return trimmed;
+}
+
+/**
+ * @brief Builds a W3C `traceparent` header value from the currently active span.
+ *
+ * Format is `00-<32 hex trace-id>-<16 hex span-id>-<2 hex flags>`, per the W3C Trace Context
+ * spec that docs/analyze-graph-protocol-v0.2.md adopts for the `traceparent` field.
+ *
+ * @return The header value, or an empty string when no valid span is active (e.g. tracing
+ *         disabled via EOP_TRACING_ENABLED=0), in which case nothing should be injected.
+ */
+static std::string buildTraceparentFromCurrentSpan()
+{
+    auto activeSpan = opentelemetry::trace::Tracer::GetCurrentSpan();
+    if (!activeSpan)
+    {
+        return "";
+    }
+
+    auto ctx = activeSpan->GetContext();
+    if (!ctx.IsValid())
+    {
+        return "";
+    }
+
+    char traceIdHex[33] = {0};
+    ctx.trace_id().ToLowerBase16(opentelemetry::nostd::span<char, 32>(traceIdHex, 32));
+    char spanIdHex[17] = {0};
+    ctx.span_id().ToLowerBase16(opentelemetry::nostd::span<char, 16>(spanIdHex, 16));
+
+    char flagsHex[3] = {0};
+    std::snprintf(flagsHex, sizeof(flagsHex), "%02x", static_cast<unsigned>(ctx.trace_flags().flags()));
+
+    return std::string("00-") + std::string(traceIdHex, 32) + "-" + std::string(spanIdHex, 16) + "-" + flagsHex;
+}
+
+/**
+ * @brief Injects the server's active trace context into an ANALYZE_GRAPH envelope.
+ *
+ * Without this the HPC Engine has no parent to attach its own span to, so engine-side work shows
+ * up as a disconnected trace instead of a child of the request that caused it (US-203 AC5 /
+ * US-206 AC5). A `traceparent` the caller already supplied is left untouched: an upstream client
+ * that started the trace owns the context, and the server is only forwarding it.
+ *
+ * @param jsonRequest ANALYZE_GRAPH envelope to forward, as JSON text.
+ * @return The envelope with `traceparent` set, or unchanged if it is not parseable JSON, already
+ *         carries one, or there is no active span to propagate.
+ */
+static std::string injectTraceparent(const std::string& jsonRequest)
+{
+    const std::string traceparent = buildTraceparentFromCurrentSpan();
+    if (traceparent.empty())
+    {
+        return jsonRequest;
+    }
+
+    // Parsing must not throw across this path: a malformed envelope is the engine's to reject
+    // with a protocol error, not something to crash the dispatch over.
+    nlohmann::json envelope = nlohmann::json::parse(jsonRequest, nullptr, false);
+    if (envelope.is_discarded() || !envelope.is_object())
+    {
+        return jsonRequest;
+    }
+
+    if (envelope.contains("traceparent") && envelope["traceparent"].is_string() &&
+        !envelope["traceparent"].get<std::string>().empty())
+    {
+        return jsonRequest;
+    }
+
+    envelope["traceparent"] = traceparent;
+    return envelope.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
 }
 
 /**
@@ -1332,56 +1457,91 @@ static bool sendAllToSocket(int fd, const std::string& payload)
 }
 
 /**
- * @brief Receives one response from the HPC Engine using a bounded timeout.
+ * @brief Receives one newline-terminated response from the HPC Engine within a deadline.
+ *
+ * The engine answers each request with exactly one JSON line (ADR-003), which for a large graph
+ * is far bigger than a single recv(): centrality for 10K nodes is several hundred KB. Reading one
+ * chunk and treating it as the whole response truncated it at 64 KB and, worse, left the rest in
+ * the socket to be read as the reply to the next request. Bytes are therefore peeked first and
+ * consumed only up to the terminator, so nothing past this response is ever taken from the stream.
  *
  * @param fd Engine socket fd.
- * @param timeoutMs Timeout in milliseconds.
- * @param[out] timedOut True when the timeout expires.
- * @param[out] disconnected True when the engine socket closes or errors.
- * @return Response payload, or empty string on timeout/disconnect/error.
+ * @param timeoutMs Total time allowed for the whole response, not per read.
+ * @param[out] timedOut True when the deadline expires before the terminator arrives.
+ * @param[out] disconnected True when the engine socket closes, errors, or exceeds the size cap.
+ * @return The response including its trailing newline, or empty string on timeout/disconnect.
  */
 static std::string receiveHpcEngineResponse(int fd, int timeoutMs, bool& timedOut, bool& disconnected)
 {
-    constexpr std::size_t kHpcResponseBufferSize = 65536;
+    constexpr std::size_t kHpcResponseChunkSize = 65536;
 
     timedOut = false;
     disconnected = false;
 
-    struct pollfd pfd = {};
-    pfd.fd = fd;
-    pfd.events = POLLIN;
-    pfd.revents = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    std::string response;
+    std::vector<char> chunk(kHpcResponseChunkSize);
 
-    const int pollResult = poll(&pfd, 1, timeoutMs);
-
-    if (pollResult == 0)
+    while (true)
     {
-        timedOut = true;
-        return "";
+        const auto remaining =
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+        if (remaining <= 0)
+        {
+            timedOut = true;
+            return "";
+        }
+
+        struct pollfd pfd = {};
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        const int pollResult = poll(&pfd, 1, static_cast<int>(remaining));
+
+        if (pollResult == 0)
+        {
+            timedOut = true;
+            return "";
+        }
+
+        if (pollResult < 0 || (pfd.revents & POLLIN) == 0)
+        {
+            disconnected = true;
+            return "";
+        }
+
+        const ssize_t peeked = recv(fd, chunk.data(), chunk.size(), MSG_PEEK);
+        if (peeked <= 0)
+        {
+            disconnected = true;
+            return "";
+        }
+
+        const auto* begin = chunk.data();
+        const auto* newline = static_cast<const char*>(std::memchr(begin, '\n', static_cast<std::size_t>(peeked)));
+        const std::size_t toConsume =
+            newline != nullptr ? static_cast<std::size_t>(newline - begin) + 1 : static_cast<std::size_t>(peeked);
+
+        const ssize_t consumed = recv(fd, chunk.data(), toConsume, 0);
+        if (consumed <= 0)
+        {
+            disconnected = true;
+            return "";
+        }
+        response.append(chunk.data(), static_cast<std::size_t>(consumed));
+
+        if (newline != nullptr)
+        {
+            return response;
+        }
+
+        if (response.size() > MAX_HPC_RESPONSE_BYTES)
+        {
+            // Without a terminator in sight the stream cannot be resynchronised; dropping the
+            // engine session is safer than relaying an unbounded, possibly corrupt payload.
+            disconnected = true;
+            return "";
+        }
     }
-
-    if (pollResult < 0)
-    {
-        disconnected = true;
-        return "";
-    }
-
-    if ((pfd.revents & POLLIN) == 0)
-    {
-        disconnected = true;
-        return "";
-    }
-
-    std::vector<char> buffer(kHpcResponseBufferSize, 0);
-    const ssize_t bytesRecv = recv(fd, buffer.data(), buffer.size() - 1, 0);
-
-    if (bytesRecv <= 0)
-    {
-        disconnected = true;
-        return "";
-    }
-
-    return std::string(buffer.data(), static_cast<std::size_t>(bytesRecv));
 }
 
 /**
@@ -1411,7 +1571,7 @@ static void handleAnalyzeGraph(int clientSock, const std::string& line)
         return;
     }
 
-    std::string request = normalizeAnalyzeGraphRequest(line);
+    std::string request = injectTraceparent(normalizeAnalyzeGraphRequest(line));
     if (request.empty() || request.back() != '\n')
     {
         request.push_back('\n');
@@ -1455,7 +1615,14 @@ static void handleAnalyzeGraph(int clientSock, const std::string& line)
         return;
     }
 
-    send(clientSock, engineResponse.c_str(), engineResponse.size(), 0);
+    // A multi-MB response does not fit in one send(); a partial write would reach the client as a
+    // truncated line.
+    if (!sendAllToSocket(clientSock, engineResponse))
+    {
+        auditLogger.writeString("ANALYZE_GRAPH: client disconnected before the response was delivered", WARNING_LOG);
+        g_logContext.result = "ERROR";
+        return;
+    }
 
     auditLogger.writeString("ANALYZE_GRAPH dispatched to HPC engine node_id=" + engineNodeId, INFO_LOG);
     g_logContext.result = "OK";
@@ -1696,11 +1863,36 @@ void startServer(int port, int idleTimeout)
                 if (pollfds[i].revents & (POLLIN | POLLERR | POLLHUP))
                 {
                     int fd = pollfds[i].fd;
-                    char requestBuf[MESSAGE_BUFFER_SIZE] = {0};
-                    ssize_t bytesRecv = recv(fd, requestBuf, sizeof(requestBuf) - 1, MSG_DONTWAIT);
+                    char requestBuf[SOCKET_READ_BUFFER_BYTES];
+                    ssize_t bytesRecv = recv(fd, requestBuf, sizeof(requestBuf), MSG_DONTWAIT);
 
                     if (bytesRecv == 0)
                     {
+                        // El peer cerró: lo que quedó en el buffer ya no puede ser un mensaje a
+                        // medio llegar (no viene nada más), así que acá sí es correcto despacharlo
+                        // aunque le falte el '\n'. Es el único punto donde eso puede afirmarse.
+                        std::string leftover;
+                        std::string clientIp;
+                        {
+                            std::lock_guard<std::mutex> lock(serverContext.sessionsMutex);
+                            auto it = serverContext.activeSessions.find(fd);
+                            if (it != serverContext.activeSessions.end())
+                            {
+                                clientIp = it->second.clientIp;
+                                leftover.swap(it->second.pendingInput);
+                            }
+                        }
+
+                        while (!leftover.empty() && (leftover.back() == '\n' || leftover.back() == '\r'))
+                        {
+                            leftover.pop_back();
+                        }
+
+                        if (!leftover.empty() && leftover != "quit" && leftover != "exit")
+                        {
+                            enqueueMessage(serverContext, fd, clientIp, leftover);
+                        }
+
                         unregisterSession(serverContext, fd, "client closed connection cleanly");
                     }
                     else if (bytesRecv < 0)
@@ -1712,10 +1904,27 @@ void startServer(int port, int idleTimeout)
                     }
                     else
                     {
-                        requestBuf[bytesRecv] = '\0';
-                        std::string request(requestBuf);
+                        // Lo recibido se agrega a lo que haya quedado incompleto de lecturas
+                        // anteriores: un recv() devuelve lo que llegó, no un mensaje entero, así
+                        // que solo se despacha al ver un '\n' real (ADR-003).
+                        std::string clientIp;
+                        std::string request;
+                        {
+                            std::lock_guard<std::mutex> lock(serverContext.sessionsMutex);
+                            auto it = serverContext.activeSessions.find(fd);
+                            if (it != serverContext.activeSessions.end())
+                            {
+                                clientIp = it->second.clientIp;
+                                it->second.pendingInput.append(requestBuf, static_cast<size_t>(bytesRecv));
+                                request.swap(it->second.pendingInput);
+                            }
+                            else
+                            {
+                                request.assign(requestBuf, static_cast<size_t>(bytesRecv));
+                            }
+                        }
 
-                        // Dividir por saltos de línea si se reciben varios comandos pegados
+                        bool sessionClosed = false;
                         size_t pos = 0;
                         while ((pos = request.find('\n')) != std::string::npos)
                         {
@@ -1730,45 +1939,38 @@ void startServer(int port, int idleTimeout)
                             if (line == "quit" || line == "exit")
                             {
                                 unregisterSession(serverContext, fd, "client requested graceful exit");
+                                sessionClosed = true;
                                 break;
                             }
                             else if (!line.empty())
                             {
-                                std::string clientIp;
-                                {
-                                    std::lock_guard<std::mutex> lock(serverContext.sessionsMutex);
-                                    auto it = serverContext.activeSessions.find(fd);
-                                    if (it != serverContext.activeSessions.end())
-                                    {
-                                        clientIp = it->second.clientIp;
-                                    }
-                                }
                                 enqueueMessage(serverContext, fd, clientIp, line);
                             }
                         }
 
-                        // Parte no terminada (o sin salto de línea), la mandamos igual
-                        while (!request.empty() && (request.back() == '\n' || request.back() == '\r'))
+                        // El resto sin '\n' es un mensaje a medio llegar, no un comando: se guarda
+                        // para completarlo con el próximo recv() en vez de despacharlo truncado.
+                        if (!sessionClosed)
                         {
-                            request.pop_back();
-                        }
-
-                        if (request == "quit" || request == "exit")
-                        {
-                            unregisterSession(serverContext, fd, "client requested graceful exit");
-                        }
-                        else if (!request.empty())
-                        {
-                            std::string clientIp;
+                            std::lock_guard<std::mutex> lock(serverContext.sessionsMutex);
+                            auto it = serverContext.activeSessions.find(fd);
+                            if (it != serverContext.activeSessions.end())
                             {
-                                std::lock_guard<std::mutex> lock(serverContext.sessionsMutex);
-                                auto it = serverContext.activeSessions.find(fd);
-                                if (it != serverContext.activeSessions.end())
+                                if (request.size() > maxRequestBytes())
                                 {
-                                    clientIp = it->second.clientIp;
+                                    it->second.pendingInput.clear();
+                                    const std::string err = "ERROR_BAD_REQUEST desc=Message too long\n";
+                                    send(fd, err.c_str(), err.size(), 0);
+                                    audit_log_write_fmt(WARNING_LOG,
+                                                        "Unterminated message over %zu bytes from %s, buffer dropped",
+                                                        maxRequestBytes(),
+                                                        clientIp.c_str());
+                                }
+                                else
+                                {
+                                    it->second.pendingInput.swap(request);
                                 }
                             }
-                            enqueueMessage(serverContext, fd, clientIp, request);
                         }
                     }
                 }
