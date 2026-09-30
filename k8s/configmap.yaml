@@ -17,9 +17,14 @@ data:
   # In-cluster DNS name of the eop-server Service (see service.yaml) — hpc-engine
   # is an outbound-only client and discovers eop-server through this, not a Service of its own.
   EOP_SERVER_HOST: "eop-server"
-  # Must stay <= hpc-engine-deployment.yaml's CPU limit, otherwise OpenMP
-  # defaults to the host's core count and oversubscribes under the cgroup CPU quota.
-  OMP_NUM_THREADS: "1"
+  # US-201 AC3 measures latency at 4 threads specifically; must stay <=
+  # hpc-engine-deployment.yaml's CPU limit, otherwise OpenMP defaults to the
+  # host's core count and oversubscribes under the cgroup CPU quota.
+  OMP_NUM_THREADS: "4"
+  # ADR-019 (option D): exact below this, pivot-sampled above it. 10,000 is US-201 AC3's own
+  # graph size, so the AC is met without approximating anything; sampling only kicks in for
+  # graphs larger than any AC's latency figure names (see hpc-engine/include/hpc/centrality.hpp).
+  EOP_HPC_CENTRALITY_EXACT_MAX_NODES: "10000"
   HPC_NODE_ID: "hpc-engine"
   HPC_BUNKER_NAME: "HPC-K8S"
   HPC_CAPACITY: "1"
@@ -28,15 +33,11 @@ data:
   # Points at the otel-collector Service (otel-collector-deployment.yaml), which forwards to
   # signoz-otel-collector and from there into ClickHouse, same chain as docker-compose.yml.
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318/v1/traces"
-  # US-206 AC1/AC4 (speedup ratio panel + P99-vs-baseline alert): intentionally NOT set here yet.
-  # These three keys need a real single-thread measurement from the OpenMP Benchmark Report
-  # (US-202 AC5, hpc-engine/benchmarks/BENCHMARK_REPORT.md) -- that benchmark hasn't been run on
-  # hardware with enough physical cores to produce a trustworthy number yet (see ADR-018). A
-  # placeholder value here would be exactly the kind of unfounded magic number the SW-Agreement
-  # prohibits; until real data exists, eop_hpc_speedup_ratio and the latency alert correctly
-  # stay unpopulated (see hpc-engine/src/metrics.cpp's ComputeConfiguredSpeedupRatio) rather
-  # than showing a number nobody measured.
-  #
-  # EOP_HPC_BASELINE_P99_MS: "<single-thread P99 latency in ms, from the Benchmark Report>"
-  # EOP_HPC_BASELINE_GRAPH_NODES: "<node count the baseline above was measured at>"
-  # EOP_HPC_BASELINE_BAND_PERCENT: "20"
+  # US-206 AC1/AC4 (speedup ratio panel + P99-vs-baseline alert). Taken directly from the OpenMP
+  # Benchmark Report (US-202 AC5, hpc-engine/benchmarks/BENCHMARK_REPORT.md), 10,000-node graph,
+  # single thread, worst of 3 measured runs as a conservative P99 substitute (6.744 s) -- see
+  # ADR-018 for why this must be a real measurement rather than an estimate, and why it is only
+  # published for requests whose graph size falls within the tolerance band below.
+  EOP_HPC_BASELINE_P99_MS: "6744"
+  EOP_HPC_BASELINE_GRAPH_NODES: "10000"
+  EOP_HPC_BASELINE_BAND_PERCENT: "20"

@@ -78,9 +78,9 @@ namespace hpc
          * @brief Chooses which source nodes to traverse.
          *
          * @details Below the exact threshold every node is a source, giving exact betweenness. Above
-         * it, sources are picked on an evenly spaced stride across the node range: deterministic, so
-         * the same graph always yields the same scores, and spread across the whole graph rather
-         * than clustered in one region the way a contiguous prefix would be (ADR-019).
+         * it, sources are a partial Fisher-Yates sample driven by a fixed seed: uniform over the
+         * graph, yet identical on every run, so the same request always returns the same scores
+         * (ADR-019).
          *
          * @param n Node count of the graph.
          * @param[out] approximate Set to true when the returned set is a sample rather than all nodes.

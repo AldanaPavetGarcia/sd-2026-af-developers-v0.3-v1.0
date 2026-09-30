@@ -70,19 +70,40 @@ echo "=========================================================="
 if [ -n "${HPC_ENGINE_BIN:-}" ]; then
     ENGINE="$(realpath "$HPC_ENGINE_BIN")"
     BUILD_LABEL="binario externo (HPC_ENGINE_BIN) — verificar que esté optimizado"
+    # No CMakeCache.txt exists for an externally supplied binary, so this cannot be recovered
+    # here; the label above already flags the binary as unverified.
+    COMPILER_VERSION="desconocido (binario externo)"
 else
+    # No -DCMAKE_C_COMPILER/-DCMAKE_CXX_COMPILER override here on purpose: vcpkg builds its own
+    # ports (civetweb, prometheus-cpp, ...) with the ambient default compiler for the triplet,
+    # not whatever this project's own CMake invocation asks for -- so forcing clang here while
+    # vcpkg's port build used the system default previously produced a link failure. On this
+    # triplet civetweb's Release variant is compiled with -flto using the system c++ (GCC on a
+    # typical glibc host, matching hpc-engine/Dockerfile's own Alpine/GCC build that CI already
+    # validates), and GCC's LTO bitcode is only readable by GCC's own linker plugin at link time
+    # -- neither GNU ld without that plugin nor clang/lld (LLVM-bitcode-only) can read it, so
+    # asking for clang here breaks the *link*, not the compile: dozens of
+    # "undefined reference to CivetHandler::..." errors out of prometheus-cpp-pull, which
+    # statically links civetweb. Letting CMake pick the ambient compiler keeps this project's
+    # own code and every dependency on the same toolchain, same as the Dockerfile.
     cmake -S . -B "$BUILD_DIR" \
         -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DEXODUS_BUILD_TESTS=OFF \
         -DHPC_BUILD_TESTS=OFF \
-        -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" \
-        -DCMAKE_C_COMPILER=clang \
-        -DCMAKE_CXX_COMPILER=clang++
+        -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
 
     cmake --build "$BUILD_DIR" --target hpc_engine -j "$(nproc)"
     ENGINE="$PROJECT_ROOT/$BUILD_DIR/hpc-engine/hpc_engine"
     BUILD_LABEL="Release"
+    # The compiler that actually produced $ENGINE, not a hardcoded guess: since the configure
+    # step above deliberately does not force a compiler (see the comment there), asking a fixed
+    # binary like "clang++" for its version would report a compiler that may not be the one that
+    # built this engine at all -- exactly the kind of wrong-but-plausible-looking number this
+    # project's other fixes have been about removing. CMAKE_CXX_COMPILER in the cache is what
+    # cmake itself resolved the ambient default to.
+    COMPILER_BIN="$(grep '^CMAKE_CXX_COMPILER:' "$BUILD_DIR/CMakeCache.txt" | cut -d= -f2)"
+    COMPILER_VERSION="$("$COMPILER_BIN" --version 2>/dev/null | head -1)"
 fi
 
 if [ ! -x "$ENGINE" ]; then
@@ -103,7 +124,7 @@ PYTHON="${PYTHON:-python3}"
 # usuario haya cambiado, para no tener dos listas que se desincronicen.
 ARGS=(--engine "$ENGINE"
       --output "${BENCH_REPORT:-$SCRIPT_DIR/BENCHMARK_REPORT.md}"
-      --compiler "$(clang++ --version 2>/dev/null | head -1)"
+      --compiler "$COMPILER_VERSION"
       --build "$BUILD_LABEL")
 # shellcheck disable=SC2206  # las listas se separan en varios argumentos a propósito
 [ -n "${BENCH_SIZES:-}" ]   && ARGS+=(--sizes $BENCH_SIZES)

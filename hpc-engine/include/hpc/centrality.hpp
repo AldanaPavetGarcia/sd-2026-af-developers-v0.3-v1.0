@@ -13,8 +13,10 @@
 namespace hpc
 {
 
-    /// Default node count above which centrality switches to pivot sampling (see ADR-019).
-    constexpr int kDefaultCentralityExactMaxNodes = 2000;
+    /// Default node count above which centrality switches to pivot sampling (see ADR-019, option
+    /// D): US-201 AC3 names 10,000 nodes and is met exactly at that size, so the threshold sits
+    /// there rather than below it -- sampling is for graphs larger than any AC's latency figure.
+    constexpr int kDefaultCentralityExactMaxNodes = 10000;
 
     /// Default number of sampled source nodes used once the exact threshold is exceeded.
     constexpr int kDefaultCentralitySampleCount = 1024;
@@ -43,11 +45,12 @@ namespace hpc
      * Scores are normalized by (V-1)(V-2) for directed graphs.
      *
      * @details Exact for graphs up to `EOP_HPC_CENTRALITY_EXACT_MAX_NODES` nodes (default
-     * kDefaultCentralityExactMaxNodes). Above that, betweenness is estimated from
-     * `EOP_HPC_CENTRALITY_SAMPLES` sampled source nodes and rescaled, because exact Brandes is
-     * O(V*E) and cannot meet US-201 AC3's latency budget at that size. Pivots are chosen by a
-     * deterministic, evenly-spaced stride, so repeated runs on the same graph return identical
-     * scores. See ADR-019 for the trade-off and the accuracy this implies.
+     * kDefaultCentralityExactMaxNodes, which covers US-201 AC3's 10,000-node case exactly).
+     * Above that, betweenness is estimated from `EOP_HPC_CENTRALITY_SAMPLES` sampled source nodes
+     * and rescaled, because exact Brandes is O(V*E) and grows to tens of minutes per request at
+     * the 100K-node graphs US-202 benchmarks. Pivots are chosen by a partial Fisher-Yates shuffle
+     * driven by a fixed seed, so repeated runs on the same graph return identical scores. See
+     * ADR-019 for the trade-off and the accuracy this implies.
      *
      * @param graph The validated graph.
      * @return JSON object with centrality scores: { "node_name": score, ... }

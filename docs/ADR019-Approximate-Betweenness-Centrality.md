@@ -1,7 +1,9 @@
 # ADR-019: Approximate Betweenness Centrality for Large Graphs
 
-**Status:** Proposed. This changes *what is computed* in order to meet a latency criterion, so it
-is pending agreement from the course staff — see [Open Decision](#open-decision).
+**Status:** Accepted for graphs up to 10,000 nodes (option D below): US-201 AC3 is met with an
+**exact** computation at the size it names, so nothing is approximated there. Above 10,000 nodes,
+pivot sampling changes *what is computed* to keep large-graph requests interactive, which the
+course staff has not yet reviewed — see [Open Decision](#open-decision).
 
 > **Corrections.** Two measurement errors are corrected in this version; every figure below was
 > re-measured on 2026-09-19 with the method under
@@ -93,8 +95,8 @@ that is what sampling is for.
 Above a configured node count, betweenness is therefore **estimated** from a sample of source nodes
 and rescaled by V/k (Brandes & Pich), which bounds the cost to O(k·E):
 
-- `EOP_HPC_CENTRALITY_EXACT_MAX_NODES` (default 2000) — at or below this, every node is a source
-  and the result is exact.
+- `EOP_HPC_CENTRALITY_EXACT_MAX_NODES` (default 10000, option D) — at or below this, every node
+  is a source and the result is exact. Set to cover US-201 AC3's own graph size.
 - `EOP_HPC_CENTRALITY_SAMPLES` (default 1024) — sources sampled above that threshold.
 
 With 4 threads and the default 1024 samples, centrality takes **0.20 s** at 10K nodes (1.90 s end
@@ -152,22 +154,32 @@ of transfer: 1.90 s sampled and 3.42 s exact.
 10K-node graph gave top-10 = 100% at 2048 samples and top-100 = 82% at 1024. Treat the table as
 indicative to within about ten points, not as a guarantee for any particular topology.
 
-## Open Decision
+## Decision Made, and What Is Still Open
 
-The implemented default samples above 2,000 nodes. With the corrected measurements the options are:
+**Option D is implemented and is the default** (`EOP_HPC_CENTRALITY_EXACT_MAX_NODES=10000`,
+`hpc-engine/include/hpc/centrality.hpp`). With the corrected measurements the options were:
 
 | Option | US-201 AC3 (10K, end to end) | 100K nodes | What changes |
 |---|---:|---:|---|
-| **A — sample above 2,000, 1024 samples** (implemented) | 1.90 s, approximate | 4.9 s | ~2.6x margin; 31% mean error already at 10K. |
-| **B — as A, 2048 samples** | ~2.1 s (est.), approximate | ~10 s (est.) | Error drops to 22%; top-50/top-100 improve. Configuration only. Both times estimated from A by the sample count, not measured. |
-| **C — exact only** | 3.42 s, exact | ~18.5 min (original impl.; est. ~13 min optimized) | Meets AC3; unusable at the sizes US-202 benchmarks. |
-| **D — exact up to 10,000, sample above** (recommended) | 3.42 s, **exact** | 4.9 s | `EOP_HPC_CENTRALITY_EXACT_MAX_NODES=10000`. Configuration only. |
+| A — sample above 2,000, 1024 samples | 1.90 s, approximate | 4.9 s | ~2.6x margin; 31% mean error already at 10K. |
+| B — as A, 2048 samples | ~2.1 s (est.), approximate | ~10 s (est.) | Error drops to 22%; top-50/top-100 improve. Both times estimated from A by the sample count, not measured. |
+| C — exact only | 3.42 s, exact | ~18.5 min (original impl.; est. ~13 min optimized) | Meets AC3; unusable at the sizes US-202 benchmarks. |
+| **D — exact up to 10,000, sample above** (**implemented**) | 3.42 s, **exact** | 4.9 s | `EOP_HPC_CENTRALITY_EXACT_MAX_NODES=10000`. |
 
-**D is recommended.** It meets US-201 AC3 without approximating anything at the size the AC names,
-so the question for the course staff narrows to graphs larger than any AC's latency figure, where
-the choice is between an estimate in seconds and an exact answer in tens of minutes. Its cost is a
-smaller margin at 10K (about 30% instead of 2.6x), which shrinks on slower hardware: on battery
-the same exact request took about 3x longer. A, B and D differ only in configuration.
+**D was chosen** because it meets US-201 AC3 without approximating anything at the size the AC
+names — the AC talks about 10,000 nodes, not 100,000, and at 10,000 nodes exact computation
+already fits the 5 s budget. That narrows what is actually left open for the course staff: only
+graphs larger than any AC's latency figure names, where the choice is between an estimate in
+seconds and an exact answer in tens of minutes. D's cost is a smaller margin at 10K (about 30%
+instead of 2.6x), which shrinks on slower hardware: on battery the same exact request took about
+3x longer. A, B and D differ only in the value of `EOP_HPC_CENTRALITY_EXACT_MAX_NODES` /
+`EOP_HPC_CENTRALITY_SAMPLES`, so switching between them needs no code change if the course staff's
+answer calls for it.
+
+**Still open:** whether pivot-sampled (approximate) centrality is acceptable at all for graphs
+above 10,000 nodes. US-202 exercises 50,000 and 100,000-node graphs, where exact computation costs
+minutes per request (see the Alternatives table below) — that is what the sampling above the
+threshold is for, and it is what remains unreviewed.
 
 ## Alternatives Considered
 
@@ -185,8 +197,8 @@ the same exact request took about 3x longer. A, B and D differ only in configura
   minutes, which is the case exact cannot serve.
 * **Margin that does not hinge on the machine**: at 10K nodes sampling answers in 1.90 s end to
   end, where exact takes 3.42 s plugged in and about three times that on battery.
-* **Small graphs are unaffected**: at or below 2000 nodes nothing changes — same algorithm, exact
-  results, and every existing test continues to assert exact values.
+* **US-201 AC3's own size is unaffected**: at or below 10,000 nodes nothing is approximated —
+  same algorithm, exact results, and every existing test continues to assert exact values.
 * **The trade is visible**: the response says when a number is an estimate and how it was
   produced, so the accuracy limits documented above travel with the data.
 * **Reproducible**: a fixed seed means identical scores for identical input, which keeps the
@@ -197,14 +209,15 @@ the same exact request took about 3x longer. A, B and D differ only in configura
 
 ## Consequences
 
-* **Positive**: US-201 AC3 is met at 10K nodes — exactly under option D, approximately under A;
-  the exact-path optimizations make exact centrality about 1.4x faster at 10K nodes, which benefits
-  every graph still computed exactly.
+* **Positive**: US-201 AC3 is met at 10K nodes **exactly**, approximating nothing; the
+  exact-path optimizations also make exact centrality about 1.4x faster at 10K nodes, which
+  benefits every graph still computed exactly (up to the 10,000-node threshold).
 
-* **Drawbacks**: above 2000 nodes, centrality scores carry meaningful error — around 31% mean
+* **Drawbacks**: above 10,000 nodes, centrality scores carry meaningful error — around 31% mean
   relative error at the default sample count, and roughly one in ten of the top-10 most central
   nodes may be misidentified. Absolute score values should not be compared across runs with
-  different sample counts, and should not be presented as exact measurements.
+  different sample counts, and should not be presented as exact measurements. This is the part of
+  the decision still pending course-staff review (see Open Decision).
 
 * **Restrictions Introduced**:
   * Any consumer that treats `centrality` values as exact must check
