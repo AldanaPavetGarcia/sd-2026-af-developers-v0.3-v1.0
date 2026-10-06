@@ -204,6 +204,29 @@ services:
       retries: 12
       start_period: 5s
 
+  # US-301 (#51): public REST API in front of eop-server (ADR-010). Metrics go to host port
+  # 9101 because eop-server already publishes 9100.
+  api-gateway:
+    <<: *common
+    build:
+      context: services/go
+      dockerfile: Dockerfile
+    image: api-gateway:local
+    container_name: eop-api-gateway
+    environment:
+      EOP_SERVER_ADDR: "eop-server:9026"
+      EOP_SERVER_POOL_IDLE_TIMEOUT: "20s"
+      EOP_GATEWAY_VERSION: "0.3.0"
+      EOP_GATEWAY_TRACK: "stable"
+      OTEL_SERVICE_NAME: "api-gateway"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://otel-collector:4318/v1/traces"
+    ports:
+      - "8080:8080"
+      - "9101:9100"
+    depends_on:
+      eop-server:
+        condition: service_healthy
+
   # US-205 (#43): Prometheus + Grafana, scraping eop-server's /metrics (#42) and provisioning
   # the dashboards already versioned under monitoring/grafana/ (#38, #39). Not chained to
   # eop-server via depends_on — Prometheus tolerates a target being down at scrape time, no
