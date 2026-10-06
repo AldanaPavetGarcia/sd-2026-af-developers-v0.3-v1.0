@@ -1,0 +1,222 @@
+openapi: 3.0.3
+info:
+  title: EOP API Gateway
+  version: 1.0.0
+  description: |
+    Public REST API of the Exodus Ops Platform (ADR-010). It exposes the state of the node
+    registry kept by eop-server without requiring clients to speak the internal socket protocol.
+
+    Versioning: every route lives under `/v1/`. Removing or renaming a field, changing a type or
+    changing a status code is a breaking change and requires `/v2/`, served alongside `/v1/`
+    until consumers migrate. Adding optional fields or new routes is not breaking.
+servers:
+  - url: /
+tags:
+  - name: nodes
+    description: Node registry.
+  - name: operations
+    description: Health and API description.
+paths:
+  /v1/nodes:
+    get:
+      tags: [nodes]
+      operationId: listNodes
+      summary: List every registered node.
+      responses:
+        "200":
+          description: All nodes, possibly an empty list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Node"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/nodes/{node_id}:
+    get:
+      tags: [nodes]
+      operationId: getNode
+      summary: Get one node.
+      parameters:
+        - name: node_id
+          in: path
+          required: true
+          description: 1 to 63 characters from A-Z, a-z, 0-9, dot, underscore and hyphen.
+          schema:
+            type: string
+            pattern: "^[A-Za-z0-9._-]{1,63}$"
+      responses:
+        "200":
+          description: The node.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Node"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/health:
+    get:
+      tags: [operations]
+      operationId: getHealth
+      summary: Readiness of the gateway.
+      description: |
+        200 when the gateway can reach eop-server. Used as the Kubernetes readiness probe; a
+        503 takes the pod out of the Service without restarting it.
+      responses:
+        "200":
+          description: Ready.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Health"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/openapi.json:
+    get:
+      tags: [operations]
+      operationId: getOpenAPI
+      summary: This document, as JSON.
+      responses:
+        "200":
+          description: OpenAPI 3.0 document.
+          content:
+            application/json:
+              schema:
+                type: object
+components:
+  schemas:
+    Node:
+      type: object
+      required: [node_id, bunker_name, status, ip_address, capacity, last_seen_at]
+      additionalProperties: false
+      properties:
+        node_id:
+          type: string
+          example: alpha-01
+        bunker_name:
+          type: string
+          example: Zone-B
+        status:
+          type: string
+          enum: [ONLINE, OFFLINE]
+        ip_address:
+          type: string
+          example: 10.0.0.6
+        capacity:
+          type: integer
+          example: 10
+        last_seen_at:
+          type: string
+          format: date-time
+    Health:
+      type: object
+      required: [status, checks]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ok]
+    Meta:
+      type: object
+      required: [timestamp]
+      additionalProperties: false
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        trace_id:
+          type: string
+          description: OpenTelemetry trace id of the request, for log and trace lookup.
+          pattern: "^[0-9a-f]{32}$"
+    Error:
+      type: object
+      required: [error, meta]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              description: Stable, machine-readable error code.
+            message:
+              type: string
+            field:
+              type: string
+              description: Name of the offending input, on validation errors.
+        meta:
+          $ref: "#/components/schemas/Meta"
+  responses:
+    BadRequest:
+      description: Invalid input. `error.field` names the offending input.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: The resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UpstreamError:
+      description: eop-server answered something the gateway could not use.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: Unexpected failure inside the gateway. The body never carries internal details.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unavailable:
+      description: eop-server could not be reached or did not answer in time.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
