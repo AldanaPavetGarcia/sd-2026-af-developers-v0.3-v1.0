@@ -110,6 +110,31 @@ limit and the `volatile-ttl` eviction policy, so finished jobs are the first to 
 The gateway caps request bodies (configurable, default 32 MiB, below the server's 64 MiB framing
 cap).
 
+### 6. Service level objectives of the gateway
+
+v0.3 adds an NFR of its own — REST API P99 latency < 300 ms — and US-304 AC4 rolls the canary back
+on an error rate threshold, so both indicators have to be defined before they are measured.
+
+| SLI | Definition | Objective |
+|---|---|---|
+| Latency | P99 of request duration measured in the gateway, for every route except `POST /v1/graph/analyze` | < 300 ms over 5 min |
+| Error rate | `5xx` responses / all responses, per `version` and `track` | < 1 % over 5 min (canary rollback trigger) |
+| Availability | non-`5xx` responses / all responses | ≥ 99.9 % over 30 days |
+
+* **Measured in the gateway**, with an HTTP duration histogram and a response counter labeled by
+  route, status class, `version` and `track`/`slot`. That is the only place where every request is
+  attributed to the version that served it, which US-304 AC3 needs; ingress-nginx metrics are not
+  enabled on minikube by default and would add a scrape target for the same data.
+* **`POST /v1/graph/analyze` is outside the latency SLI.** Its synchronous path is allowed up to
+  5 s by US-302 AC1 and its asynchronous path answers `202` immediately; it is tracked against the
+  5 s bound instead, so a slow analysis cannot hide a regression in the node endpoints.
+* **What counts as an error:** every `5xx`, including the `503` returned when a circuit is open
+  and there is no cached value (ADR-012) — from the client's side the request failed. `4xx` are
+  caller errors and do not count; a stale `200` served from the circuit breaker cache does not
+  count either.
+* **Error budget:** the availability objective uses the same 30-day window and the same budget
+  thresholds as the server SLO (ADR-009), on its own panel of the SLO dashboard.
+
 ## Alternatives Considered
 
 | Alternative | Reason rejected |
