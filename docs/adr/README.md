@@ -16,9 +16,9 @@ added beyond that index are numbered from ADR-015 onwards, in the order they wer
 | [ADR-007](ADR-007-parallelization-strategy-openmp.md) | Parallelization Strategy — OpenMP | v0.2 | Accepted |
 | [ADR-008](ADR-008-hpc-engine-integration-pattern.md) | HPC Engine Integration Pattern | v0.2 | Accepted |
 | [ADR-009](ADR-009-slo-definition-and-enforcement.md) | SLO Definition and Enforcement | v0.2 | Accepted |
-| ADR-010 | API Gateway Language — Go | v0.3 | Pending (#50) |
-| ADR-011 | Deployment Strategy — Canary and Blue-Green | v0.3 | Pending (#50) |
-| ADR-012 | Circuit Breaker Configuration | v0.3 | Pending (#50) |
+| [ADR-010](ADR-010-api-gateway-go.md) | API Gateway — Go, REST Contract and Async Job Store | v0.3 | Accepted |
+| [ADR-011](ADR-011-deployment-strategy-canary-blue-green.md) | Deployment Strategy — Canary and Blue-Green | v0.3 | Accepted |
+| [ADR-012](ADR-012-circuit-breaker-configuration.md) | Circuit Breaker Configuration | v0.3 | Accepted |
 | ADR-013 | Edge Protocol Selection — MQTT over gRPC | v1.0 | Reserved |
 | ADR-014 | ZephyrOS Thread Architecture | v1.0 | Reserved |
 
@@ -37,10 +37,10 @@ added beyond that index are numbered from ADR-015 onwards, in the order they wer
 | [ADR-023](ADR-023-hpc-speedup-baseline.md) | HPC Speedup Baseline Strategy | v0.2 |
 | [ADR-024](ADR-024-approximate-betweenness-centrality.md) | Approximate Betweenness Centrality for Large Graphs | v0.2 |
 | ADR-025 | Pod-Crash MTTR | v0.2 |
-| ADR-026 | Centralized Logging — Loki | v0.3 |
+| [ADR-026](ADR-026-centralized-logging-loki.md) | Centralized Logging — Loki, OTel Collector Agent and Trace Correlation | v0.3 |
 
 ADR-025 is open in the course repository as `ADR020-Pod-Crash-MTTR.md` (PR #68) and is renumbered
-here when it is synced. ADR-026 is written in #50.
+here when it is synced.
 
 ## Previous numbering
 
