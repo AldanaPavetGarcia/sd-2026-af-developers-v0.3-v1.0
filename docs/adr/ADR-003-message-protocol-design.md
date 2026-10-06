@@ -65,3 +65,12 @@ The detailed request schema, response schema, validation rules, error codes, and
 
 `docs/analyze-graph-protocol-v0.2.md`
 --
+## v0.3 Addendum: Optional Trace Context on Text Commands
+
+For Milestone 3, text commands (`REGISTER`, `QUERY_NODE`, `LIST_NODES`, `HEARTBEAT`) may carry an
+optional `traceparent=<W3C traceparent>` key as the last key of the line, so that a request coming
+through the API gateway is one trace across the gateway and the server. The change is additive and
+non-breaking: servers that do not know the key ignore it, and clients that do not send it are
+unaffected. The decision and its compatibility analysis are documented in:
+
+`docs/adr/ADR-026-centralized-logging-loki.md`
