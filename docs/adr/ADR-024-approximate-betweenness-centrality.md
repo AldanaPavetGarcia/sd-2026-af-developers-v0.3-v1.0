@@ -1,4 +1,4 @@
-# ADR-019: Approximate Betweenness Centrality for Large Graphs
+# ADR-024: Approximate Betweenness Centrality for Large Graphs
 
 **Status:** Accepted for graphs up to 10,000 nodes (option D below): US-201 AC3 is met with an
 **exact** computation at the size it names, so nothing is approximated there. Above 10,000 nodes,
@@ -125,7 +125,7 @@ field:
 ```
 
 The field is omitted entirely when there is nothing to declare, so responses that were exact keep
-exactly the shape they had before. This follows the additive extension approach ADR-008 already
+exactly the shape they had before. This follows the additive extension approach ADR-015 already
 established for this protocol.
 
 ## Measured Accuracy and Latency
@@ -263,4 +263,4 @@ density 0.5, as the US-202 benchmark script does for those sizes.
 * `hpc-engine/src/centrality.cpp` — `selectSources`, `CsrAdjacency`, `PredecessorList`.
 * `hpc-engine/include/hpc/centrality.hpp` — `CentralityStats`, default threshold and sample count.
 * `docs/analyze-graph-protocol-v0.2.md` — the `algorithm_metadata` response field.
-* `ADR-008-Message-protocol-extension.md` — the additive extension approach this field follows.
+* `ADR-015-protocol-extension-and-trace-propagation.md` — the additive extension approach this field follows.

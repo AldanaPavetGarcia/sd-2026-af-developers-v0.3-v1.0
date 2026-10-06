@@ -6,7 +6,7 @@ metadata:
     app: eop-server
 data:
   EOP_PORT: "9026"
-  # Prometheus /metrics HTTP exposer (US-205 / ADR-012) — read directly from the environment in
+  # Prometheus /metrics HTTP exposer (US-205 / ADR-009) — read directly from the environment in
   # InitMetrics(), no config.env fallback (see include/eopServer.hpp / src/app/eopServer.cpp).
   EOP_METRICS_PORT: "9100"
   # Prometheus /metrics HTTP exposer for hpc-engine.
@@ -21,7 +21,7 @@ data:
   # hpc-engine-deployment.yaml's CPU limit, otherwise OpenMP defaults to the
   # host's core count and oversubscribes under the cgroup CPU quota.
   OMP_NUM_THREADS: "4"
-  # ADR-019 (option D): exact below this, pivot-sampled above it. 10,000 is US-201 AC3's own
+  # ADR-024 (option D): exact below this, pivot-sampled above it. 10,000 is US-201 AC3's own
   # graph size, so the AC is met without approximating anything; sampling only kicks in for
   # graphs larger than any AC's latency figure names (see hpc-engine/include/hpc/centrality.hpp).
   EOP_HPC_CENTRALITY_EXACT_MAX_NODES: "10000"
@@ -36,7 +36,7 @@ data:
   # US-206 AC1/AC4 (speedup ratio panel + P99-vs-baseline alert). Taken directly from the OpenMP
   # Benchmark Report (US-202 AC5, hpc-engine/benchmarks/BENCHMARK_REPORT.md), 10,000-node graph,
   # single thread, worst of 3 measured runs as a conservative P99 substitute (6.744 s) -- see
-  # ADR-018 for why this must be a real measurement rather than an estimate, and why it is only
+  # ADR-023 for why this must be a real measurement rather than an estimate, and why it is only
   # published for requests whose graph size falls within the tolerance band below.
   EOP_HPC_BASELINE_P99_MS: "6744"
   EOP_HPC_BASELINE_GRAPH_NODES: "10000"

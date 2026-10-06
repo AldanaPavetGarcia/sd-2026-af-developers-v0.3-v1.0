@@ -79,7 +79,7 @@ TEST(CentralityTest, SingleNode)
 }
 
 // ---------------------------------------------------------------------------
-// Pivot sampling for large graphs (ADR-019 / US-201 AC3)
+// Pivot sampling for large graphs (ADR-024 / US-201 AC3)
 // ---------------------------------------------------------------------------
 
 namespace

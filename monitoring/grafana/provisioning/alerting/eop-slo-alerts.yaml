@@ -7,7 +7,7 @@ apiVersion: 1
 # every alert state transition (pending/firing/resolved) to its own log on stdout, which
 # satisfies the "visible ... in the server logs" half of the AC without extra wiring.
 #
-# Thresholds match the error budget policy already defined in ADR-012: >50% normal, 10-50%
+# Thresholds match the error budget policy already defined in ADR-009: >50% normal, 10-50%
 # caution, <10% freeze. This rule fires on the boundary the AC calls out (50%).
 groups:
   - orgId: 1
@@ -52,8 +52,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "EOP error budget has dropped below 50% (ADR-012 caution threshold)."
+          summary: "EOP error budget has dropped below 50% (ADR-009 caution threshold)."
           description: >-
             Sustained error rate is eating into the monthly 99.9% availability budget. Per
-            ADR-012's error budget policy, deployments now require additional review; below
+            ADR-009's error budget policy, deployments now require additional review; below
             10% remaining, new feature deployments must freeze.

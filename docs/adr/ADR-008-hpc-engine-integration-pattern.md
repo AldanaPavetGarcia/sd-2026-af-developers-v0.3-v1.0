@@ -1,4 +1,4 @@
-# ADR-007: HPC Engine Service Boundary & Integration Pattern
+# ADR-008: HPC Engine Service Boundary & Integration Pattern
 
 ## Context and Problem
 

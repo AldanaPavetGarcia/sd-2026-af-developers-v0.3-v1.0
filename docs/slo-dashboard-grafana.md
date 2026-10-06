@@ -102,7 +102,7 @@ The test checks that:
 
 ## Notes
 
-This dashboard provides the general EOP health view required by ADR-012 / US-205.
+This dashboard provides the general EOP health view required by ADR-009 / US-205.
 
 It does not implement HPC-specific panels such as per-algorithm execution time, graph size, thread count, or OpenMP speedup. Those belong to the separate HPC Performance Grafana Panel.
 

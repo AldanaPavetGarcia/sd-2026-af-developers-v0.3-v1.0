@@ -8,7 +8,7 @@ que lo despacha a un hpc_engine real en modo socket, y se cronometra desde que s
 del pedido hasta que llega la última línea de la respuesta. El engine usa OMP_NUM_THREADS=4.
 
 El grafo sale del generador del benchmark con semilla fija, así que es el mismo grafo que usan
-el ADR-019 y el Benchmark Report. Las variables EOP_HPC_CENTRALITY_* del entorno se pasan al
+el ADR-024 y el Benchmark Report. Las variables EOP_HPC_CENTRALITY_* del entorno se pasan al
 engine, para medir la centralidad exacta o la muestreada.
 
 Uso: us201_ac3_e2e.py <eop_server> <hpc_engine> [--nodes 10000] [--repeats 3]

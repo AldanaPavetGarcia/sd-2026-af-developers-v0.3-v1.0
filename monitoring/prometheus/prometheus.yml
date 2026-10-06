@@ -1,5 +1,5 @@
 global:
-  # ADR012 evaluates the C++ core server SLO (P99 < 200ms) over a 5-minute rolling window;
+  # ADR-009 evaluates the C++ core server SLO (P99 < 200ms) over a 5-minute rolling window;
   # 15s keeps enough resolution for that window without over-scraping a low-traffic target.
   scrape_interval: 15s
   evaluation_interval: 15s

@@ -44,7 +44,7 @@ namespace hpc
         constexpr int NO_PREDECESSOR = -1;
 
         /// Fixed seed for pivot selection: sampling must be reproducible run to run, so that the
-        /// same graph always yields the same scores (ADR-019).
+        /// same graph always yields the same scores (ADR-024).
         constexpr unsigned int kCentralitySamplingSeed = 20260909U;
 
         /**
@@ -80,7 +80,7 @@ namespace hpc
          * @details Below the exact threshold every node is a source, giving exact betweenness. Above
          * it, sources are a partial Fisher-Yates sample driven by a fixed seed: uniform over the
          * graph, yet identical on every run, so the same request always returns the same scores
-         * (ADR-019).
+         * (ADR-024).
          *
          * @param n Node count of the graph.
          * @param[out] approximate Set to true when the returned set is a sample rather than all nodes.

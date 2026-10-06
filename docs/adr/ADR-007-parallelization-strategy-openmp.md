@@ -1,4 +1,4 @@
-# ADR-010: Parallelization Strategy — OpenMP for Graph Algorithms
+# ADR-007: Parallelization Strategy — OpenMP for Graph Algorithms
 
 ## Context and Problem
 

@@ -1,4 +1,4 @@
-# ADR-012: Observability, SLO Definition, and Dashboard Enforcement
+# ADR-009: Observability, SLO Definition, and Dashboard Enforcement
 
 ## Context and Problem
 

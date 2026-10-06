@@ -13,7 +13,7 @@
 namespace hpc
 {
 
-    /// Default node count above which centrality switches to pivot sampling (see ADR-019, option
+    /// Default node count above which centrality switches to pivot sampling (see ADR-024, option
     /// D): US-201 AC3 names 10,000 nodes and is met exactly at that size, so the threshold sits
     /// there rather than below it -- sampling is for graphs larger than any AC's latency figure.
     constexpr int kDefaultCentralityExactMaxNodes = 10000;
@@ -26,7 +26,7 @@ namespace hpc
      *
      * @details Callers need this to avoid presenting an estimate as an exact figure: above a
      * configured graph size the scores come from a sampled subset of source nodes, not from all of
-     * them (ADR-019).
+     * them (ADR-024).
      */
     struct CentralityStats
     {
@@ -50,7 +50,7 @@ namespace hpc
      * and rescaled, because exact Brandes is O(V*E) and grows to tens of minutes per request at
      * the 100K-node graphs US-202 benchmarks. Pivots are chosen by a partial Fisher-Yates shuffle
      * driven by a fixed seed, so repeated runs on the same graph return identical scores. See
-     * ADR-019 for the trade-off and the accuracy this implies.
+     * ADR-024 for the trade-off and the accuracy this implies.
      *
      * @param graph The validated graph.
      * @return JSON object with centrality scores: { "node_name": score, ... }

@@ -1,4 +1,4 @@
-# ADR-014: Persistence of Logs in Structured Format (JSON)
+# ADR-019: Persistence of Logs in Structured Format (JSON)
 
 ## Context and Problem
 
@@ -22,7 +22,7 @@ It has been decided to implement the **Structured JSON Stream to Standard Output
 
 ## Justification (Trade-off Analysis)
 
-* **Standardization and Automatic Parsing:** JSON is the native format of modern observability. By outputting logs directly to `stdout`, the need to manage physical files on disk within the container is eliminated, delegating persistence and rotation to the Kubernetes infrastructure (in accordance with **ADR 006**).
+* **Standardization and Automatic Parsing:** JSON is the native format of modern observability. By outputting logs directly to `stdout`, the need to manage physical files on disk within the container is eliminated, delegating persistence and rotation to the Kubernetes infrastructure (in accordance with **ADR-006**).
 
 * **Traceability and Cross-Correlation:** Enables the exact injection of the technical fields `trace_id` and `span_id` required by **US-110 AC4**, allowing SigNoz to deterministically link a log line with its corresponding trace.
 

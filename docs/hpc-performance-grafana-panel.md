@@ -140,7 +140,7 @@ The link is not only documentary: the single-thread baseline that the speedup pa
 `eop-hpc-p99-above-2x-baseline` alert are computed from **is** a number measured by that
 report, injected as `EOP_HPC_BASELINE_P99_MS` in `k8s/configmap.yaml`. The rationale for
 publishing the ratio only inside a documented graph-size band is in
-[`ADR018-HPC-Speedup-Baseline-Strategy.md`](ADR018-HPC-Speedup-Baseline-Strategy.md).
+[`adr/ADR-023-hpc-speedup-baseline.md`](adr/ADR-023-hpc-speedup-baseline.md).
 
 Regenerate the report with `make benchmark` (US-202 AC7). It must be regenerated on a machine
 with at least 8 physical cores for its 8-thread figures to mean anything.

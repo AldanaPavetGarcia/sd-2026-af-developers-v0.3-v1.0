@@ -16,7 +16,7 @@ Architectural decisions such as why the HPC engine is a standalone process, why 
 
 ## Relationship with Existing ADRs
 
-This protocol extension depends on the existing v0.1 protocol decision documented in `ADR003-Protocol.md`.
+This protocol extension depends on the existing v0.1 protocol decision documented in `adr/ADR-003-message-protocol-design.md`.
 
 The extension preserves the existing protocol rules:
 - payload encoding remains JSON;
@@ -142,7 +142,7 @@ The following algorithm names are valid:
 
 | Field | Type | Description |
 |---|---|---|
-| `algorithm_metadata` | object | Per-algorithm notes on how a result was produced. Present only when an algorithm has something to declare, so responses with nothing to report keep their previous shape. Currently emitted by `centrality` when scores are estimated rather than computed exactly (see `ADR019-Approximate-Betweenness-Centrality.md`). |
+| `algorithm_metadata` | object | Per-algorithm notes on how a result was produced. Present only when an algorithm has something to declare, so responses with nothing to report keep their previous shape. Currently emitted by `centrality` when scores are estimated rather than computed exactly (see `adr/ADR-024-approximate-betweenness-centrality.md`). |
 
 ```json
 "algorithm_metadata": {
@@ -302,7 +302,7 @@ Recommended v0.2 configuration keys:
 | `EOP_MAX_GRAPH_NODES` | Maximum number of nodes accepted in a request. | 100,000 |
 | `EOP_MAX_GRAPH_EDGES` | Maximum number of edges accepted in a request. | 500,000 |
 | `EOP_MAX_SHORTEST_PATHS_NODES` | Maximum nodes when `shortest_paths` is one of the requested algorithms — stricter than `EOP_MAX_GRAPH_NODES` on purpose. | 300 |
-| `EOP_HPC_CENTRALITY_EXACT_MAX_NODES` | Node count up to which `centrality` is computed exactly. Above it, scores are estimated from sampled sources (ADR-019). | 10,000 |
+| `EOP_HPC_CENTRALITY_EXACT_MAX_NODES` | Node count up to which `centrality` is computed exactly. Above it, scores are estimated from sampled sources (ADR-024). | 10,000 |
 | `EOP_HPC_CENTRALITY_SAMPLES` | Number of source nodes sampled when `centrality` is estimated. Higher is more accurate and slower. | 1,024 |
 | `EOP_HPC_TIMEOUT_MS` | Maximum time the server waits for the HPC engine response. | — |
 | `EOP_MAX_REQUEST_BYTES` | **eop-server**, not the engine: largest message it will buffer while waiting for the terminating `\n`. A guard against a client that never terminates a message, not a size policy — what a graph may contain is decided by the keys above, which answer with `ERROR_GRAPH_TOO_LARGE`. It must therefore stay above any request the engine accepts: at the defaults above a request serializes to roughly 25-30 MiB. | 64 MiB |

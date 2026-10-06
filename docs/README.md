@@ -57,7 +57,7 @@ The system is designed as a high-performance, low-latency communication ecosyste
 
 ### Epic E6: Kubernetes Workload Management
 
-* **Dual-Execution Vector Deployment:** `hpc-engine` is deployed both ways described above — as a long-lived `Deployment` (`k8s/hpc-engine-deployment.yaml`, persistent socket mode, `replicas: 1` — the server's dispatch mutex serializes requests to a single engine today) and as a one-shot `Job` (`k8s/jobs/hpc-engine-batch-job.yaml`, batch mode) — matching the pattern chosen in `docs/ADR011-Kubernetes-workload-management.md`.
+* **Dual-Execution Vector Deployment:** `hpc-engine` is deployed both ways described above — as a long-lived `Deployment` (`k8s/hpc-engine-deployment.yaml`, persistent socket mode, `replicas: 1` — the server's dispatch mutex serializes requests to a single engine today) and as a one-shot `Job` (`k8s/jobs/hpc-engine-batch-job.yaml`, batch mode) — matching the pattern chosen in `docs/adr/ADR-017-kubernetes-workload-management.md`.
 * **Probes, limits, and config:** the Deployment defines a liveness probe (process-alive check), a readiness probe (heartbeat-file freshness, since `hpc-engine` exposes no listening port to probe), CPU/memory requests and limits, and reads its configuration from the shared `eop-global-config` ConfigMap (also used by `eop-server`).
 * *What it does NOT do:* No `Service` fronts `hpc-engine` — it is an outbound-only TCP client, never a listener, so there is nothing to load-balance or route to. See `docs/kubernetes-deployment-and-pod-recovery-guide.md` for the full build/deploy/validate walkthrough of both workloads.
 

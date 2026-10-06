@@ -1,4 +1,4 @@
-# ADR 003: Messaging Protocol Design
+# ADR-003: Messaging Protocol Design
 
 ## Context and Problem
 

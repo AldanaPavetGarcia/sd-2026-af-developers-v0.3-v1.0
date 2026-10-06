@@ -82,10 +82,10 @@ data:
             labels:
               severity: warning
             annotations:
-              summary: "EOP error budget has dropped below 50% (ADR-012 caution threshold)."
+              summary: "EOP error budget has dropped below 50% (ADR-009 caution threshold)."
               description: >-
                 Sustained error rate is eating into the monthly 99.9% availability budget. Per
-                ADR-012's error budget policy, deployments now require additional review; below
+                ADR-009's error budget policy, deployments now require additional review; below
                 10% remaining, new feature deployments must freeze.
   # Same content as monitoring/grafana/provisioning/alerting/eop-hpc-alerts.yaml, kept in sync
   # by hand — US-206 AC4.

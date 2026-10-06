@@ -3,7 +3,7 @@
 US-203 AC8: "The integration does not introduce breaking changes to any existing v0.1 messages."
 
 The AC names `buf breaking` as the verification tool, but that's for protobuf -- this protocol
-is newline-delimited JSON/plain-text (ADR003), so it doesn't apply. Instead, this replays the
+is newline-delimited JSON/plain-text (ADR-003), so it doesn't apply. Instead, this replays the
 full v0.1 message corpus (REGISTER, HEARTBEAT, QUERY_NODE, LIST_NODES, an unknown command, and
 EXIT) against a real eop_server and asserts each response keeps its documented shape -- not just
 that the command still "works", but that the literal wire format nothing else is allowed to
@@ -94,7 +94,7 @@ def main():
         check(welcome.startswith("WELCOME Server v1.0"), "WELCOME banner keeps its v1.0 prefix")
         check("SESSION_ID" in welcome, "WELCOME banner still carries a SESSION_ID")
 
-        # 2. REGISTER -- successful. Kept open deliberately: per ADR-013, re-registering the
+        # 2. REGISTER -- successful. Kept open deliberately: per ADR-018, re-registering the
         # same node_id after its original connection already closed is a legitimate RECONNECT,
         # not a duplicate -- ERROR_DUPLICATE only fires while the original session is still
         # live, so the connection has to stay open for step 3 below to exercise that path.

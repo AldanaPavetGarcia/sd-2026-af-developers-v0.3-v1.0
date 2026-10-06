@@ -172,7 +172,7 @@ namespace hpc
 
                     // Above the exact-computation threshold the scores are an estimate. Saying so
                     // in the response is what keeps a caller from reading them as exact figures
-                    // (ADR-019).
+                    // (ADR-024).
                     if (centrality_stats.approximate)
                     {
                         algorithm_metadata["centrality"] = {

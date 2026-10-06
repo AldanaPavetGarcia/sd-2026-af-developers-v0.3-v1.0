@@ -45,7 +45,7 @@
 #define EOP_IDLE_TIMEOUT 30
 #endif
 #ifndef EOP_METRICS_PORT
-#define EOP_METRICS_PORT 9100 ///< Default port for the Prometheus `/metrics` HTTP exposer (US-205 / ADR-012 support).
+#define EOP_METRICS_PORT 9100 ///< Default port for the Prometheus `/metrics` HTTP exposer (US-205 / ADR-009 support).
 #endif
 
 #define EOP_BUFFER_SIZE       1024
@@ -127,7 +127,7 @@ struct NodeRegistry
      *
      * Reconnection is allowed when the node_id matches an existing OFFLINE node and
      * bunkerName/capacity are unchanged. ipAddress is deliberately NOT part of that
-     * check — per ADR-013's Server Logic rule ("the session.id and IP address are
+     * check — per ADR-018's Server Logic rule ("the session.id and IP address are
      * updated"), a reconnecting node's IP is expected to change (e.g. a Kubernetes
      * Pod restart always gets a fresh IP) and is refreshed on the record, not
      * compared against the previous one.
@@ -155,7 +155,7 @@ struct NodeRegistry
         {
             it->second.status = NodeStatus::ONLINE;
             it->second.lastSeen = record.lastSeen;
-            it->second.ipAddress = record.ipAddress; // ADR-013: updated, not matched
+            it->second.ipAddress = record.ipAddress; // ADR-018: updated, not matched
             return RegisterNodeResult::RECONNECTED_NODE;
         }
 
@@ -295,7 +295,7 @@ struct ServerContext
 extern ServerContext serverContext;
 
 /**
- * @brief Holds the process-wide Prometheus metrics state (US-205 / ADR-012 support).
+ * @brief Holds the process-wide Prometheus metrics state (US-205 / ADR-009 support).
  *
  * @details Mirrors the single-global/`extern` pattern already used by ServerContext and the
  * OpenTelemetry TracerProvider: one instance for the whole process, defined in eopServer.cpp,

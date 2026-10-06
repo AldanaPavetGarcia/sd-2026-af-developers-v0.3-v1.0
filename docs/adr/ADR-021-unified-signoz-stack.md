@@ -1,4 +1,4 @@
-# EOP Observability Runbook
+# ADR-021: Unified Local SigNoz Stack — Observability Runbook
 
 This document describes how to run and validate the local observability stack for US-110: Distributed Traces in SigNoz.
 

@@ -1,4 +1,4 @@
-# ADR 001: Interprocess Communication (IPC) Mechanism
+# ADR-001: Interprocess Communication (IPC) Mechanism
 
 ## Context and Problem
 

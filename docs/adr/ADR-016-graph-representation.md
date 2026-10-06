@@ -1,4 +1,4 @@
-# ADR-009: Graph Representation Data Structure
+# ADR-016: Graph Representation Data Structure
 
 ## Context and Problem
 

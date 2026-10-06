@@ -2,7 +2,7 @@
 """
 Contract test for the EOP SLO Grafana dashboard.
 
-This test validates that the dashboard required by ADR-012 / US-205 is
+This test validates that the dashboard required by ADR-009 / US-205 is
 versioned in the repository and has provisioning files for Grafana.
 It does not require a running Grafana instance.
 """

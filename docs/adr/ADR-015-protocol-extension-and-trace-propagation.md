@@ -1,4 +1,4 @@
-# ADR-008: Message Protocol Extension & Distributed Trace Propagation
+# ADR-015: Message Protocol Extension & Distributed Trace Propagation
 
 ## Context and Problem
 The introduction of high-performance computing (HPC) capabilities in **EOP v0.2** requires a new mechanism for analysts to submit topology graphs and receive critical analyses. The architectural problem is divided into two areas:
@@ -42,5 +42,5 @@ The following architectural design decisions have been made:
   * Error codes defined in the technical document must be recorded as OpenTelemetry span error states and, where metrics are exported, reflected in the counters used by Grafana SLO dashboards.
 
 ## References
-* `docs/ADR003-Protocol.md` (Base Protocol and v0.2 Milestone Addendum)
+* `docs/adr/ADR-003-message-protocol-design.md` (Base Protocol and v0.2 Milestone Addendum)
 * `docs/analyze-graph-protocol-v0.2.md` (Formal specification of contracts and JSON schemas)
