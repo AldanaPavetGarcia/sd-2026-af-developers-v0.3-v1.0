@@ -41,7 +41,7 @@ The pattern is consistent with a **memory bandwidth ceiling**, not a coding defe
   Two hardware threads on the same physical core contend for the same L1/L2 cache and the same
   memory-bandwidth budget, which a compute-bound graph traversal saturates.
 - `hpc-engine/src/centrality.cpp`'s CSR adjacency plus per-thread predecessor buffers were already
-  reworked for cache locality as part of ADR-019 (1.4x faster at 10,000 nodes with bit-identical
+  reworked for cache locality as part of ADR-024 (1.4x faster at 10,000 nodes with bit-identical
   results), which is why 50,000 nodes clears the 2× bar while 100,000 does not: the working set at
   100,000 nodes no longer fits the 8 MiB L3 cache this CPU has, regardless of thread count.
 
@@ -131,7 +131,7 @@ running minikube cluster with `k8s/` applied.
 ## Everything else in US-201–US-206
 
 Not covered above because it passes: correctness (US-201 AC1/AC2/AC4–AC8), the AC3 latency budget
-itself (met **exactly**, no approximation, per ADR-019 option D — see there for the full
+itself (met **exactly**, no approximation, per ADR-024 option D — see there for the full
 measurement), OpenMP correctness under ThreadSanitizer (US-202 AC4, 160/160 with zero data
 races), the Benchmark Report deliverable and its Amdahl analysis (US-202 AC5), the
 "when not to parallelize" finding (US-202 AC6, ~100 nodes on this hardware), `make benchmark`

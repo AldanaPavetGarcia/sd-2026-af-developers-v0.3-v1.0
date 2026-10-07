@@ -634,7 +634,7 @@
    "size": 50000,
    "edges": 124998,
    "density": 0.5,
-   "centrality_mode": "muestreada (1024 de 50000 fuentes, ADR-019)",
+   "centrality_mode": "muestreada (1024 de 50000 fuentes, ADR-024)",
    "errors": {},
    "cells": {
     "1": [
@@ -711,7 +711,7 @@
    "size": 100000,
    "edges": 249998,
    "density": 0.5,
-   "centrality_mode": "muestreada (1024 de 100000 fuentes, ADR-019)",
+   "centrality_mode": "muestreada (1024 de 100000 fuentes, ADR-024)",
    "errors": {},
    "cells": {
     "1": [

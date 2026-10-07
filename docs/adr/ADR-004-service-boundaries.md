@@ -1,4 +1,4 @@
-# ADR 004: Service Limits and Responsibilities (EOP v0.1)
+# ADR-004: Service Limits and Responsibilities (EOP v0.1)
 
 ## Context and Problem
 

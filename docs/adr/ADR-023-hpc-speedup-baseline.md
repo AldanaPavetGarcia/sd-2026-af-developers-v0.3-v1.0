@@ -1,8 +1,8 @@
-# ADR-018: HPC Speedup Baseline Strategy
+# ADR-023: HPC Speedup Baseline Strategy
 
 ## Context and Problem
 
-**US-206 AC1** requires a Grafana panel showing the HPC Engine's current parallel speedup ratio, and **US-206 AC4** requires an alert that fires when P99 processing latency exceeds 2x a "single-thread baseline" for more than 2 consecutive minutes. Both ACs assume the existence of a single-thread baseline latency to compare against — but nothing in the codebase or in ADR-010 (Parallelization Strategy) defines what that baseline *is*, where it comes from, or how it is kept valid as graph sizes vary.
+**US-206 AC1** requires a Grafana panel showing the HPC Engine's current parallel speedup ratio, and **US-206 AC4** requires an alert that fires when P99 processing latency exceeds 2x a "single-thread baseline" for more than 2 consecutive minutes. Both ACs assume the existence of a single-thread baseline latency to compare against — but nothing in the codebase or in ADR-007 (Parallelization Strategy) defines what that baseline *is*, where it comes from, or how it is kept valid as graph sizes vary.
 
 This is not a cosmetic gap: `hpc::computeShortestPaths`, `computeConnectedComponents`, and `computeCentrality` all have processing times that scale with graph size (nodes and edges), so a single scalar baseline latency is only meaningful for requests whose graph size is close to the size at which the baseline was measured. Publishing `speedup = baseline / processing_time` for a request against a graph 100x larger or smaller than the baseline's reference size would produce a number that is arithmetically well-formed but operationally meaningless — worse than publishing nothing, because a wrong number looks like evidence.
 
@@ -55,8 +55,8 @@ The baseline is a **configured, banded-size, measured** value — not computed l
 
 ## References
 
-* `ADR-010-Parallelization-strategy-openmp.md` — establishes the OpenMP parallelization approach whose speedup this baseline measures.
-* `ADR-012-Observability-slo-dashboard.md` — establishes the SLO/error-budget observability pattern this dashboard work extends into HPC-specific panels and alerts.
+* `ADR-007-parallelization-strategy-openmp.md` — establishes the OpenMP parallelization approach whose speedup this baseline measures.
+* `ADR-009-slo-definition-and-enforcement.md` — establishes the SLO/error-budget observability pattern this dashboard work extends into HPC-specific panels and alerts.
 * `hpc-engine/benchmarks/run_benchmark.sh`, `hpc-engine/benchmarks/BENCHMARK_REPORT.md` — the source of the real measured baseline value (US-202 AC5).
 * `hpc-engine/src/metrics.cpp` — `ComputeConfiguredSpeedupRatio`, `readPositiveDoubleEnv`, `InitHpcMetrics`/`ShutdownHpcMetrics` (`baseline_seconds` gauge).
 * `k8s/configmap.yaml` — `EOP_HPC_BASELINE_P99_MS`, `EOP_HPC_BASELINE_GRAPH_NODES`, `EOP_HPC_BASELINE_BAND_PERCENT` (configured; see point 5 for where the value comes from).

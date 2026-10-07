@@ -336,7 +336,7 @@ def run_engine(engine: str, graph: bytes, threads: int) -> Tuple[dict, Run]:
 def centrality_mode(result: dict) -> str:
     meta = result.get("algorithm_metadata", {}).get("centrality")
     if meta and meta.get("approximate"):
-        return f"muestreada ({meta.get('sampled_sources')} de {meta.get('total_sources')} fuentes, ADR-019)"
+        return f"muestreada ({meta.get('sampled_sources')} de {meta.get('total_sources')} fuentes, ADR-024)"
     return "exacta"
 
 

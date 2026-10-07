@@ -30,7 +30,7 @@ namespace
     // Use a unique port for this test to avoid conflicts
     const int kLoadTestPort = 11000 + (getpid() % 5000);
 
-    // CI runs a reduced load (ADR-015); the original US-102 AC8 figures -- 1000 clients x 10,000
+    // CI runs a reduced load (ADR-020); the original US-102 AC8 figures -- 1000 clients x 10,000
     // requests -- are reproduced by setting EOP_LOAD_CLIENTS / EOP_LOAD_REQUESTS_PER_CLIENT.
     constexpr int CI_NUM_CLIENTS = 20;
     constexpr int CI_REQUESTS_PER_CLIENT = 50;

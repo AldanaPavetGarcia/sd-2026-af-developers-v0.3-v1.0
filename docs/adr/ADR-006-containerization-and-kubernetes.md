@@ -1,4 +1,4 @@
-# ADR 006: Containerization Strategy and Kubernetes Adoption
+# ADR-006: Containerization Strategy and Kubernetes Adoption
 
 ## Context and Problem
 

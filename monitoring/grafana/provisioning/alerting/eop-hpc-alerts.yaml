@@ -6,7 +6,7 @@ apiVersion: 1
 # state transition on its own).
 #
 # Depends on the baseline being configured (EOP_HPC_BASELINE_P99_MS /
-# EOP_HPC_BASELINE_GRAPH_NODES, see ADR-018 and hpc-engine/src/metrics.cpp) -- until then,
+# EOP_HPC_BASELINE_GRAPH_NODES, see ADR-023 and hpc-engine/src/metrics.cpp) -- until then,
 # eop_hpc_baseline_seconds has no series, both queries below return no data, and the rule
 # resolves to noDataState (Alerting is never falsely triggered by an absent baseline).
 groups:

@@ -83,7 +83,7 @@ static void ShutdownTracer()
 }
 
 // ---------------------------------------------------------------------------
-// Prometheus metrics setup (US-205 / ADR-012)
+// Prometheus metrics setup (US-205 / ADR-009)
 // ---------------------------------------------------------------------------
 void InitMetrics()
 {
@@ -104,7 +104,7 @@ void InitMetrics()
              .Help("Total number of EOP server requests processed, by command and outcome.")
              .Register(*metricsRegistry.registry);
 
-    // SLO for the C++ core server is P99 < 200ms (ADR-012); boundaries are chosen so 200ms
+    // SLO for the C++ core server is P99 < 200ms (ADR-009); boundaries are chosen so 200ms
     // falls exactly on a bucket edge instead of being interpolated between two wide buckets.
     metricsRegistry.requestDurationFamily = &prometheus::BuildHistogram()
                                                  .Name("eop_request_duration_seconds")
@@ -961,7 +961,7 @@ static void workerLoop(ServerContext& ctx)
 
         // Metrics must count every dispatched command, including HEARTBEAT and
         // unknown_operation — unlike OTel span recording below, this is not gated on
-        // shouldTrace (US-205 / ADR-012).
+        // shouldTrace (US-205 / ADR-009).
         RecordRequestMetric(opName, resultStr, static_cast<double>(durationMs) / 1000.0);
 
         if (shouldTrace && opSpan)
@@ -1043,7 +1043,7 @@ static void timeoutMonitorLoop(ServerContext& ctx)
                 if (session.reservedForDispatch)
                 {
                     // HPC Engine sessions send no heartbeat traffic (exempt above) and
-                    // are excluded from the poll() read loop by design (ADR-017), so
+                    // are excluded from the poll() read loop by design (ADR-022), so
                     // neither passive disconnect path ever fires for them. A
                     // non-consuming MSG_PEEK detects a dead socket without racing an
                     // in-flight dispatch read: peeking never removes bytes from the

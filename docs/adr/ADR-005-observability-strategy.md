@@ -1,4 +1,4 @@
-# ADR 005: Distributed Observability and Traceability Strategy
+# ADR-005: Distributed Observability and Traceability Strategy
 
 ## Context and Problem
 

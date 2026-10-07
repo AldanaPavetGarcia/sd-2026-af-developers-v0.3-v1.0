@@ -1,4 +1,4 @@
-# ADR-013: Node_id Assignment Strategy and Reconnection Management
+# ADR-018: Node_id Assignment Strategy and Reconnection Management
 
 ## Context and Problem
 

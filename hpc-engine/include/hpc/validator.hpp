@@ -42,7 +42,7 @@ inline const std::vector<std::string> SUPPORTED_ALGORITHMS = {
 /**
  * @brief Default maximum node count (ERROR_GRAPH_TOO_LARGE), overridable via
  * EOP_MAX_GRAPH_NODES. Matches the PRD's stated scope of graphs up to 100K nodes
- * (ADR010 -- connected_components/centrality are both proven to handle this scale).
+ * (ADR-007 -- connected_components/centrality are both proven to handle this scale).
  */
 constexpr int kDefaultMaxGraphNodes = 100000;
 

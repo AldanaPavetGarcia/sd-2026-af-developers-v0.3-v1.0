@@ -115,7 +115,7 @@ Centralidad exacta.
 
 ### 50.000 nodos — 124.998 aristas (densidad 0.5)
 
-Centralidad muestreada (1024 de 50000 fuentes, ADR-019).
+Centralidad muestreada (1024 de 50000 fuentes, ADR-024).
 
 | Hilos | n | Tiempo (mediana) | Rango | Speedup | Eficiencia | CPU (núcleos) |
 |---:|---:|---:|---:|---:|---:|---:|
@@ -126,7 +126,7 @@ Centralidad muestreada (1024 de 50000 fuentes, ADR-019).
 
 ### 100.000 nodos — 249.998 aristas (densidad 0.5)
 
-Centralidad muestreada (1024 de 100000 fuentes, ADR-019).
+Centralidad muestreada (1024 de 100000 fuentes, ADR-024).
 
 | Hilos | n | Tiempo (mediana) | Rango | Speedup | Eficiencia | CPU (núcleos) |
 |---:|---:|---:|---:|---:|---:|---:|

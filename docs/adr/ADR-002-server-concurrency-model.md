@@ -1,4 +1,4 @@
-# ADR 002: Server Concurrency Model — Thread Pool
+# ADR-002: Server Concurrency Model — Thread Pool
 
 ## Context and Problem
 
