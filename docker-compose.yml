@@ -220,12 +220,28 @@ services:
       EOP_GATEWAY_TRACK: "stable"
       OTEL_SERVICE_NAME: "api-gateway"
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://otel-collector:4318/v1/traces"
+      EOP_REDIS_ADDR: "redis:6379"
     ports:
       - "8080:8080"
       - "9101:9100"
     depends_on:
       eop-server:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # US-302 (#52): job store of the API gateway. No persistence: jobs only live 5 minutes after
+  # they finish (ADR-010 §5).
+  redis:
+    <<: *common
+    image: redis:7.4-alpine
+    container_name: eop-redis
+    command: ["redis-server", "--maxmemory", "192mb", "--maxmemory-policy", "volatile-ttl", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   # US-205 (#43): Prometheus + Grafana, scraping eop-server's /metrics (#42) and provisioning
   # the dashboards already versioned under monitoring/grafana/ (#38, #39). Not chained to
