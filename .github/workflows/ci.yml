@@ -46,11 +46,17 @@ jobs:
       matrix:
         image:
           - name: eop-server
+            context: .
             dockerfile: ./Dockerfile
             tag: eop-server:ci
           - name: hpc-engine
+            context: .
             dockerfile: ./hpc-engine/Dockerfile
             tag: hpc-engine:ci
+          - name: api-gateway
+            context: ./services/go
+            dockerfile: ./services/go/Dockerfile
+            tag: api-gateway:ci
 
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +67,7 @@ jobs:
       - name: Build ${{ matrix.image.name }} Docker image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.image.context }}
           file: ${{ matrix.image.dockerfile }}
           push: false
           load: true
@@ -110,7 +116,44 @@ jobs:
           # -kubernetes-version pinned to the team's local kind/minikube cluster version.
           # find covers k8s/*.yaml and k8s/jobs/*.yaml even though `kubectl apply -f k8s/`
           # itself does not recurse (Job specs are kept out of that default sweep).
-          kubeconform -strict -summary -kubernetes-version 1.30.0 $(find k8s -name '*.yaml')
+          # kustomization.yaml files are build instructions, not cluster resources: they are
+          # skipped here and every Kustomize directory is validated by its rendered output.
+          kubeconform -strict -summary -kubernetes-version 1.30.0 $(find k8s -name '*.yaml' ! -name kustomization.yaml)
+          for dir in $(find k8s -name kustomization.yaml -exec dirname {} \;); do
+            echo "kustomize build $dir"
+            kubectl kustomize "$dir" | kubeconform -strict -summary -kubernetes-version 1.30.0 -
+          done
+
+  # -----------------------------------
+  # API gateway (Go): format, vet, lint, race detector, coverage ≥ 90 % (US-301, ADR-010)
+  # -----------------------------------
+  go-gateway:
+    name: go-gateway
+    runs-on: ubuntu-latest
+    needs: validate-branch-name
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: services/go/go.mod
+          cache-dependency-path: services/go/go.sum
+
+      # Built with the same Go version as the module: a prebuilt binary built with an older
+      # Go refuses to lint a module that targets a newer one.
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+
+      - name: gofmt, golangci-lint
+        run: make gateway-lint
+
+      - name: go vet, unit tests with the race detector
+        run: make gateway-test
+
+      - name: Coverage threshold
+        run: make gateway-coverage
 
   continuous-integration:
     runs-on: ubuntu-latest
@@ -334,6 +377,20 @@ jobs:
         run: |
           FAILED=$(grep -oP "\d+ tests failed" test_output.txt || true)
           echo "FAILED_TESTS=${FAILED:-0 tests failed}" >> $GITHUB_ENV
+
+      # -----------------------------------
+      # API gateway against the real eop_server (US-301 AC8)
+      # -----------------------------------
+      # Runs here because this job already built eop_server; the Go unit tests, lint and
+      # coverage gate run in the go-gateway job.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: services/go/go.mod
+          cache-dependency-path: services/go/go.sum
+
+      - name: API gateway integration tests
+        run: make gateway-integration-test EOP_SERVER_BIN=${{ github.workspace }}/build/eop_server
 
       # -----------------------------------
       # Dashboard Contract Tests (US-205 AC7 / US-206)

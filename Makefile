@@ -1,4 +1,4 @@
-.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -17,10 +17,12 @@ k8s-apply:
 		--from-file=monitoring/signoz-common/clickhouse/ \
 		--dry-run=client -o yaml | kubectl label --local -f - app=clickhouse -o yaml | kubectl apply -f -
 	kubectl apply -f k8s/
+	kubectl apply -k k8s/api-gateway/base
 	# 180s, not 60s: US-204 AC6 requires this target to wait up to 3 minutes for all pods to
 	# be Ready. 60s already failed live (31/08) — Grafana's 1.4GB image alone took ~70s to
 	# pull on a cold node.
 	kubectl rollout status deployment/eop-server --timeout=180s
+	kubectl rollout status deployment/api-gateway --timeout=180s
 	kubectl rollout status deployment/hpc-engine --timeout=180s
 	kubectl rollout status deployment/prometheus --timeout=180s
 	kubectl rollout status deployment/grafana --timeout=180s
@@ -34,6 +36,30 @@ k8s-apply:
 	kubectl rollout status deployment/signoz-otel-collector --timeout=180s
 	kubectl rollout status deployment/signoz --timeout=180s
 	kubectl rollout status deployment/otel-collector --timeout=180s
+
+## API gateway (US-301, ADR-010). Go module under services/go.
+GO_DIR := services/go
+GATEWAY_COVERAGE_MIN := 90
+EOP_SERVER_BIN ?= $(CURDIR)/build/dev/eop_server
+
+gateway-test:
+	cd $(GO_DIR) && go vet ./... && go test -race -count=1 ./...
+
+gateway-lint:
+	cd $(GO_DIR) && test -z "$$(gofmt -l .)" && golangci-lint run --build-tags integration ./...
+
+## US-301 AC8: the gateway against a real eop_server (build it first with cmake).
+gateway-integration-test:
+	cd $(GO_DIR) && EOP_SERVER_BIN=$(EOP_SERVER_BIN) go test -race -count=1 -tags integration ./test/integration/
+
+## Fails below GATEWAY_COVERAGE_MIN % of statements (cmd/ only wires packages and is excluded).
+gateway-coverage:
+	cd $(GO_DIR) && go test -count=1 -coverprofile=coverage.out $$(go list ./... | grep -v /cmd/) >/dev/null \
+		&& go tool cover -func=coverage.out | awk -v min=$(GATEWAY_COVERAGE_MIN) \
+			'/^total:/ { sub("%", "", $$3); print "gateway coverage: " $$3 "%"; if ($$3 + 0 < min) exit 1 }'
+
+gateway-image:
+	docker build -t api-gateway:local $(GO_DIR)
 
 k8s-recovery-test:
 	./tests/k8s/pod-recovery-cycle.sh

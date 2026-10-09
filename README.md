@@ -33,9 +33,10 @@ Students work as software engineers within a simulated company environment where
 ```
 
 .
-├── docs/               # Technical documentation, ADRs, protocol specs
+├── docs/               # Technical documentation, protocol specs; ADRs in docs/adr/
 ├── src/                # EOP server source code (v0.1)
 ├── hpc-engine/          # Parallel HPC graph-analysis engine (v0.2, C++/OpenMP)
+├── services/go/         # Go services: API gateway (v0.3), see services/go/README.md
 ├── include/             # Shared public headers
 ├── lib/                 # Shared libraries (Common, Communications, WDog, Logger)
 ├── k8s/                 # Kubernetes manifests (Deployments, Jobs, Services, ConfigMaps)

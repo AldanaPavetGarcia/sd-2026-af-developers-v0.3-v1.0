@@ -1,0 +1,8 @@
+# Base of the api-gateway (US-301, ADR-010). The canary and blue-green layouts of ADR-011 are
+# overlays on top of this base (US-304, US-305).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
