@@ -43,6 +43,7 @@ k8s-apply:
 GO_DIR := services/go
 GATEWAY_COVERAGE_MIN := 90
 EOP_SERVER_BIN ?= $(CURDIR)/build/dev/eop_server
+EOP_HPC_ENGINE_BIN ?= $(CURDIR)/build/dev/hpc-engine/hpc_engine
 
 gateway-test:
 	cd $(GO_DIR) && go vet ./... && go test -race -count=1 ./...
@@ -50,9 +51,11 @@ gateway-test:
 gateway-lint:
 	cd $(GO_DIR) && test -z "$$(gofmt -l .)" && golangci-lint run --build-tags integration ./...
 
-## US-301 AC8: the gateway against a real eop_server (build it first with cmake).
+## US-301 AC8 and US-302 AC8: the gateway against a real eop_server and hpc_engine (build both
+## first with cmake).
 gateway-integration-test:
-	cd $(GO_DIR) && EOP_SERVER_BIN=$(EOP_SERVER_BIN) go test -race -count=1 -tags integration ./test/integration/
+	cd $(GO_DIR) && EOP_SERVER_BIN=$(EOP_SERVER_BIN) EOP_HPC_ENGINE_BIN=$(EOP_HPC_ENGINE_BIN) \
+		go test -race -count=1 -tags integration ./test/integration/
 
 ## Fails below GATEWAY_COVERAGE_MIN % of statements (cmd/ only wires packages and is excluded).
 gateway-coverage:
