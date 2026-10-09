@@ -17,11 +17,13 @@ k8s-apply:
 		--from-file=monitoring/signoz-common/clickhouse/ \
 		--dry-run=client -o yaml | kubectl label --local -f - app=clickhouse -o yaml | kubectl apply -f -
 	kubectl apply -f k8s/
+	kubectl apply -f k8s/redis/
 	kubectl apply -k k8s/api-gateway/base
 	# 180s, not 60s: US-204 AC6 requires this target to wait up to 3 minutes for all pods to
 	# be Ready. 60s already failed live (31/08) — Grafana's 1.4GB image alone took ~70s to
 	# pull on a cold node.
 	kubectl rollout status deployment/eop-server --timeout=180s
+	kubectl rollout status deployment/redis --timeout=180s
 	kubectl rollout status deployment/api-gateway --timeout=180s
 	kubectl rollout status deployment/hpc-engine --timeout=180s
 	kubectl rollout status deployment/prometheus --timeout=180s

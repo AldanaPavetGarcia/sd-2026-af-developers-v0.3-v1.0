@@ -13,6 +13,16 @@ data:
   EOP_SERVER_DIAL_TIMEOUT: "2s"
   EOP_SERVER_REQUEST_TIMEOUT: "3s"
   EOP_GATEWAY_HEALTH_TIMEOUT: "1s"
+  # Graph analysis (US-302). Jobs live in Redis so any replica answers a poll (ADR-010 §5).
+  EOP_REDIS_ADDR: "redis:6379"
+  EOP_GATEWAY_ASYNC_MIN_NODES: "1000"
+  EOP_GATEWAY_SYNC_ANALYZE_TIMEOUT: "5s"
+  # Above eop-server's EOP_HPC_TIMEOUT_MS (5 s default, 60 s maximum).
+  EOP_SERVER_ANALYZE_TIMEOUT: "65s"
+  EOP_GATEWAY_JOB_WORKERS: "1"
+  EOP_GATEWAY_JOB_QUEUE: "16"
+  EOP_GATEWAY_JOB_RESULT_TTL: "5m"
+  EOP_GATEWAY_JOB_MAX_AGE: "30m"
   # Must fit inside terminationGracePeriodSeconds together with the preStop sleep.
   EOP_GATEWAY_SHUTDOWN_TIMEOUT: "15s"
   EOP_TRACING_ENABLED: "1"
