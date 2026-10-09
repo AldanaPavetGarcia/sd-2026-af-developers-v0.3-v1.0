@@ -123,6 +123,9 @@ func testOptions(addr string) Options {
 		MaxConns:       2,
 		MaxListNodes:   100,
 		MaxLineBytes:   4096,
+
+		AnalyzeTimeout:          time.Second,
+		MaxAnalyzeResponseBytes: 1 << 20,
 	}
 }
 

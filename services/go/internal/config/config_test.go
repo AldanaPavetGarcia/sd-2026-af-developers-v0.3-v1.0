@@ -48,6 +48,10 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		"non-positive":     {"EOP_SERVER_POOL_SIZE": "0"},
 		"gateway timeout":  {"EOP_GATEWAY_HEALTH_TIMEOUT": "0s"},
 		"negative timeout": {"EOP_SERVER_REQUEST_TIMEOUT": "-1s"},
+		"job workers":      {"EOP_GATEWAY_JOB_WORKERS": "0"},
+		"sync timeout":     {"EOP_GATEWAY_SYNC_ANALYZE_TIMEOUT": "0s"},
+		"max age < ttl":    {"EOP_GATEWAY_JOB_MAX_AGE": "1m", "EOP_GATEWAY_JOB_RESULT_TTL": "5m"},
+		"redis db":         {"EOP_REDIS_DB": "-1"},
 	}
 	for name, values := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -55,6 +59,18 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 				t.Fatalf("Load accepted %v", values)
 			}
 		})
+	}
+}
+
+func TestLoadAnalysisDefaults(t *testing.T) {
+	cfg, err := Load(env(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cfg.Analysis
+	if a.AsyncMinNodes != 1000 || a.SyncTimeout != 5*time.Second || a.JobResultTTL != 5*time.Minute ||
+		cfg.Server.AnalyzeTimeout <= 60*time.Second || cfg.RedisAddr != DefaultRedisAddr {
+		t.Fatalf("analysis defaults do not match US-302 / the server's 60 s HPC timeout cap: %+v", cfg)
 	}
 }
 

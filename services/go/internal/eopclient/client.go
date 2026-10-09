@@ -31,6 +31,12 @@ type Options struct {
 	MaxListNodes int
 	// MaxLineBytes rejects any single response line longer than this.
 	MaxLineBytes int
+	// AnalyzeTimeout bounds one ANALYZE_GRAPH exchange. It must exceed the server's
+	// EOP_HPC_TIMEOUT_MS, so the server's own timeout answer arrives before the client gives up.
+	AnalyzeTimeout time.Duration
+	// MaxAnalyzeResponseBytes rejects an ANALYZE_GRAPH answer longer than this. Results of large
+	// graphs are one multi-megabyte line.
+	MaxAnalyzeResponseBytes int
 }
 
 // Validate reports the first option that cannot work.
@@ -38,11 +44,11 @@ func (o Options) Validate() error {
 	switch {
 	case o.Address == "":
 		return errors.New("eopclient: address is required")
-	case o.DialTimeout <= 0, o.RequestTimeout <= 0, o.IdleTimeout <= 0:
+	case o.DialTimeout <= 0, o.RequestTimeout <= 0, o.IdleTimeout <= 0, o.AnalyzeTimeout <= 0:
 		return errors.New("eopclient: timeouts must be positive")
 	case o.MaxConns <= 0:
 		return errors.New("eopclient: MaxConns must be positive")
-	case o.MaxListNodes <= 0 || o.MaxLineBytes <= 0:
+	case o.MaxListNodes <= 0 || o.MaxLineBytes <= 0 || o.MaxAnalyzeResponseBytes <= 0:
 		return errors.New("eopclient: response limits must be positive")
 	}
 	return nil
