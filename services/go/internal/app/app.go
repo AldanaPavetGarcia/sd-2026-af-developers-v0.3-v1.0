@@ -9,10 +9,13 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/redis/go-redis/v9"
+
 	apispec "github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/api"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/api"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/config"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/eopclient"
+	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/jobs"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/telemetry"
 )
 
@@ -48,10 +51,19 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger, listeners 
 	}
 	defer func() { _ = client.Close() }()
 
+	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, DB: cfg.RedisDB, DialTimeout: cfg.Server.DialTimeout})
+	defer func() { _ = rdb.Close() }()
+	jobStore := jobs.NewStore(rdb, cfg.Analysis.JobResultTTL, cfg.Analysis.JobMaxAge)
+	runner := jobs.NewRunner(jobStore, client, logger, cfg.Analysis.JobWorkers, cfg.Analysis.JobQueue)
+
 	metrics := telemetry.NewMetrics(cfg.Version, cfg.Track)
 	apiServer := &http.Server{
 		Handler: api.NewServer(api.Options{
-			Store: client, Logger: logger, Metrics: metrics, OpenAPIJSON: spec, HealthTimeout: cfg.HealthTimeout,
+			Store: client, Analyzer: client, JobRunner: runner, JobStore: jobStore,
+			Analysis: api.AnalysisOptions{
+				MaxBodyBytes: cfg.Analysis.MaxBodyBytes, AsyncMinNodes: cfg.Analysis.AsyncMinNodes, SyncTimeout: cfg.Analysis.SyncTimeout,
+			},
+			Logger: logger, Metrics: metrics, OpenAPIJSON: spec, HealthTimeout: cfg.HealthTimeout,
 		}).Routes(),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 	}
@@ -87,9 +99,15 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger, listeners 
 		logger.Error("server stopped unexpectedly", "error", runErr)
 	}
 
+	// HTTP first, so no job is accepted while the runner stops; then queued and running jobs get
+	// what is left of the same budget before they are recorded as GATEWAY_SHUTDOWN.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
-	return errors.Join(runErr, apiServer.Shutdown(shutdownCtx), internalServer.Shutdown(shutdownCtx))
+	httpErr := errors.Join(apiServer.Shutdown(shutdownCtx), internalServer.Shutdown(shutdownCtx))
+	if err := runner.Stop(shutdownCtx); err != nil {
+		logger.Warn("unfinished analysis jobs were recorded as interrupted", "error", err)
+	}
+	return errors.Join(runErr, httpErr)
 }
 
 func listen(existing net.Listener, addr string) (net.Listener, error) {

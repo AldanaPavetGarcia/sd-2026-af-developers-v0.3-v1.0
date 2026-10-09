@@ -14,6 +14,8 @@ servers:
 tags:
   - name: nodes
     description: Node registry.
+  - name: graph
+    description: Network topology analysis on the HPC engine (US-302).
   - name: operations
     description: Health and API description.
 paths:
@@ -77,6 +79,159 @@ paths:
           $ref: "#/components/responses/NotFound"
         "502":
           $ref: "#/components/responses/UpstreamError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/graph/analyze:
+    post:
+      tags: [graph]
+      operationId: analyzeGraph
+      summary: Analyze a network topology.
+      description: |
+        Graphs with fewer than 1,000 nodes (configurable) are analyzed synchronously and answered
+        with `200` within 5 seconds. Larger graphs become a job: the answer is `202 Accepted`
+        with a `job_id`, and `GET /v1/graph/jobs/{job_id}` returns the result when it finishes.
+        Results stay available for at least 5 minutes after completion.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyzeRequest"
+      responses:
+        "200":
+          description: Synchronous result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                additionalProperties: false
+                properties:
+                  data:
+                    type: object
+                    required: [result]
+                    additionalProperties: false
+                    properties:
+                      result:
+                        $ref: "#/components/schemas/AnalysisResult"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "202":
+          description: Accepted as an asynchronous job.
+          headers:
+            Location:
+              description: URL of the job.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AcceptedJob"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          description: The body or the graph exceeds the configured size limits.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Too many jobs are queued in this gateway; retry after `Retry-After` seconds.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          description: The synchronous analysis did not finish within its time limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /v1/graph/jobs:
+    get:
+      tags: [graph]
+      operationId: listJobs
+      summary: Recent analysis jobs, newest first, without results.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Recent jobs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Job"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/graph/jobs/{job_id}:
+    get:
+      tags: [graph]
+      operationId: getJob
+      summary: State of a job and, once it succeeded, its result.
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The job.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Job"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
         "503":
@@ -151,12 +306,118 @@ components:
       properties:
         status:
           type: string
-          enum: [ok]
+          description: |
+            `degraded` when a non-critical dependency (Redis, used by analysis jobs) is down:
+            node routes and synchronous analysis keep working.
+          enum: [ok, degraded]
         checks:
           type: object
           additionalProperties:
             type: string
-            enum: [ok]
+            enum: [ok, unavailable]
+    AnalyzeRequest:
+      type: object
+      required: [nodes, edges, algorithms]
+      additionalProperties: false
+      properties:
+        nodes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+          example: [A, B, C]
+        edges:
+          type: array
+          items:
+            type: object
+            required: [from, to, weight]
+            additionalProperties: false
+            properties:
+              from:
+                type: string
+              to:
+                type: string
+              weight:
+                type: number
+                exclusiveMinimum: true
+                minimum: 0
+          example: [{from: A, to: B, weight: 10}, {from: B, to: C, weight: 5}]
+        algorithms:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [shortest_paths, connected_components, centrality]
+    AnalysisResult:
+      type: object
+      description: |
+        Result of the HPC engine, as defined by the ANALYZE_GRAPH contract
+        (docs/analyze-graph-protocol-v0.2.md): graph_size, processing_time_ms, thread_count,
+        executed_algorithms, algorithm_timings_ms, algorithms and, when centrality is
+        approximate, algorithm_metadata.
+      additionalProperties: true
+    AcceptedJob:
+      type: object
+      required: [job_id, status, status_url]
+      additionalProperties: false
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued]
+        status_url:
+          type: string
+          example: /v1/graph/jobs/5f0c6f4e-0d1a-4a8e-9a56-3c7b1d2e4f60
+    Job:
+      type: object
+      required: [job_id, status, created_at, graph_size, algorithms]
+      additionalProperties: false
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        graph_size:
+          type: object
+          required: [nodes, edges]
+          additionalProperties: false
+          properties:
+            nodes:
+              type: integer
+            edges:
+              type: integer
+        algorithms:
+          type: array
+          items:
+            type: string
+        result:
+          $ref: "#/components/schemas/AnalysisResult"
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            field:
+              type: string
     Meta:
       type: object
       required: [timestamp]
@@ -215,7 +476,9 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     Unavailable:
-      description: eop-server could not be reached or did not answer in time.
+      description: |
+        eop-server, the HPC engine or the job store could not be reached or did not answer in
+        time. Internal details are never included.
       content:
         application/json:
           schema:
