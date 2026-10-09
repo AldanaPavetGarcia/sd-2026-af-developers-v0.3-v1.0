@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/config"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/telemetry"
 )
@@ -47,8 +49,12 @@ func heartbeatServer(t *testing.T) string {
 
 func testConfig(t *testing.T, serverAddr string) config.Config {
 	t.Helper()
+	redisAddr := miniredis.RunT(t).Addr()
 	cfg, err := config.Load(func(key string) string {
-		return map[string]string{"EOP_SERVER_ADDR": serverAddr, "EOP_TRACING_ENABLED": "0", "EOP_GATEWAY_SHUTDOWN_TIMEOUT": "2s"}[key]
+		return map[string]string{
+			"EOP_SERVER_ADDR": serverAddr, "EOP_REDIS_ADDR": redisAddr,
+			"EOP_TRACING_ENABLED": "0", "EOP_GATEWAY_SHUTDOWN_TIMEOUT": "2s",
+		}[key]
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +93,7 @@ func TestRunServesAndShutsDownCleanly(t *testing.T) {
 	}()
 
 	apiURL, internalURL := "http://"+apiL.Addr().String(), "http://"+internalL.Addr().String()
-	if status, body := get(t, apiURL+"/v1/health"); status != http.StatusOK {
+	if status, body := get(t, apiURL+"/v1/health"); status != http.StatusOK || !strings.Contains(body, `"redis":"ok"`) || !strings.Contains(body, `"status":"ok"`) {
 		t.Fatalf("/v1/health = %d %s", status, body)
 	}
 	if status, _ := get(t, internalURL+"/livez"); status != http.StatusNoContent {

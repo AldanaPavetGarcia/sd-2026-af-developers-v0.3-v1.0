@@ -65,12 +65,22 @@ func (s *Server) getNode(w http.ResponseWriter, r *http.Request) {
 	s.writeData(w, r, http.StatusOK, toNode(record))
 }
 
+const (
+	redisCheck     = "redis"
+	checkOK        = "ok"
+	checkFailed    = "unavailable"
+	statusReady    = "ok"
+	statusDegraded = "degraded"
+)
+
 type healthStatus struct {
 	Status string            `json:"status"`
 	Checks map[string]string `json:"checks"`
 }
 
-// health is the readiness probe: ready only when eop-server answers (US-301 AC7).
+// health is the readiness probe (US-301 AC7). Only eop-server is critical: without Redis the
+// node routes and synchronous analysis still work, so the pod stays ready and reports
+// "degraded" instead of leaving the Service (ADR-010 §3).
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), s.healthTimeout)
 	defer cancel()
@@ -82,7 +92,16 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	s.writeData(w, r, http.StatusOK, healthStatus{Status: "ok", Checks: map[string]string{upstreamCheck: "ok"}})
+	status := healthStatus{Status: statusReady, Checks: map[string]string{upstreamCheck: checkOK}}
+	if s.jobStore != nil {
+		status.Checks[redisCheck] = checkOK
+		if err := s.jobStore.Ping(ctx); err != nil {
+			s.logger.WarnContext(r.Context(), "non-critical check failed", "check", redisCheck, "error", err)
+			status.Checks[redisCheck] = checkFailed
+			status.Status = statusDegraded
+		}
+	}
+	s.writeData(w, r, http.StatusOK, status)
 }
 
 func (s *Server) openAPISpec(w http.ResponseWriter, r *http.Request) {

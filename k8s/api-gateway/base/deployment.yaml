@@ -80,10 +80,11 @@ spec:
           resources:
             requests:
               cpu: "50m"
-              memory: "32Mi"
+              memory: "48Mi"
             limits:
               cpu: "250m"
-              memory: "64Mi"
+              # Large analysis results (tens of MB) pass through the gateway once per job.
+              memory: "256Mi"
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

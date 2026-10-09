@@ -2,7 +2,9 @@
 
 // Package integration runs the gateway against a real eop-server (US-301 AC8).
 //
-//	EOP_SERVER_BIN=../../build/dev/eop_server go test -tags integration ./test/integration/
+//	EOP_SERVER_BIN=../../build/dev/eop_server \
+//	EOP_HPC_ENGINE_BIN=../../build/dev/hpc-engine/hpc_engine \
+//	go test -tags integration ./test/integration/
 package integration
 
 import (
@@ -44,7 +46,8 @@ func freePort(t *testing.T) int {
 }
 
 // startServer runs the real eop_server binary on free ports and stops it at the end of the test.
-func startServer(t *testing.T) (addr string, stop func()) {
+// extraEnv adds KEY=value settings for the server.
+func startServer(t *testing.T, extraEnv ...string) (addr string, stop func()) {
 	t.Helper()
 	bin := os.Getenv("EOP_SERVER_BIN")
 	if bin == "" {
@@ -57,6 +60,7 @@ func startServer(t *testing.T) (addr string, stop func()) {
 		"EOP_METRICS_PORT="+strconv.Itoa(freePort(t)),
 		"EOP_TRACING_ENABLED=0",
 	)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("starting eop_server: %v", err)

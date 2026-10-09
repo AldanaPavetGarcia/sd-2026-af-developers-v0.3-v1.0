@@ -8,7 +8,9 @@ Go module for the EOP services written in Go (ADR-010). Today it contains the **
 services/go/
 ├── api/openapi.yaml         # REST contract (OpenAPI 3.0), embedded in the binary
 ├── cmd/api-gateway/         # entry point
-├── internal/eopclient/      # TCP client of the EOP socket protocol (pool, framing, parsing)
+├── internal/eopclient/      # TCP client of the EOP socket protocol (pool, framing, parsing, ANALYZE_GRAPH)
+├── internal/analysis/       # graph request validation and error classification
+├── internal/jobs/           # asynchronous analysis jobs: Redis store and worker pool
 ├── internal/api/            # /v1 routes, response envelope, error mapping
 ├── internal/app/            # wiring, HTTP servers, graceful shutdown
 ├── internal/config/         # environment configuration
@@ -22,12 +24,23 @@ services/go/
 |---|---|
 | `GET /v1/nodes` | Every registered node |
 | `GET /v1/nodes/{node_id}` | One node; `404` with `NODE_NOT_FOUND` if unknown, `400` with `INVALID_NODE_ID` if malformed |
-| `GET /v1/health` | Readiness: `200` when eop-server answers, `503` otherwise |
+| `POST /v1/graph/analyze` | Graph analysis: `200` with the result for graphs under 1,000 nodes, `202` with a `job_id` above |
+| `GET /v1/graph/jobs` | Recent jobs, newest first (`?limit=1..200`, default 50), without results |
+| `GET /v1/graph/jobs/{job_id}` | Job state and, once succeeded, its result; kept 5 minutes after it finishes |
+| `GET /v1/health` | Readiness: `200` when eop-server answers (`status: degraded` if Redis is down), `503` otherwise |
 | `GET /v1/openapi.json` | The contract |
 
 Successful responses: `{"data": …, "meta": {"timestamp": …, "trace_id": …}}`.
 Errors: `{"error": {"code": …, "message": …, "field": …}, "meta": …}`. The full contract is
 [`api/openapi.yaml`](api/openapi.yaml); unit tests validate every response against it.
+
+Analysis requests are validated in the gateway first (`400` naming the offending field, e.g.
+`edges[3].weight`), so an invalid graph never occupies the engine. An analysis that cannot run
+because no engine is registered, or the engine timed out, answers `503 HPC_UNAVAILABLE`; for a
+large graph this is checked before the job is accepted. Jobs are stored in Redis so any replica
+answers a poll; they run in the pod that accepted them, and a job whose pod is stopped is
+recorded as failed with `GATEWAY_SHUTDOWN` (or, if the pod died, expires after
+`EOP_GATEWAY_JOB_MAX_AGE`).
 
 Internal listener (not exposed by the Service): `GET /metrics` (Prometheus) and `GET /livez`
 (liveness).
@@ -49,6 +62,15 @@ All values come from the environment; the defaults run against a local eop-serve
 | `EOP_GATEWAY_MAX_LINE_BYTES` | `65536` | Longest response line accepted |
 | `EOP_GATEWAY_HEALTH_TIMEOUT` | `1s` | Readiness check budget |
 | `EOP_GATEWAY_SHUTDOWN_TIMEOUT` | `15s` | Draining on SIGTERM |
+| `EOP_REDIS_ADDR`, `EOP_REDIS_DB` | `127.0.0.1:6379`, `0` | Job store |
+| `EOP_GATEWAY_ASYNC_MIN_NODES` | `1000` | Graph size from which an analysis becomes a job |
+| `EOP_GATEWAY_SYNC_ANALYZE_TIMEOUT` | `5s` | Synchronous analysis budget (`504` beyond it) |
+| `EOP_SERVER_ANALYZE_TIMEOUT` | `65s` | One `ANALYZE_GRAPH` exchange; keep above eop-server's `EOP_HPC_TIMEOUT_MS` |
+| `EOP_GATEWAY_MAX_BODY_BYTES` | `33554432` | Largest request body (`413` beyond it) |
+| `EOP_GATEWAY_MAX_ANALYZE_RESPONSE_BYTES` | `67108864` | Largest engine answer accepted |
+| `EOP_GATEWAY_JOB_WORKERS`, `EOP_GATEWAY_JOB_QUEUE` | `1`, `16` | Jobs running / waiting per pod (`429` when full) |
+| `EOP_GATEWAY_JOB_RESULT_TTL` | `5m` | How long a finished job stays readable |
+| `EOP_GATEWAY_JOB_MAX_AGE` | `30m` | Expiry of a job that never finished |
 | `EOP_GATEWAY_VERSION`, `EOP_GATEWAY_TRACK` | `dev`, `stable` | Labels on metrics and traces (canary, ADR-011) |
 | `EOP_TRACING_ENABLED` | `1` | OTLP trace export |
 | `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `api-gateway`, SDK default | Standard OpenTelemetry variables |
@@ -60,14 +82,15 @@ Requires Go 1.27+.
 ```bash
 # from the repository root
 make gateway-image                       # docker image api-gateway:local (~19 MB)
-docker compose up -d eop-server api-gateway
+docker compose up -d eop-server redis api-gateway
 curl -s localhost:8080/v1/nodes
 
 # or without Docker, against a local eop_server
 cd services/go && EOP_SERVER_ADDR=127.0.0.1:9026 go run ./cmd/api-gateway
 ```
 
-Kubernetes: `kubectl apply -k k8s/api-gateway/base` (also part of `make k8s-apply`).
+Kubernetes: `kubectl apply -f k8s/redis/ && kubectl apply -k k8s/api-gateway/base` (also part of
+`make k8s-apply`).
 
 ## Tests
 
@@ -75,5 +98,6 @@ Kubernetes: `kubectl apply -k k8s/api-gateway/base` (also part of `make k8s-appl
 make gateway-test                # go vet + unit tests with the race detector
 make gateway-lint                # gofmt + golangci-lint
 make gateway-coverage            # fails below 90 % of statements
-make gateway-integration-test    # US-301 AC8 against build/dev/eop_server (EOP_SERVER_BIN=… to override)
+make gateway-integration-test    # US-301/US-302 AC8 against build/dev/eop_server and hpc_engine
+                                 # (EOP_SERVER_BIN=… EOP_HPC_ENGINE_BIN=… to override)
 ```

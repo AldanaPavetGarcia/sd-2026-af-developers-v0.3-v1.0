@@ -72,7 +72,7 @@ type harness struct {
 	doc     *openapi3.T
 }
 
-func newHarness(t *testing.T, store NodeStore) *harness {
+func newHarness(t *testing.T, store NodeStore, mods ...func(*Options)) *harness {
 	t.Helper()
 	specJSON, err := apispec.JSON()
 	if err != nil {
@@ -88,20 +88,32 @@ func newHarness(t *testing.T, store NodeStore) *harness {
 	}
 	logs := &bytes.Buffer{}
 	metrics := telemetry.NewMetrics("test", "stable")
-	server := NewServer(Options{
+	opts := Options{
 		Store:         store,
 		Logger:        telemetry.NewLogger(logs, "api-gateway"),
 		Metrics:       metrics,
 		OpenAPIJSON:   specJSON,
 		HealthTimeout: time.Second,
-	})
+	}
+	for _, mod := range mods {
+		mod(&opts)
+	}
+	server := NewServer(opts)
 	return &harness{t: t, handler: server.Routes(), server: server, metrics: metrics, logs: logs, router: router, doc: doc}
 }
 
 // do serves one request and, for routes in the contract, validates the response against it.
 func (h *harness) do(method, path string) *httptest.ResponseRecorder {
 	h.t.Helper()
-	req := httptest.NewRequest(method, path, nil)
+	return h.doBody(method, path, "")
+}
+
+func (h *harness) doBody(method, path, body string) *httptest.ResponseRecorder {
+	h.t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	rec := httptest.NewRecorder()
 	h.handler.ServeHTTP(rec, req)
 

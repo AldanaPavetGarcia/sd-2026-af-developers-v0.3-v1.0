@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/trace"
 
@@ -24,6 +25,10 @@ type NodeStore interface {
 // Options are the Server's dependencies.
 type Options struct {
 	Store         NodeStore
+	Analyzer      Analyzer
+	JobRunner     JobRunner
+	JobStore      JobStore
+	Analysis      AnalysisOptions
 	Logger        *slog.Logger
 	Metrics       *telemetry.Metrics
 	OpenAPIJSON   []byte
@@ -33,22 +38,32 @@ type Options struct {
 // Server serves the public REST API.
 type Server struct {
 	store         NodeStore
+	analyzer      Analyzer
+	jobRunner     JobRunner
+	jobStore      JobStore
+	analysisOpts  AnalysisOptions
 	logger        *slog.Logger
 	metrics       *telemetry.Metrics
 	openAPI       []byte
 	healthTimeout time.Duration
 	now           func() time.Time
+	newID         func() string
 }
 
 // NewServer builds the API server.
 func NewServer(opts Options) *Server {
 	return &Server{
 		store:         opts.Store,
+		analyzer:      opts.Analyzer,
+		jobRunner:     opts.JobRunner,
+		jobStore:      opts.JobStore,
+		analysisOpts:  opts.Analysis,
 		logger:        opts.Logger,
 		metrics:       opts.Metrics,
 		openAPI:       opts.OpenAPIJSON,
 		healthTimeout: opts.HealthTimeout,
 		now:           time.Now,
+		newID:         uuid.NewString,
 	}
 }
 
@@ -73,6 +88,9 @@ func (s *Server) router() *chi.Mux {
 		r.Get("/nodes/{node_id}", s.getNode)
 		r.Get("/health", s.health)
 		r.Get("/openapi.json", s.openAPISpec)
+		r.Post("/graph/analyze", s.analyze)
+		r.Get("/graph/jobs", s.listJobs)
+		r.Get("/graph/jobs/{job_id}", s.getJob)
 	})
 	return r
 }

@@ -390,7 +390,10 @@ jobs:
           cache-dependency-path: services/go/go.sum
 
       - name: API gateway integration tests
-        run: make gateway-integration-test EOP_SERVER_BIN=${{ github.workspace }}/build/eop_server
+        run: |
+          make gateway-integration-test \
+            EOP_SERVER_BIN=${{ github.workspace }}/build/eop_server \
+            EOP_HPC_ENGINE_BIN=${{ github.workspace }}/build/hpc-engine/hpc_engine
 
       # -----------------------------------
       # Dashboard Contract Tests (US-205 AC7 / US-206)

@@ -87,8 +87,10 @@ no gRPC: a `net.Conn` is a TCP client of the same protocol the C client library 
   become `503` with a generic message (US-302 AC3); `ERROR_NOT_FOUND` becomes `404`;
   `ERROR_INVALID_REQUEST`, `ERROR_INVALID_GRAPH`, `ERROR_UNSUPPORTED_ALGORITHM` and
   `ERROR_GRAPH_TOO_LARGE` become `400`/`413` with the protocol code kept in `error.code`.
-* `GET /v1/health` checks the dependencies the gateway needs to serve traffic (a pooled connection
-  to `eop-server` and Redis) and is the readiness probe (US-301 AC7). Liveness only checks that the
+* `GET /v1/health` is the readiness probe (US-301 AC7). Only `eop-server` is critical: if it does
+  not answer, the pod is not ready. Redis is reported but not critical: without it the node routes
+  and synchronous analysis still work, so the pod stays ready and answers `status: degraded`
+  (taking it out of the Service would also take those routes down). Liveness only checks that the
   process answers, so a downstream outage does not restart healthy gateway pods.
 
 ### 4. OpenAPI: hand-written spec, validated in CI
@@ -151,8 +153,8 @@ on an error rate threshold, so both indicators have to be defined before they ar
 
 * **Redis adds one component**, with its own deployment and failure mode. In exchange every gateway
   replica sees the same jobs, which is a precondition for US-304/US-305, and expiry (AC5) is a
-  native TTL rather than code. If Redis is down, `/v1/health` reports not ready and async analysis
-  returns `503`; node endpoints keep working.
+  native TTL rather than code. If Redis is down, asynchronous analysis and job lookups return
+  `503`, `/v1/health` reports `degraded`, and node endpoints and synchronous analysis keep working.
 * **The same Redis is reused in v1.0**: the edge-ingestor needs deduplication by `message_id`
   (US-404), which is a keyed set with TTL — the same primitive.
 * **Sharing `internal/eopclient`** means the protocol is implemented once in Go and tested once;
