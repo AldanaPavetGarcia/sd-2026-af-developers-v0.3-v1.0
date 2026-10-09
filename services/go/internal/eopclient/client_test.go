@@ -312,7 +312,7 @@ func TestTraceparentIsAppendedToTextCommands(t *testing.T) {
 	if _, err := client.QueryNode(ctx, "alpha"); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Heartbeat(context.Background()); err != nil {
+	if err := client.Heartbeat(ctx); err != nil {
 		t.Fatal(err)
 	}
 	requests := server.recorded()
@@ -321,7 +321,7 @@ func TestTraceparentIsAppendedToTextCommands(t *testing.T) {
 		t.Fatalf("request = %q, want prefix %q", requests[0], want)
 	}
 	if requests[1] != "HEARTBEAT" {
-		t.Fatalf("request without a span = %q, want no traceparent", requests[1])
+		t.Fatalf("HEARTBEAT = %q, want it without traceparent even inside a span", requests[1])
 	}
 }
 
@@ -334,5 +334,27 @@ func TestIsUnavailable(t *testing.T) {
 	}
 	if !errors.Is(&UnavailableError{Err: context.Canceled}, context.Canceled) {
 		t.Fatal("UnavailableError must unwrap")
+	}
+}
+
+// TestUnexpectedErrorDiscardsTheConnection reproduces a desynchronized connection: a server that
+// answers one request with two lines (the pre-#55 framing bug did this for long requests). The
+// stale second line must not become the answer to the next command.
+func TestUnexpectedErrorDiscardsTheConnection(t *testing.T) {
+	server := newFakeServer(t, func(request string) string {
+		if strings.HasPrefix(request, "LIST_NODES") {
+			return "ERROR_BAD_REQUEST desc=Message too long\nERROR_BAD_REQUEST desc=Unknown command\n"
+		}
+		return protocolHandler(request)
+	})
+	client := newTestClient(t, testOptions(server.addr()))
+	if _, err := client.ListNodes(context.Background()); err == nil {
+		t.Fatal("ListNodes accepted an error answer")
+	}
+	if err := client.Heartbeat(context.Background()); err != nil {
+		t.Fatalf("Heartbeat after an unexpected error = %v; the desynchronized connection was reused", err)
+	}
+	if got := server.accepted.Load(); got != 2 {
+		t.Fatalf("server accepted %d connections, want 2", got)
 	}
 }

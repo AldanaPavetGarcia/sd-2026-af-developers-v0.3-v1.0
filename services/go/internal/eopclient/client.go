@@ -158,9 +158,10 @@ func (c *Client) QueryNode(ctx context.Context, nodeID string) (Node, error) {
 }
 
 // Heartbeat checks that the server answers commands. It is cheap: the server neither logs it
-// nor requires a registered session.
+// nor requires a registered session. It carries no traceparent because the server does not
+// trace HEARTBEAT; the key would only add bytes to every readiness probe.
 func (c *Client) Heartbeat(ctx context.Context) error {
-	return c.do(ctx, "HEARTBEAT", func(pc *conn) error {
+	return c.run(ctx, "HEARTBEAT\n", c.opts.RequestTimeout, true, func(pc *conn) error {
 		line, err := c.readLine(pc)
 		if err != nil {
 			return err
@@ -175,38 +176,76 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 	})
 }
 
-// do sends one command and lets read consume its answer. A failure on a reused connection is
-// retried once on a fresh one: the server may have closed it while it sat in the pool. Only
-// read-only commands go through do, so the retry cannot apply a command twice.
+// do sends one read-only text command and lets read consume its answer. A failure on a reused
+// connection is retried once on a fresh one: the server may have closed it while it sat in the
+// pool. Only read-only commands go through do, so the retry cannot apply a command twice.
 func (c *Client) do(ctx context.Context, command string, read func(*conn) error) error {
-	line := command + traceparentSuffix(ctx) + "\n"
+	return c.run(ctx, command+traceparentSuffix(ctx)+"\n", c.opts.RequestTimeout, true, read)
+}
+
+// run sends line and lets read consume the answer. retry allows one more attempt on a fresh
+// connection after a stale pooled one failed; reuse returns the connection to the pool.
+func (c *Client) run(ctx context.Context, line string, timeout time.Duration, retry bool, read func(*conn) error) error {
+	return c.exchangeOnPool(ctx, line, timeout, retry, true, read)
+}
+
+func (c *Client) exchangeOnPool(ctx context.Context, line string, timeout time.Duration, retry, reuse bool, read func(*conn) error) error {
 	for attempt := 0; ; attempt++ {
 		pc, reused, err := c.get(ctx, attempt > 0)
 		if err != nil {
 			return err
 		}
-		err = c.exchange(ctx, pc, line, read)
-		var perr *ProtocolError
-		if err == nil || errors.As(err, &perr) {
-			// An ERROR_* answer is a complete, well-framed reply: the connection is still usable.
+		err = c.exchange(ctx, pc, line, timeout, read)
+		if reuse && (err == nil || isExpectedAnswer(err)) {
 			c.put(pc)
 			return err
 		}
+		if err == nil || isExpectedAnswer(err) {
+			c.discard(pc)
+			return err
+		}
 		c.discard(pc)
-		if !isConnectionError(err) || !reused || attempt > 0 || ctx.Err() != nil {
+		if ctxErr := c.callerGaveUp(ctx); ctxErr != nil {
+			return errors.Join(ctxErr, err)
+		}
+		if !retry || !isConnectionError(err) || !reused || attempt > 0 {
 			return err
 		}
 	}
 }
 
-func (c *Client) exchange(ctx context.Context, pc *conn, line string, read func(*conn) error) error {
-	deadline := c.now().Add(c.opts.RequestTimeout)
+// callerGaveUp returns the caller's reason when a failure happened because ctx was cancelled or
+// reached its deadline, which the socket only reports as a timeout.
+func (c *Client) callerGaveUp(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if d, ok := ctx.Deadline(); ok && !c.now().Before(d) {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+// isExpectedAnswer is true for the one error answer a well-behaved exchange produces: an unknown
+// node. Only then is the connection known to be in sync and safe to reuse; after any other error
+// the server may have sent more lines than the client read (for example the framing bug fixed
+// in #55, where one long request produced two answers).
+func isExpectedAnswer(err error) bool {
+	var perr *ProtocolError
+	return errors.As(err, &perr) && perr.Code == CodeNotFound
+}
+
+func (c *Client) exchange(ctx context.Context, pc *conn, line string, timeout time.Duration, read func(*conn) error) error {
+	deadline := c.now().Add(timeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
 	if err := pc.SetDeadline(deadline); err != nil {
 		return err
 	}
+	// Cancelling ctx must interrupt a blocked read, not only bound the next one.
+	stop := context.AfterFunc(ctx, func() { _ = pc.SetDeadline(time.Unix(1, 0)) })
+	defer stop()
 	if _, err := io.WriteString(pc, line); err != nil {
 		return err
 	}
@@ -331,10 +370,15 @@ func isConnectionError(err error) bool {
 // traceparentSuffix appends the caller's trace context as the optional, last key of a text
 // command (ADR-026). Servers that do not read it ignore it.
 func traceparentSuffix(ctx context.Context) string {
-	carrier := propagation.MapCarrier{}
-	propagation.TraceContext{}.Inject(ctx, carrier)
-	if tp := carrier.Get("traceparent"); tp != "" {
+	if tp := traceparent(ctx); tp != "" {
 		return " traceparent=" + tp
 	}
 	return ""
+}
+
+// traceparent returns the W3C traceparent of the span in ctx, or "" when there is none.
+func traceparent(ctx context.Context) string {
+	carrier := propagation.MapCarrier{}
+	propagation.TraceContext{}.Inject(ctx, carrier)
+	return carrier.Get("traceparent")
 }
