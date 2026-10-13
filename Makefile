@@ -1,4 +1,4 @@
-.PHONY: deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: loki-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -101,6 +101,10 @@ k8s-rollout-restart-test:
 
 observability-test:
 	python3 tests/smoke/test_signoz_integration.py
+
+## US-306: retention as code, log agent pipeline, Loki datasource and request-logs dashboard.
+loki-test:
+	python3 tests/smoke/test_loki_contract.py
 
 slo-dashboard-test:
 	python3 tests/smoke/test_grafana_dashboard_contract.py
