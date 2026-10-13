@@ -23,6 +23,11 @@ data:
   EOP_GATEWAY_JOB_QUEUE: "16"
   EOP_GATEWAY_JOB_RESULT_TTL: "5m"
   EOP_GATEWAY_JOB_MAX_AGE: "30m"
+  # External services behind circuit breakers (US-303, ADR-012).
+  EOP_AI_SERVICE_URL: "http://ai-service:8090"
+  EOP_CORPORATE_SERVICE_URL: "http://corporate-service:8090"
+  EOP_GATEWAY_BREAKER_SETTINGS: "/etc/api-gateway/breaker/breaker.yaml"
+  EOP_GATEWAY_BREAKER_RELOAD_INTERVAL: "10s"
   # Must fit inside terminationGracePeriodSeconds together with the preStop sleep.
   EOP_GATEWAY_SHUTDOWN_TIMEOUT: "15s"
   EOP_TRACING_ENABLED: "1"

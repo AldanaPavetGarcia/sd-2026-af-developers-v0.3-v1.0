@@ -1,0 +1,25 @@
+# Circuit breaker settings of the API gateway (US-303 AC8, ADR-012 §3). Mounted as a directory,
+# not with subPath: kubelet only refreshes whole-directory ConfigMap volumes, and the gateway
+# re-reads this file every EOP_GATEWAY_BREAKER_RELOAD_INTERVAL, so edits apply without a
+# restart or redeploy (allow up to about a minute for the kubelet sync).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-gateway-breaker
+  labels:
+    app: api-gateway
+data:
+  breaker.yaml: |
+    # PRD defaults (ADR-012): 5 consecutive failures or > 50 % errors in 10 s open the circuit;
+    # it probes again after 30 s with one call. min_requests and call_timeout are ADR-012's own.
+    defaults:
+      failure_threshold: 5
+      error_rate_threshold: 0.5
+      min_requests: 10
+      window: 10s
+      reset_timeout: 30s
+      half_open_max_calls: 1
+      call_timeout: 2s
+    services:
+      ai: {}
+      corporate: {}

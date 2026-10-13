@@ -90,3 +90,11 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          volumeMounts:
+            - name: breaker-settings
+              mountPath: /etc/api-gateway/breaker
+              readOnly: true
+      volumes:
+        - name: breaker-settings
+          configMap:
+            name: api-gateway-breaker
