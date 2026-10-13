@@ -41,8 +41,15 @@ const (
 	DefaultJobResultTTL            = 5 * time.Minute
 	DefaultJobMaxAge               = 30 * time.Minute
 	DefaultRedisAddr               = "127.0.0.1:6379"
-	DefaultVersion                 = "dev"
-	DefaultTrack                   = "stable"
+
+	// External services behind circuit breakers (US-303). Thresholds live in the breaker
+	// settings file (ADR-012 §3); without it the ADR-012 defaults apply.
+	DefaultAIServiceURL          = "http://127.0.0.1:8091"
+	DefaultCorporateServiceURL   = "http://127.0.0.1:8092"
+	DefaultBreakerReloadInterval = 10 * time.Second
+	DefaultExternalCacheSize     = 1000
+	DefaultVersion               = "dev"
+	DefaultTrack                 = "stable"
 )
 
 // Config is the complete gateway configuration.
@@ -60,6 +67,19 @@ type Config struct {
 	Analysis          Analysis
 	RedisAddr         string
 	RedisDB           int
+	External          External
+}
+
+// External configures the external AI and corporate services (US-303, ADR-012).
+type External struct {
+	AIURL        string
+	CorporateURL string
+	// BreakerSettingsPath is the mounted ConfigMap file; empty means ADR-012 defaults.
+	BreakerSettingsPath string
+	// ReloadInterval is how often the settings file is re-read (US-303 AC8).
+	ReloadInterval time.Duration
+	// CacheSize bounds the fallback cache of each service, in entries.
+	CacheSize int
 }
 
 // Analysis configures graph analysis requests and asynchronous jobs (US-302).
@@ -107,8 +127,15 @@ func Load(getenv func(string) string) (Config, error) {
 			JobResultTTL:  r.duration("EOP_GATEWAY_JOB_RESULT_TTL", DefaultJobResultTTL),
 			JobMaxAge:     r.duration("EOP_GATEWAY_JOB_MAX_AGE", DefaultJobMaxAge),
 		},
-		RedisAddr:         r.str("EOP_REDIS_ADDR", DefaultRedisAddr),
-		RedisDB:           r.integer("EOP_REDIS_DB", 0),
+		RedisAddr: r.str("EOP_REDIS_ADDR", DefaultRedisAddr),
+		RedisDB:   r.integer("EOP_REDIS_DB", 0),
+		External: External{
+			AIURL:               r.str("EOP_AI_SERVICE_URL", DefaultAIServiceURL),
+			CorporateURL:        r.str("EOP_CORPORATE_SERVICE_URL", DefaultCorporateServiceURL),
+			BreakerSettingsPath: r.getenv("EOP_GATEWAY_BREAKER_SETTINGS"),
+			ReloadInterval:      r.duration("EOP_GATEWAY_BREAKER_RELOAD_INTERVAL", DefaultBreakerReloadInterval),
+			CacheSize:           r.integer("EOP_GATEWAY_EXTERNAL_CACHE_SIZE", DefaultExternalCacheSize),
+		},
 		HealthTimeout:     r.duration("EOP_GATEWAY_HEALTH_TIMEOUT", DefaultHealthTimeout),
 		ShutdownTimeout:   r.duration("EOP_GATEWAY_SHUTDOWN_TIMEOUT", DefaultShutdownTimeout),
 		ReadHeaderTimeout: r.duration("EOP_GATEWAY_READ_HEADER_TIMEOUT", DefaultReadHeaderTimeout),
@@ -131,6 +158,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.RedisDB < 0 {
 		return Config{}, errors.New("config: EOP_REDIS_DB must not be negative")
+	}
+	if cfg.External.ReloadInterval <= 0 || cfg.External.CacheSize <= 0 {
+		return Config{}, errors.New("config: breaker reload interval and external cache size must be positive")
 	}
 	return cfg, nil
 }

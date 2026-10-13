@@ -26,6 +26,10 @@ const (
 type meta struct {
 	Timestamp string `json:"timestamp"`
 	TraceID   string `json:"trace_id,omitempty"`
+	// Stale marks data served from the cache because an external service is unavailable
+	// (circuit breaker fallback, ADR-012 §4).
+	Stale      bool   `json:"stale,omitempty"`
+	StaleSince string `json:"stale_since,omitempty"`
 }
 
 type dataEnvelope struct {

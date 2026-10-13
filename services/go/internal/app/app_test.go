@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -99,8 +101,9 @@ func TestRunServesAndShutsDownCleanly(t *testing.T) {
 	if status, _ := get(t, internalURL+"/livez"); status != http.StatusNoContent {
 		t.Fatalf("/livez = %d", status)
 	}
-	if status, body := get(t, internalURL+"/metrics"); status != http.StatusOK || !strings.Contains(body, "eop_gateway_http_requests_total") {
-		t.Fatalf("/metrics = %d, request counter missing", status)
+	if status, body := get(t, internalURL+"/metrics"); status != http.StatusOK || !strings.Contains(body, "eop_gateway_http_requests_total") ||
+		!strings.Contains(body, `eop_gateway_circuit_state{service="ai"`) || !strings.Contains(body, `eop_gateway_circuit_state{service="corporate"`) {
+		t.Fatalf("/metrics = %d, request counter or circuit gauges missing", status)
 	}
 	if status, _ := get(t, apiURL+"/metrics"); status != http.StatusNotFound {
 		t.Fatal("/metrics must not be exposed on the public listener")
@@ -130,6 +133,18 @@ func TestRunReportsStartupErrors(t *testing.T) {
 	}
 
 	cfg = testConfig(t, "127.0.0.1:1")
+	cfg.External.BreakerSettingsPath = writeFile(t, "defaults:\n  failure_threshold: zero\n")
+	if err := Run(context.Background(), cfg, logger, Listeners{}); err == nil {
+		t.Fatal("invalid breaker settings accepted")
+	}
+
+	cfg = testConfig(t, "127.0.0.1:1")
+	cfg.External.CacheSize = 0
+	if err := Run(context.Background(), cfg, logger, Listeners{}); err == nil {
+		t.Fatal("invalid external cache size accepted")
+	}
+
+	cfg = testConfig(t, "127.0.0.1:1")
 	cfg.ListenAddr = "bad-address"
 	if err := Run(context.Background(), cfg, logger, Listeners{}); err == nil {
 		t.Fatal("unusable listen address accepted")
@@ -140,6 +155,15 @@ func TestRunReportsStartupErrors(t *testing.T) {
 	if err := Run(context.Background(), cfg, logger, Listeners{API: localListener(t)}); err == nil {
 		t.Fatal("unusable metrics address accepted")
 	}
+}
+
+func writeFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "breaker.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestRunStopsWhenAServerFails(t *testing.T) {

@@ -16,6 +16,12 @@ tags:
     description: Node registry.
   - name: graph
     description: Network topology analysis on the HPC engine (US-302).
+  - name: external
+    description: |
+      Data from Vault-Tec's external services, protected by a circuit breaker per service
+      (US-303, ADR-012). When a service fails or its circuit is open, the gateway answers with
+      the last good data marked `meta.stale: true`, or with `503 SERVICE_DEGRADED` and
+      `Retry-After` when it has none. It never answers `500` because of an external service.
   - name: operations
     description: Health and API description.
 paths:
@@ -83,6 +89,72 @@ paths:
           $ref: "#/components/responses/InternalError"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/nodes/{node_id}/insights:
+    get:
+      tags: [external]
+      operationId: getNodeInsights
+      summary: Risk assessment of a node from the AI service.
+      parameters:
+        - $ref: "#/components/parameters/NodeID"
+      responses:
+        "200":
+          description: |
+            Fresh data, or — fallback while the AI service is unavailable — the last good data
+            for this node with `meta.stale: true` and `meta.stale_since`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Insights"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/Degraded"
+  /v1/nodes/{node_id}/corporate:
+    get:
+      tags: [external]
+      operationId: getNodeCorporateStatus
+      summary: Supply and compliance status of the node's bunker from the corporate service.
+      parameters:
+        - $ref: "#/components/parameters/NodeID"
+      responses:
+        "200":
+          description: |
+            Fresh data, or — fallback while the corporate service is unavailable — the last good
+            data for this bunker with `meta.stale: true` and `meta.stale_since`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CorporateStatus"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/Degraded"
   /v1/graph/analyze:
     post:
       tags: [graph]
@@ -275,7 +347,38 @@ paths:
               schema:
                 type: object
 components:
+  parameters:
+    NodeID:
+      name: node_id
+      in: path
+      required: true
+      description: 1 to 63 characters from A-Z, a-z, 0-9, dot, underscore and hyphen.
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9._-]{1,63}$"
   schemas:
+    Insights:
+      type: object
+      required: [node_id, risk_score, recommendation]
+      properties:
+        node_id:
+          type: string
+        risk_score:
+          type: number
+          minimum: 0
+          maximum: 1
+        recommendation:
+          type: string
+    CorporateStatus:
+      type: object
+      required: [bunker_name, supply_quota, compliant]
+      properties:
+        bunker_name:
+          type: string
+        supply_quota:
+          type: integer
+        compliant:
+          type: boolean
     Node:
       type: object
       required: [node_id, bunker_name, status, ip_address, capacity, last_seen_at]
@@ -430,6 +533,13 @@ components:
           type: string
           description: OpenTelemetry trace id of the request, for log and trace lookup.
           pattern: "^[0-9a-f]{32}$"
+        stale:
+          type: boolean
+          description: true when `data` was served from the cache because an external service is unavailable.
+        stale_since:
+          type: string
+          format: date-time
+          description: When the cached data was obtained.
     Error:
       type: object
       required: [error, meta]
@@ -471,6 +581,18 @@ components:
             $ref: "#/components/schemas/Error"
     InternalError:
       description: Unexpected failure inside the gateway. The body never carries internal details.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Degraded:
+      description: |
+        Fallback while an external service is unavailable (circuit open, timeout or 5xx) and no
+        cached data exists for this item. Retry after `Retry-After` seconds.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
       content:
         application/json:
           schema:
