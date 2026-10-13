@@ -63,8 +63,10 @@ gateway-coverage:
 		&& go tool cover -func=coverage.out | awk -v min=$(GATEWAY_COVERAGE_MIN) \
 			'/^total:/ { sub("%", "", $$3); print "gateway coverage: " $$3 "%"; if ($$3 + 0 < min) exit 1 }'
 
+## api-gateway and the external-stub test double (US-303), from the same Dockerfile.
 gateway-image:
 	docker build -t api-gateway:local $(GO_DIR)
+	docker build --target external-stub -t external-stub:local $(GO_DIR)
 
 k8s-recovery-test:
 	./tests/k8s/pod-recovery-cycle.sh

@@ -221,6 +221,8 @@ services:
       OTEL_SERVICE_NAME: "api-gateway"
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://otel-collector:4318/v1/traces"
       EOP_REDIS_ADDR: "redis:6379"
+      EOP_AI_SERVICE_URL: "http://ai-service:8090"
+      EOP_CORPORATE_SERVICE_URL: "http://corporate-service:8090"
     ports:
       - "8080:8080"
       - "9101:9100"
@@ -229,6 +231,33 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  # US-303 (#53): stand-ins for the external AI and corporate services (ADR-012 §1). Stop one
+  # with `docker compose stop ai-service`, or inject failures through POST /admin/fault on the
+  # published ports 8091 and 8092.
+  ai-service:
+    <<: *common
+    build:
+      context: services/go
+      dockerfile: Dockerfile
+      target: external-stub
+    image: external-stub:local
+    container_name: eop-ai-service
+    environment:
+      EOP_STUB_SERVICE: "ai"
+    ports:
+      - "8091:8090"
+
+  corporate-service:
+    <<: *common
+    image: external-stub:local
+    container_name: eop-corporate-service
+    depends_on:
+      - ai-service
+    environment:
+      EOP_STUB_SERVICE: "corporate"
+    ports:
+      - "8092:8090"
 
   # US-302 (#52): job store of the API gateway. No persistence: jobs only live 5 minutes after
   # they finish (ADR-010 §5).
