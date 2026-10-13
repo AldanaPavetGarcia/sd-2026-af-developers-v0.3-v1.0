@@ -54,9 +54,10 @@ External services sit behind one circuit breaker each (US-303, ADR-012): the cir
 after 30 s. While a service fails or its circuit is open, the gateway answers with the last good
 data for that item, marked `meta.stale: true` and `meta.stale_since`, or with
 `503 SERVICE_DEGRADED` and `Retry-After` when it has none; never with a `500`. Thresholds live in
-`k8s/api-gateway/base/breaker-configmap.yaml`; the gateway re-reads the mounted file every 10 s,
-so editing the ConfigMap applies without a restart (kubelet takes up to about a minute to update
-the file; 26 s on minikube). State, transitions and fallbacks are Prometheus metrics
+`k8s/api-gateway/base/breaker-configmap.yaml`; the gateway re-reads the mounted file every 10 s
+and applies a change once two consecutive reads agree (an empty or half-written file is never
+applied), so editing the ConfigMap applies without a restart (kubelet takes up to about a minute
+to update the file; 26 s on minikube). State, transitions and fallbacks are Prometheus metrics
 (`eop_gateway_circuit_state`, `eop_circuit_breaker_state_transitions_total`,
 `eop_gateway_fallback_responses_total`) shown in the SLO dashboard.
 

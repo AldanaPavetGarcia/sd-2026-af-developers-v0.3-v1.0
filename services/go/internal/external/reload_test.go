@@ -3,6 +3,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,13 +81,13 @@ func TestWatchAppliesChangesWithoutResettingTheCircuit(t *testing.T) {
 		close(done)
 	}()
 
-	_ = os.WriteFile(path, []byte("defaults:\n  failure_threshold: 7\n  reset_timeout: 1h\n  call_timeout: 3s\n"), 0o600)
+	writeAtomically(t, path, "defaults:\n  failure_threshold: 7\n  reset_timeout: 1h\n  call_timeout: 3s\n")
 	waitUntil(t, func() bool { return s.Breaker().Config().FailureThreshold == 7 })
 	if s.Breaker().State() != breaker.Open {
 		t.Fatal("reload reset the circuit (US-303 AC8 requires it to keep its state)")
 	}
 
-	_ = os.WriteFile(path, []byte("defaults:\n  failure_threshold: [\n"), 0o600)
+	writeAtomically(t, path, "defaults:\n  failure_threshold: [\n")
 	waitUntil(t, func() bool { return strings.Contains(logs.String(), "breaker settings rejected") })
 	if s.Breaker().Config().FailureThreshold != 7 {
 		t.Fatal("a broken file must keep the previous settings")
@@ -97,6 +98,48 @@ func TestWatchAppliesChangesWithoutResettingTheCircuit(t *testing.T) {
 		t.Fatalf("logs = %s", logs.String())
 	}
 	Watch(context.Background(), "", time.Millisecond, nil, nil, nil) // no path: returns at once
+}
+
+// TestWatchIgnoresAFileCaughtMidWrite reproduces an in-place edit read between truncation and
+// write: the empty file is valid (all defaults) but must not be applied.
+func TestWatchIgnoresAFileCaughtMidWrite(t *testing.T) {
+	s, _, _ := newService(t, "ok")
+	custom := fastSettings()
+	custom.Breaker.FailureThreshold = 9
+	if err := s.Apply(custom); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "breaker.yaml")
+	initial := []byte("defaults:\n  failure_threshold: 9\n")
+	_ = os.WriteFile(path, initial, 0o600)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		Watch(ctx, path, 20*time.Millisecond, initial, []*Service{s}, telemetry.NewLogger(io.Discard, "api-gateway"))
+		close(done)
+	}()
+
+	_ = os.WriteFile(path, nil, 0o600) // truncated and left empty for several intervals
+	time.Sleep(100 * time.Millisecond)
+	if s.Breaker().Config().FailureThreshold != 9 {
+		t.Fatal("an empty file must never be applied on reload")
+	}
+	writeAtomically(t, path, "defaults:\n  failure_threshold: 4\n")
+	waitUntil(t, func() bool { return s.Breaker().Config().FailureThreshold == 4 })
+	cancel()
+	<-done
+}
+
+// writeAtomically replaces path in one step, as kubelet does with ConfigMap volumes.
+func writeAtomically(t *testing.T, path, content string) {
+	t.Helper()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func waitUntil(t *testing.T, cond func() bool) {

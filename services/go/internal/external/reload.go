@@ -33,7 +33,11 @@ func LoadSettings(path string, services []string) (breaker.Settings, []byte, err
 
 // Watch re-reads path every interval and applies changed settings to the services without
 // resetting their circuits (US-303 AC8). Kubernetes updates a mounted ConfigMap in place, so a
-// change appears here without a restart or redeploy. An invalid file is logged and ignored: the
+// change appears here without a restart or redeploy. A change is applied only once two
+// consecutive reads agree, and an empty file is never applied: a file edited in place is
+// truncated before it is written, and a read in between would see an empty (which would mean
+// "all defaults") or partial file. Kubelet swaps ConfigMap files atomically, so neither case
+// delays a real update by more than one interval. An invalid file is logged and ignored: the
 // previous settings stay in force.
 func Watch(ctx context.Context, path string, interval time.Duration, current []byte, services []*Service, logger *slog.Logger) {
 	if path == "" {
@@ -45,6 +49,7 @@ func Watch(ctx context.Context, path string, interval time.Duration, current []b
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	var pending []byte
 	for {
 		select {
 		case <-ctx.Done():
@@ -52,9 +57,15 @@ func Watch(ctx context.Context, path string, interval time.Duration, current []b
 		case <-ticker.C:
 		}
 		data, err := os.ReadFile(path)
-		if err != nil || bytes.Equal(data, current) {
+		if err != nil || len(bytes.TrimSpace(data)) == 0 || bytes.Equal(data, current) {
+			pending = nil
 			continue
 		}
+		if !bytes.Equal(data, pending) {
+			pending = data // changed since the last read: wait until it settles
+			continue
+		}
+		pending = nil
 		settings, err := breaker.ParseSettings(data, names)
 		if err != nil {
 			logger.Error("breaker settings rejected; keeping the previous ones", "path", path, "error", err)
