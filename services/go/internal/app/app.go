@@ -13,8 +13,10 @@ import (
 
 	apispec "github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/api"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/api"
+	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/breaker"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/config"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/eopclient"
+	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/external"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/jobs"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/telemetry"
 )
@@ -57,9 +59,18 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger, listeners 
 	runner := jobs.NewRunner(jobStore, client, logger, cfg.Analysis.JobWorkers, cfg.Analysis.JobQueue)
 
 	metrics := telemetry.NewMetrics(cfg.Version, cfg.Track)
+	ai, corporate, settingsData, err := externalServices(cfg.External, metrics, logger)
+	if err != nil {
+		return err
+	}
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	defer stopWatch()
+	go external.Watch(watchCtx, cfg.External.BreakerSettingsPath, cfg.External.ReloadInterval, settingsData,
+		[]*external.Service{ai, corporate}, logger)
+
 	apiServer := &http.Server{
 		Handler: api.NewServer(api.Options{
-			Store: client, Analyzer: client, JobRunner: runner, JobStore: jobStore,
+			Store: client, Analyzer: client, JobRunner: runner, JobStore: jobStore, AI: ai, Corporate: corporate,
 			Analysis: api.AnalysisOptions{
 				MaxBodyBytes: cfg.Analysis.MaxBodyBytes, AsyncMinNodes: cfg.Analysis.AsyncMinNodes, SyncTimeout: cfg.Analysis.SyncTimeout,
 			},
@@ -108,6 +119,39 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger, listeners 
 		logger.Warn("unfinished analysis jobs were recorded as interrupted", "error", err)
 	}
 	return errors.Join(runErr, httpErr)
+}
+
+// Names of the external services, as used in metrics and in the breaker settings file.
+const (
+	aiServiceName        = "ai"
+	corporateServiceName = "corporate"
+)
+
+// externalServices builds the AI and corporate clients with their circuit breakers. Every state
+// change is published as a metric and a log line (US-303 AC5, ADR-012 §5).
+func externalServices(cfg config.External, metrics *telemetry.Metrics, logger *slog.Logger) (ai, corporate *external.Service, settingsData []byte, err error) {
+	settings, settingsData, err := external.LoadSettings(cfg.BreakerSettingsPath, []string{aiServiceName, corporateServiceName})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("breaker settings: %w", err)
+	}
+	hooks := external.Hooks{
+		OnTransition: func(t breaker.Transition) {
+			metrics.SetCircuitState(t.Name, float64(t.To))
+			metrics.CircuitTransition(t.Name, t.From.String(), t.To.String())
+			logger.Warn("circuit breaker state changed", "service", t.Name, "from", t.From.String(), "to", t.To.String(), "reason", t.Reason)
+		},
+		OnFallback: metrics.Fallback,
+	}
+	if ai, err = external.New(aiServiceName, cfg.AIURL, settings.For(aiServiceName), cfg.CacheSize, hooks); err != nil {
+		return nil, nil, nil, err
+	}
+	if corporate, err = external.New(corporateServiceName, cfg.CorporateURL, settings.For(corporateServiceName), cfg.CacheSize, hooks); err != nil {
+		return nil, nil, nil, err
+	}
+	for _, s := range []*external.Service{ai, corporate} {
+		metrics.SetCircuitState(s.Name(), float64(breaker.Closed))
+	}
+	return ai, corporate, settingsData, nil
 }
 
 func listen(existing net.Listener, addr string) (net.Listener, error) {

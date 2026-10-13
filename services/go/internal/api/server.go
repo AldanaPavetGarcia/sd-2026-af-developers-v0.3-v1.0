@@ -29,6 +29,8 @@ type Options struct {
 	JobRunner     JobRunner
 	JobStore      JobStore
 	Analysis      AnalysisOptions
+	AI            ExternalService
+	Corporate     ExternalService
 	Logger        *slog.Logger
 	Metrics       *telemetry.Metrics
 	OpenAPIJSON   []byte
@@ -42,6 +44,8 @@ type Server struct {
 	jobRunner     JobRunner
 	jobStore      JobStore
 	analysisOpts  AnalysisOptions
+	ai            ExternalService
+	corp          ExternalService
 	logger        *slog.Logger
 	metrics       *telemetry.Metrics
 	openAPI       []byte
@@ -58,6 +62,8 @@ func NewServer(opts Options) *Server {
 		jobRunner:     opts.JobRunner,
 		jobStore:      opts.JobStore,
 		analysisOpts:  opts.Analysis,
+		ai:            opts.AI,
+		corp:          opts.Corporate,
 		logger:        opts.Logger,
 		metrics:       opts.Metrics,
 		openAPI:       opts.OpenAPIJSON,
@@ -86,6 +92,8 @@ func (s *Server) router() *chi.Mux {
 	r.Route("/v1", func(r chi.Router) {
 		r.Get("/nodes", s.listNodes)
 		r.Get("/nodes/{node_id}", s.getNode)
+		r.Get("/nodes/{node_id}/insights", s.insights)
+		r.Get("/nodes/{node_id}/corporate", s.corporate)
 		r.Get("/health", s.health)
 		r.Get("/openapi.json", s.openAPISpec)
 		r.Post("/graph/analyze", s.analyze)

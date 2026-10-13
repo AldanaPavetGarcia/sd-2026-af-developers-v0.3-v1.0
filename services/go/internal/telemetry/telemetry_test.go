@@ -83,6 +83,25 @@ func TestMetricsExposition(t *testing.T) {
 	}
 }
 
+func TestCircuitMetrics(t *testing.T) {
+	m := NewMetrics("1.0.0", "stable")
+	m.SetCircuitState("ai", 2)
+	m.CircuitTransition("ai", "closed", "open")
+	m.Fallback("ai", "stale")
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	text := rec.Body.String()
+	for _, want := range []string{
+		`eop_gateway_circuit_state{service="ai",track="stable",version="1.0.0"} 2`,
+		`eop_circuit_breaker_state_transitions_total{from_state="closed",service="ai",to_state="open",track="stable",version="1.0.0"} 1`,
+		`eop_gateway_fallback_responses_total{kind="stale",service="ai",track="stable",version="1.0.0"} 1`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("exposition missing %q", want)
+		}
+	}
+}
+
 func TestStatusClass(t *testing.T) {
 	for status, want := range map[int]string{200: "2xx", 404: "4xx", 503: "5xx"} {
 		if got := statusClass(status); got != want {

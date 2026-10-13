@@ -52,6 +52,8 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		"sync timeout":     {"EOP_GATEWAY_SYNC_ANALYZE_TIMEOUT": "0s"},
 		"max age < ttl":    {"EOP_GATEWAY_JOB_MAX_AGE": "1m", "EOP_GATEWAY_JOB_RESULT_TTL": "5m"},
 		"redis db":         {"EOP_REDIS_DB": "-1"},
+		"reload interval":  {"EOP_GATEWAY_BREAKER_RELOAD_INTERVAL": "0s"},
+		"cache size":       {"EOP_GATEWAY_EXTERNAL_CACHE_SIZE": "0"},
 	}
 	for name, values := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -71,6 +73,20 @@ func TestLoadAnalysisDefaults(t *testing.T) {
 	if a.AsyncMinNodes != 1000 || a.SyncTimeout != 5*time.Second || a.JobResultTTL != 5*time.Minute ||
 		cfg.Server.AnalyzeTimeout <= 60*time.Second || cfg.RedisAddr != DefaultRedisAddr {
 		t.Fatalf("analysis defaults do not match US-302 / the server's 60 s HPC timeout cap: %+v", cfg)
+	}
+}
+
+func TestLoadExternalServices(t *testing.T) {
+	cfg, err := Load(env(map[string]string{
+		"EOP_AI_SERVICE_URL": "http://ai-service:8090", "EOP_GATEWAY_BREAKER_SETTINGS": "/etc/api-gateway/breaker.yaml",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := cfg.External
+	if e.AIURL != "http://ai-service:8090" || e.CorporateURL != DefaultCorporateServiceURL ||
+		e.BreakerSettingsPath != "/etc/api-gateway/breaker.yaml" || e.ReloadInterval != DefaultBreakerReloadInterval {
+		t.Fatalf("external = %+v", e)
 	}
 }
 

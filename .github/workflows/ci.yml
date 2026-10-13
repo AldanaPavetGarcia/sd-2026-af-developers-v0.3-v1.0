@@ -56,7 +56,13 @@ jobs:
           - name: api-gateway
             context: ./services/go
             dockerfile: ./services/go/Dockerfile
+            target: runtime
             tag: api-gateway:ci
+          - name: external-stub
+            context: ./services/go
+            dockerfile: ./services/go/Dockerfile
+            target: external-stub
+            tag: external-stub:ci
 
     steps:
       - uses: actions/checkout@v4
@@ -69,6 +75,7 @@ jobs:
         with:
           context: ${{ matrix.image.context }}
           file: ${{ matrix.image.dockerfile }}
+          target: ${{ matrix.image.target }}
           push: false
           load: true
           tags: ${{ matrix.image.tag }}

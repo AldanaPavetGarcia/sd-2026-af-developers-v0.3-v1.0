@@ -18,12 +18,15 @@ k8s-apply:
 		--dry-run=client -o yaml | kubectl label --local -f - app=clickhouse -o yaml | kubectl apply -f -
 	kubectl apply -f k8s/
 	kubectl apply -f k8s/redis/
+	kubectl apply -f k8s/external-stubs/
 	kubectl apply -k k8s/api-gateway/base
 	# 180s, not 60s: US-204 AC6 requires this target to wait up to 3 minutes for all pods to
 	# be Ready. 60s already failed live (31/08) — Grafana's 1.4GB image alone took ~70s to
 	# pull on a cold node.
 	kubectl rollout status deployment/eop-server --timeout=180s
 	kubectl rollout status deployment/redis --timeout=180s
+	kubectl rollout status deployment/ai-service --timeout=180s
+	kubectl rollout status deployment/corporate-service --timeout=180s
 	kubectl rollout status deployment/api-gateway --timeout=180s
 	kubectl rollout status deployment/hpc-engine --timeout=180s
 	kubectl rollout status deployment/prometheus --timeout=180s
@@ -63,8 +66,10 @@ gateway-coverage:
 		&& go tool cover -func=coverage.out | awk -v min=$(GATEWAY_COVERAGE_MIN) \
 			'/^total:/ { sub("%", "", $$3); print "gateway coverage: " $$3 "%"; if ($$3 + 0 < min) exit 1 }'
 
+## api-gateway and the external-stub test double (US-303), from the same Dockerfile.
 gateway-image:
 	docker build -t api-gateway:local $(GO_DIR)
+	docker build --target external-stub -t external-stub:local $(GO_DIR)
 
 k8s-recovery-test:
 	./tests/k8s/pod-recovery-cycle.sh
