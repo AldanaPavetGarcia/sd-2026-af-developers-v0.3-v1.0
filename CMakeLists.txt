@@ -60,6 +60,7 @@ add_executable(eop_server
   lib/src/systemTimeValidator.cpp
   lib/src/commonProtocol.cpp
   lib/src/configLoader.cpp
+  lib/src/traceContext.cpp
 )
 
 target_include_directories(eop_server PRIVATE include lib/include)
@@ -109,12 +110,14 @@ if(EXODUS_BUILD_TESTS)
     tests/unit/testClient.cpp
     tests/unit/testClientDisconnect.cpp
     tests/unit/testMetrics.cpp
+    tests/unit/traceContextTest.cpp
     src/app/eop_client.c
     src/app/eopServer.cpp
     lib/src/eventAuditLogger.cpp
     lib/src/systemTimeValidator.cpp
     lib/src/commonProtocol.cpp
     lib/src/configLoader.cpp
+    lib/src/traceContext.cpp
   )
 
   target_include_directories(unit_tests PRIVATE include lib/include)
