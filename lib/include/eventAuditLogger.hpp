@@ -94,6 +94,11 @@ struct LogEntry
  * @brief Class responsible for managing system logs, providing access to processes for auditing.
  */
 #ifdef __cplusplus
+/**
+ * @brief Value of the "service" log field when OTEL_SERVICE_NAME is not set (ADR-019).
+ */
+inline constexpr const char* DEFAULT_SERVICE_NAME = "eop-server";
+
 struct LogContext
 {
     std::string nodeId;

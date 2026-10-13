@@ -73,6 +73,25 @@ TEST(EventAuditLoggerTest, JsonLogLineEscapesCharactersThatWouldBreakTheEnvelope
     EXPECT_EQ(entry["message"].get<std::string>(), expected);
 }
 
+// ADR-019 lists "service" in the log schema and Loki filters by it (US-306 AC1). The name is read
+// once from OTEL_SERVICE_NAME; the unit tests do not set it, so the default must appear.
+TEST(EventAuditLoggerTest, JsonLogLineCarriesTheServiceName)
+{
+    EventAuditLogger logger;
+    logger.setLogFile("/tmp/test_service.log");
+
+    testing::internal::CaptureStdout();
+    EXPECT_GT(logger.writeLog("service field", INFO_LOG), 0);
+    const std::string captured = testing::internal::GetCapturedStdout();
+
+    unlink("/tmp/test_service.log");
+    unlink(REGISTER_CONNECTIONS_LOG);
+
+    ASSERT_FALSE(captured.empty());
+    const auto entry = nlohmann::json::parse(captured);
+    EXPECT_EQ(entry["service"], DEFAULT_SERVICE_NAME);
+}
+
 // Logging must never take the caller down because the log destination is unavailable: a full
 // disk, a read-only mount or a bad configured path all surface here as open() failing.
 TEST(EventAuditLoggerTest, ReturnsZeroWhenTheLogFileCannotBeOpened)

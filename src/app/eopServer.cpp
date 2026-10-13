@@ -1110,6 +1110,9 @@ static void workerLoop(ServerContext& ctx)
             if (resultStr == "ERROR")
             {
                 opSpan->SetStatus(opentelemetry::trace::StatusCode::kError);
+                // One ERROR line per failed traced operation, written while its span is active,
+                // so the span with result=ERROR and its log share trace_id (US-306 AC6).
+                auditLogger.writeString(opName + " failed", ERROR_LOG);
             }
             else
             {
