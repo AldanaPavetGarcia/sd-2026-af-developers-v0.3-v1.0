@@ -1,16 +1,21 @@
 # EOP Go services
 
 Go module for the EOP services written in Go (ADR-010). Today it contains the **API gateway**
-(US-301); the v1.0 edge-ingestor (US-404) will be a second binary in the same module and reuse
+(US-301..US-303) and **external-stub**, a test double for the external AI and corporate services
+(ADR-012); the v1.0 edge-ingestor (US-404) will be another binary in the same module and reuse
 `internal/eopclient`.
 
 ```text
 services/go/
 ├── api/openapi.yaml         # REST contract (OpenAPI 3.0), embedded in the binary
 ├── cmd/api-gateway/         # entry point
+├── cmd/external-stub/       # fake AI / corporate service with fault injection (ADR-012 §1)
 ├── internal/eopclient/      # TCP client of the EOP socket protocol (pool, framing, parsing, ANALYZE_GRAPH)
 ├── internal/analysis/       # graph request validation and error classification
 ├── internal/jobs/           # asynchronous analysis jobs: Redis store and worker pool
+├── internal/breaker/        # circuit breaker with a sliding window, settings file format
+├── internal/external/       # external service clients: breaker, timeout, fallback cache, live reload
+├── internal/stub/           # the external-stub HTTP handlers
 ├── internal/api/            # /v1 routes, response envelope, error mapping
 ├── internal/app/            # wiring, HTTP servers, graceful shutdown
 ├── internal/config/         # environment configuration
@@ -24,6 +29,8 @@ services/go/
 |---|---|
 | `GET /v1/nodes` | Every registered node |
 | `GET /v1/nodes/{node_id}` | One node; `404` with `NODE_NOT_FOUND` if unknown, `400` with `INVALID_NODE_ID` if malformed |
+| `GET /v1/nodes/{node_id}/insights` | Risk assessment from the AI service (circuit breaker) |
+| `GET /v1/nodes/{node_id}/corporate` | Supply and compliance status of the node's bunker from the corporate service (circuit breaker) |
 | `POST /v1/graph/analyze` | Graph analysis: `200` with the result for graphs under 1,000 nodes, `202` with a `job_id` above |
 | `GET /v1/graph/jobs` | Recent jobs, newest first (`?limit=1..200`, default 50), without results |
 | `GET /v1/graph/jobs/{job_id}` | Job state and, once succeeded, its result; kept 5 minutes after it finishes |
@@ -41,6 +48,17 @@ large graph this is checked before the job is accepted. Jobs are stored in Redis
 answers a poll; they run in the pod that accepted them, and a job whose pod is stopped is
 recorded as failed with `GATEWAY_SHUTDOWN` (or, if the pod died, expires after
 `EOP_GATEWAY_JOB_MAX_AGE`).
+
+External services sit behind one circuit breaker each (US-303, ADR-012): the circuit opens after
+5 consecutive failures or more than 50 % errors in 10 s (with at least 10 calls), and probes again
+after 30 s. While a service fails or its circuit is open, the gateway answers with the last good
+data for that item, marked `meta.stale: true` and `meta.stale_since`, or with
+`503 SERVICE_DEGRADED` and `Retry-After` when it has none; never with a `500`. Thresholds live in
+`k8s/api-gateway/base/breaker-configmap.yaml`; the gateway re-reads the mounted file every 10 s,
+so editing the ConfigMap applies without a restart (kubelet takes up to about a minute to update
+the file; 26 s on minikube). State, transitions and fallbacks are Prometheus metrics
+(`eop_gateway_circuit_state`, `eop_circuit_breaker_state_transitions_total`,
+`eop_gateway_fallback_responses_total`) shown in the SLO dashboard.
 
 Internal listener (not exposed by the Service): `GET /metrics` (Prometheus) and `GET /livez`
 (liveness).
@@ -71,6 +89,10 @@ All values come from the environment; the defaults run against a local eop-serve
 | `EOP_GATEWAY_JOB_WORKERS`, `EOP_GATEWAY_JOB_QUEUE` | `1`, `16` | Jobs running / waiting per pod (`429` when full) |
 | `EOP_GATEWAY_JOB_RESULT_TTL` | `5m` | How long a finished job stays readable |
 | `EOP_GATEWAY_JOB_MAX_AGE` | `30m` | Expiry of a job that never finished |
+| `EOP_AI_SERVICE_URL`, `EOP_CORPORATE_SERVICE_URL` | `http://127.0.0.1:8091`, `http://127.0.0.1:8092` | External services |
+| `EOP_GATEWAY_BREAKER_SETTINGS` | empty (ADR-012 defaults) | Breaker settings file (mounted ConfigMap) |
+| `EOP_GATEWAY_BREAKER_RELOAD_INTERVAL` | `10s` | How often that file is re-read |
+| `EOP_GATEWAY_EXTERNAL_CACHE_SIZE` | `1000` | Fallback cache entries per external service |
 | `EOP_GATEWAY_VERSION`, `EOP_GATEWAY_TRACK` | `dev`, `stable` | Labels on metrics and traces (canary, ADR-011) |
 | `EOP_TRACING_ENABLED` | `1` | OTLP trace export |
 | `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `api-gateway`, SDK default | Standard OpenTelemetry variables |
@@ -82,15 +104,33 @@ Requires Go 1.27+.
 ```bash
 # from the repository root
 make gateway-image                       # docker image api-gateway:local (~19 MB)
-docker compose up -d eop-server redis api-gateway
+docker compose up -d eop-server redis ai-service corporate-service api-gateway
 curl -s localhost:8080/v1/nodes
 
 # or without Docker, against a local eop_server
 cd services/go && EOP_SERVER_ADDR=127.0.0.1:9026 go run ./cmd/api-gateway
 ```
 
-Kubernetes: `kubectl apply -f k8s/redis/ && kubectl apply -k k8s/api-gateway/base` (also part of
-`make k8s-apply`).
+Kubernetes: `kubectl apply -f k8s/redis/ -f k8s/external-stubs/ && kubectl apply -k
+k8s/api-gateway/base` (also part of `make k8s-apply`). `make gateway-image` builds both images,
+`api-gateway:local` and `external-stub:local`.
+
+### Circuit breaker demo (US-303 AC7)
+
+```bash
+kubectl port-forward svc/api-gateway 8080:80 &
+curl -s localhost:8080/v1/nodes/<node_id>/insights          # fresh data, caches it
+kubectl scale deployment/ai-service --replicas=0            # the external service goes down
+for i in 1 2 3 4 5; do curl -s -o /dev/null -w "%{http_code} " localhost:8080/v1/nodes/<node_id>/insights; done
+# Grafana → EOP SLO Dashboard → "External Service Circuit Breakers": ai = Open
+curl -s localhost:8080/v1/nodes/<node_id>/insights          # 200, meta.stale: true (fallback)
+curl -si localhost:8080/v1/nodes/<other>/insights           # 503 SERVICE_DEGRADED, Retry-After
+kubectl scale deployment/ai-service --replicas=1            # the service recovers
+sleep 30; curl -s localhost:8080/v1/nodes/<node_id>/insights  # half-open probe succeeds → Closed, fresh data
+```
+
+Failures can also be injected without stopping the stub: `POST /admin/fault` on the stub with
+`{"mode": "error"}`, `{"mode": "slow"}` or `{"mode": "ok"}`.
 
 ## Tests
 
@@ -98,6 +138,6 @@ Kubernetes: `kubectl apply -f k8s/redis/ && kubectl apply -k k8s/api-gateway/bas
 make gateway-test                # go vet + unit tests with the race detector
 make gateway-lint                # gofmt + golangci-lint
 make gateway-coverage            # fails below 90 % of statements
-make gateway-integration-test    # US-301/US-302 AC8 against build/dev/eop_server and hpc_engine
+make gateway-integration-test    # US-301/US-302 AC8 and US-303 AC7 against build/dev/eop_server and hpc_engine
                                  # (EOP_SERVER_BIN=… EOP_HPC_ENGINE_BIN=… to override)
 ```
