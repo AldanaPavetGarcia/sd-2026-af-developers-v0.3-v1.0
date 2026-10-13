@@ -1,4 +1,4 @@
-.PHONY: loki-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -79,6 +79,10 @@ gateway-coverage:
 gateway-image:
 	docker build -t api-gateway:local $(GO_DIR)
 	docker build --target external-stub -t external-stub:local $(GO_DIR)
+
+## US-306 AC6 on a running cluster: a failed request has the same trace_id in SigNoz and Loki.
+k8s-log-trace-test:
+	python3 tests/k8s/log-trace-correlation.py
 
 k8s-recovery-test:
 	./tests/k8s/pod-recovery-cycle.sh
