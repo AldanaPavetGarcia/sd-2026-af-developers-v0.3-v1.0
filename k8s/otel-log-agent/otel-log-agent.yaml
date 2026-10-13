@@ -1,0 +1,124 @@
+# Node log agent (US-306 AC1, AC5): one OpenTelemetry Collector per node reads every pod's log
+# files and sends them to Loki. New pods are collected automatically, with no change to the
+# application. Configuration: the otel-log-agent-config ConfigMap, generated from
+# monitoring/otel-log-agent/config.yaml by `make k8s-apply`.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-log-agent
+  labels:
+    app: otel-log-agent
+---
+# k8sattributes only reads pod metadata (namespace, pod, deployment through its ReplicaSet).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-log-agent
+  labels:
+    app: otel-log-agent
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces", "nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-log-agent
+  labels:
+    app: otel-log-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: otel-log-agent
+subjects:
+  - kind: ServiceAccount
+    name: otel-log-agent
+    namespace: default
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: otel-log-agent
+  labels:
+    app: otel-log-agent
+spec:
+  selector:
+    matchLabels:
+      app: otel-log-agent
+  template:
+    metadata:
+      labels:
+        app: otel-log-agent
+    spec:
+      serviceAccountName: otel-log-agent
+      containers:
+        - name: otel-log-agent
+          image: otel/opentelemetry-collector-contrib:0.114.0
+          imagePullPolicy: IfNotPresent
+          args: ["--config=/etc/otel-log-agent/config.yaml"]
+          env:
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: health
+              containerPort: 13133
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          securityContext:
+            # Root is needed to read /var/log/pods; nothing else is granted.
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["DAC_READ_SEARCH"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel-log-agent
+              readOnly: true
+            - name: varlogpods
+              mountPath: /var/log/pods
+              readOnly: true
+            # Container log files are symlinks into the runtime's directory.
+            - name: varlibdockercontainers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+            - name: checkpoints
+              mountPath: /var/lib/otelcol
+      volumes:
+        - name: config
+          configMap:
+            name: otel-log-agent-config
+        - name: varlogpods
+          hostPath:
+            path: /var/log/pods
+        - name: varlibdockercontainers
+          hostPath:
+            path: /var/lib/docker/containers
+        # Offsets on the node: a restarted agent resumes where it stopped (US-306 AC4).
+        - name: checkpoints
+          hostPath:
+            path: /var/lib/otelcol
+            type: DirectoryOrCreate
