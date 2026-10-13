@@ -226,6 +226,13 @@ if(EXODUS_BUILD_TESTS)
   )
 
   add_test(
+    NAME smoke_text_command_trace_context
+    COMMAND python3
+      ${CMAKE_SOURCE_DIR}/tests/smoke/text_command_trace_context.py
+      $<TARGET_FILE:eop_server>
+  )
+
+  add_test(
     NAME smoke_message_framing_split_recv
     COMMAND python3
       ${CMAKE_SOURCE_DIR}/tests/smoke/message_framing_split_recv.py
