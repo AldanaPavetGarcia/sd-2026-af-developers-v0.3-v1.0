@@ -65,7 +65,7 @@ The expected flow is:
 |---|---|---:|---|
 | `type` | string | yes | Must be `ANALYZE_GRAPH`. |
 | `request_id` | string | yes | Client-generated identifier used to correlate request and response. |
-| `traceparent` | string | recommended | W3C trace context field used for distributed tracing. |
+| `traceparent` | string | recommended | W3C trace context field used for distributed tracing. Since v0.3 the server continues this trace (ADR-026) when the field appears before `payload`. |
 | `tracestate` | string | optional | Optional W3C trace state metadata. |
 | `payload` | object | yes | Graph analysis request payload. |
 
