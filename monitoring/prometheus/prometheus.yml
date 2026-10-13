@@ -12,3 +12,8 @@ scrape_configs:
   # workload by design, see #16 — Deployment + batch Job, nothing in docker-compose.yml). Its
   # /metrics is scraped in k8s/prometheus-configmap.yaml instead, via pod-annotation discovery
   # (kubernetes_sd_configs), since that's the only environment it actually runs in.
+  # API gateway (US-301..US-303): request metrics and circuit breaker state. In K8s the gateway
+  # pods are discovered by annotation like the other annotated pods.
+  - job_name: api-gateway
+    static_configs:
+      - targets: ["api-gateway:9100"]

@@ -24,6 +24,9 @@ REQUIRED_TITLES = {
     "Error Budget Remaining",
     "Average Request Latency",
     "Failed Requests",
+    # US-303 AC5: circuit breaker state of the API gateway's external services.
+    "External Service Circuit Breakers",
+    "Circuit Breaker Fallbacks and Transitions",
 }
 
 REQUIRED_QUERY_TOKENS = {
@@ -33,6 +36,9 @@ REQUIRED_QUERY_TOKENS = {
     "eop_request_duration_seconds_bucket",
     "eop_request_duration_seconds_sum",
     "eop_request_duration_seconds_count",
+    "eop_gateway_circuit_state",
+    "eop_gateway_fallback_responses_total",
+    "eop_circuit_breaker_state_transitions_total",
 }
 
 
