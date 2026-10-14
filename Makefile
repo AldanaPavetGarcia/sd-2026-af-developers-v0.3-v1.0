@@ -1,4 +1,4 @@
-.PHONY: gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -111,6 +111,11 @@ canary-status:
 ## US-305 AC4). Runs until Ctrl-C unless LOAD_ARGS="--duration N".
 gateway-load-test:
 	python3 tests/load/gateway_load.py $(LOAD_ARGS)
+
+## REST API P99 < 300 ms (v0.3 NFR, ADR-010 §6), measured from the client through the Ingress
+## on the read routes; fails over the limit or on any client error.
+gateway-p99-test:
+	python3 tests/load/gateway_load.py --duration 60 --report-every 15 --max-p99 300 $(LOAD_ARGS)
 
 ## Blue-green delivery of the api-gateway (US-305, ADR-011 §3). Move to the blue-green layout
 ## first (not zero-downtime; carries the running version over), then, with make
