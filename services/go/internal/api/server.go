@@ -35,6 +35,10 @@ type Options struct {
 	Metrics       *telemetry.Metrics
 	OpenAPIJSON   []byte
 	HealthTimeout time.Duration
+	// Version and Track identify this deployment in every response, so a client or a load test
+	// can tell which side of a canary or blue-green split answered (ADR-011).
+	Version string
+	Track   string
 }
 
 // Server serves the public REST API.
@@ -50,6 +54,8 @@ type Server struct {
 	metrics       *telemetry.Metrics
 	openAPI       []byte
 	healthTimeout time.Duration
+	version       string
+	track         string
 	now           func() time.Time
 	newID         func() string
 }
@@ -68,6 +74,8 @@ func NewServer(opts Options) *Server {
 		metrics:       opts.Metrics,
 		openAPI:       opts.OpenAPIJSON,
 		healthTimeout: opts.HealthTimeout,
+		version:       opts.Version,
+		track:         opts.Track,
 		now:           time.Now,
 		newID:         uuid.NewString,
 	}
@@ -82,7 +90,7 @@ func (s *Server) Routes() http.Handler {
 func (s *Server) router() *chi.Mux {
 	r := chi.NewRouter()
 	// observe wraps recoverPanics so a recovered panic is still counted and logged as a 500.
-	r.Use(s.observe, s.recoverPanics)
+	r.Use(s.identify, s.observe, s.recoverPanics)
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusNotFound, errorBody{Code: CodeRouteNotFound, Message: "no such route"})
 	})
@@ -101,6 +109,25 @@ func (s *Server) router() *chi.Mux {
 		r.Get("/graph/jobs/{job_id}", s.getJob)
 	})
 	return r
+}
+
+// Response headers naming the deployment that served the request.
+const (
+	HeaderVersion = "X-EOP-Version"
+	HeaderTrack   = "X-EOP-Track"
+)
+
+// identify sets the version headers before any handler writes, error responses included.
+func (s *Server) identify(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.version != "" {
+			w.Header().Set(HeaderVersion, s.version)
+		}
+		if s.track != "" {
+			w.Header().Set(HeaderTrack, s.track)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // observe records metrics and one access log line per request, keyed by route pattern.

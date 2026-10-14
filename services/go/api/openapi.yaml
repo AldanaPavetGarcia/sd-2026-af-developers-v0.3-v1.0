@@ -9,6 +9,10 @@ info:
     Versioning: every route lives under `/v1/`. Removing or renaming a field, changing a type or
     changing a status code is a breaking change and requires `/v2/`, served alongside `/v1/`
     until consumers migrate. Adding optional fields or new routes is not breaking.
+
+    Every response carries `X-EOP-Version` and `X-EOP-Track` (for example `0.3.1` and
+    `canary`), naming the gateway deployment that served it during a canary or blue-green
+    rollout (ADR-011). They are informational: clients must not depend on their values.
 servers:
   - url: /
 tags:

@@ -75,6 +75,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger, listeners 
 				MaxBodyBytes: cfg.Analysis.MaxBodyBytes, AsyncMinNodes: cfg.Analysis.AsyncMinNodes, SyncTimeout: cfg.Analysis.SyncTimeout,
 			},
 			Logger: logger, Metrics: metrics, OpenAPIJSON: spec, HealthTimeout: cfg.HealthTimeout,
+			Version: cfg.Version, Track: cfg.Track,
 		}).Routes(),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 	}
