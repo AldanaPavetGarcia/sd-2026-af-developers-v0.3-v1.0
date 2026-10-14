@@ -124,7 +124,11 @@ Deployment (`deployment/`); the overlays instantiate that Deployment once per tr
 (ADR-011). `overlays/canary` runs `api-gateway-stable` and `api-gateway-canary` behind the
 Ingress host `api.eop.local`; the canary procedure (`make canary-deploy`, `canary-rollout
 WEIGHT=N`, `canary-rollback`, `canary-promote`) is in [docs/RUNBOOK.md](../../docs/RUNBOOK.md),
-and `make gateway-load-test` keeps load on the Ingress while it runs.
+and `make gateway-load-test` keeps load on the Ingress while it runs. `overlays/blue-green`
+runs `api-gateway-blue` and `api-gateway-green` behind `api-gateway-active`; `make
+blue-green-deploy`, `blue-green-switch` (smoke tests first, `tests/smoke/gateway_smoke.py`) and
+`blue-green-rollback` are in the same runbook. `make gateway-smoke-test URL=…` runs the smoke
+suite against any gateway.
 
 ### Circuit breaker demo (US-303 AC7)
 

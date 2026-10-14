@@ -2,7 +2,7 @@
 
 Operational procedures for the EOP stack on Kubernetes. Every section assumes the stack was
 deployed with `make k8s-apply` and that `kubectl` points at the cluster. More sections are added
-as the delivery procedures land (blue-green, v0.3; the full v1.0 runbook, US-406).
+as the delivery procedures land (the full v1.0 runbook comes with US-406).
 
 ## From a Grafana alert to the request logs (US-306)
 
@@ -92,3 +92,42 @@ for diagnosis (`kubectl logs deploy/api-gateway-canary`, or *EOP Request Logs* f
 **Do not** run `make k8s-apply` during a rollout: re-applying the overlay resets the weight to
 the versioned value, 0.
 
+## Blue-green release of the API gateway (US-305)
+
+In the blue-green layout of ADR-011 the Ingress sends every request to the Service
+`api-gateway-active`, whose selector names one slot (`slot=blue` or `slot=green`). A release goes
+to the idle slot, is smoke-tested there through its own preview Service
+(`api-gateway-<slot>-preview`), and goes live with a single patch of that selector.
+
+**Before you start**
+
+- Move the gateway to this layout, outside the demo window: `make blue-green-layout`. It starts
+  `api-gateway-blue` with the version that was serving, makes it active and removes the canary
+  objects. The way back is `make canary-layout`. Neither move is zero-downtime.
+- In a second terminal, the load test: `make gateway-load-test`. It shows which slot answers
+  (`0.3.1 (blue)`, `0.3.2 (green)`) and fails on any 5xx or connection error.
+
+**Procedure**
+
+1. `make blue-green-deploy IMAGE=api-gateway:<tag> VERSION=<version>` — the idle slot (green
+   while blue is active, and the other way round) starts the new version. It gets no traffic.
+2. `make blue-green-switch` — runs `tests/smoke/gateway_smoke.py` against the idle slot's preview
+   Service: health, node listing and a three-node graph analysis, every response required to
+   come from the new version. If any check fails, nothing changes and the active slot keeps
+   serving. If all pass, the selector of `api-gateway-active` moves to the new slot, and the
+   command waits until no client is served by the old one and prints how long it took.
+3. Verify on the *Gateway … by Version* panels and in the load test output.
+4. The old slot keeps running so a rollback needs no pod to start. Once the new version is
+   trusted, free its resources with `kubectl scale deploy/api-gateway-<old slot> --replicas=0`.
+
+`make blue-green-status` prints the active slot and the image, version and ready pods of each.
+
+### Blue-green rollback
+
+`make blue-green-rollback` moves the selector back to the other slot — the same mechanism as
+the switch, without smoke tests, since that slot was serving moments before — and reports how
+long clients kept reaching the slot being left. The limit is 10 s. It refuses if the other slot
+has no ready pod (scaled down already): scale it up first.
+
+**Do not** run `make k8s-apply` or re-apply the blue-green overlay during a release: it
+returns the gateway to the canary layout, or the active selector to blue.

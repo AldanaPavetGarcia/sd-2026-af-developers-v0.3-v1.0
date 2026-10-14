@@ -125,6 +125,31 @@ zero-downtime claim and is done before the load test starts.
   `api-gateway` grouped by `service.version`/`deployment.track` gave 0.3.1 (stable) and 0.3.2
   (canary) with their own P99 and error count (US-304 AC3).
 
+## Implementation Notes (US-305, #56)
+
+* **Layout.** `overlays/blue-green` instantiates the base Deployment twice (`blue/`, `green/`,
+  slot in the selector, green versioned at 0 replicas) and removes the shared Service
+  `api-gateway` of the base: a Service selecting both slots would expose the new version before
+  its smoke tests. `api-gateway-active` takes its place for the Ingress and in-cluster clients.
+  The `track` label of each slot is the slot name, so metrics, spans and `X-EOP-Track` say
+  `blue` or `green` and the per-version panels of US-304 work unchanged.
+* **Two preview Services.** Besides `api-gateway-green-preview`, `api-gateway-blue-preview`
+  exists because releases alternate: the next one goes to blue while green is active.
+  `make blue-green-deploy` always targets the idle slot and `make blue-green-switch` always
+  smoke-tests the slot it is about to activate.
+* **Smoke gate.** `tests/smoke/gateway_smoke.py` (US-305 AC6) runs through a port-forward to the
+  preview Service and requires every response to carry the new slot's `X-EOP-Version`, so it can
+  never pass by reaching the live slot. Rollback skips it: the slot it returns to was serving.
+* **Moving between layouts** (`make blue-green-layout` / `make canary-layout`) carries the
+  serving image and version over, then deletes the other layout's objects. It is not
+  zero-downtime, as §4 anticipated.
+* **Measured on minikube (13/10/2026),** with `make gateway-load-test` running throughout:
+  a green slot whose analysis timed out failed the smoke tests and the switch did not happen;
+  after fixing it, switch blue → green, rollback and switch again took 4.13 s, 4.16 s and 4.60 s
+  from the selector patch until 40 consecutive responses came from the new slot (limit 10 s),
+  with 17,272 requests and no 5xx or connection error. The patch itself takes about 0.3 s; the
+  rest is ingress-nginx picking up the new endpoints.
+
 ## When to Use Each
 
 | Situation | Pattern |
