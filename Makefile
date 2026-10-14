@@ -1,4 +1,4 @@
-.PHONY: loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -83,6 +83,34 @@ gateway-coverage:
 gateway-image:
 	docker build -t api-gateway:local $(GO_DIR)
 	docker build --target external-stub -t external-stub:local $(GO_DIR)
+
+## Canary release of the api-gateway (US-304, ADR-011). The Ingress needs ingress-nginx
+## (minikube addons enable ingress). Typical run, with make gateway-load-test in another terminal:
+##   make canary-deploy IMAGE=api-gateway:0.3.1 VERSION=0.3.1
+##   make canary-rollout WEIGHT=10   (then 50, then 100)
+##   make canary-promote             or, if the canary misbehaves, make canary-rollback
+canary-deploy:
+	@test -n "$(IMAGE)" -a -n "$(VERSION)" || { echo "usage: make canary-deploy IMAGE=<image> VERSION=<version>"; exit 1; }
+	./scripts/canary.sh deploy "$(IMAGE)" "$(VERSION)"
+
+canary-rollout:
+	@test -n "$(WEIGHT)" || { echo "usage: make canary-rollout WEIGHT=<0-100>"; exit 1; }
+	./scripts/canary.sh rollout "$(WEIGHT)"
+
+## US-304 AC4: weight 0, timed until no client gets a canary response (< 30 s).
+canary-rollback:
+	./scripts/canary.sh rollback
+
+canary-promote:
+	./scripts/canary.sh promote
+
+canary-status:
+	./scripts/canary.sh status
+
+## Continuous load through the Ingress; fails on any 5xx or connection error (US-304 AC6,
+## US-305 AC4). Runs until Ctrl-C unless LOAD_ARGS="--duration N".
+gateway-load-test:
+	python3 tests/load/gateway_load.py $(LOAD_ARGS)
 
 ## US-306 AC6 on a running cluster: a failed request has the same trace_id in SigNoz and Loki.
 k8s-log-trace-test:
