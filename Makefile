@@ -1,4 +1,4 @@
-.PHONY: gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -111,6 +111,11 @@ canary-status:
 ## US-305 AC4). Runs until Ctrl-C unless LOAD_ARGS="--duration N".
 gateway-load-test:
 	python3 tests/load/gateway_load.py $(LOAD_ARGS)
+
+## US-305 AC6 against any gateway URL: make gateway-smoke-test URL=http://localhost:8080
+gateway-smoke-test:
+	@test -n "$(URL)" || { echo "usage: make gateway-smoke-test URL=<gateway url>"; exit 1; }
+	python3 tests/smoke/gateway_smoke.py "$(URL)"
 
 ## Static contract of the gateway delivery layouts (ADR-011) and tests of the load tool.
 gateway-overlays-test:
