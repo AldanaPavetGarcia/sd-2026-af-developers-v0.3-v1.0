@@ -1,4 +1,4 @@
-.PHONY: gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -111,6 +111,32 @@ canary-status:
 ## US-305 AC4). Runs until Ctrl-C unless LOAD_ARGS="--duration N".
 gateway-load-test:
 	python3 tests/load/gateway_load.py $(LOAD_ARGS)
+
+## Blue-green delivery of the api-gateway (US-305, ADR-011 §3). Move to the blue-green layout
+## first (not zero-downtime; carries the running version over), then, with make
+## gateway-load-test running in another terminal:
+##   make blue-green-deploy IMAGE=api-gateway:0.3.2 VERSION=0.3.2   (goes to the idle slot)
+##   make blue-green-switch     smoke tests on the idle slot, then one selector patch
+##   make blue-green-rollback   back to the previous slot (< 10 s)
+blue-green-layout:
+	./scripts/blue-green.sh layout blue-green
+
+canary-layout:
+	./scripts/blue-green.sh layout canary
+
+blue-green-deploy:
+	@test -n "$(IMAGE)" -a -n "$(VERSION)" || { echo "usage: make blue-green-deploy IMAGE=<image> VERSION=<version>"; exit 1; }
+	./scripts/blue-green.sh deploy "$(IMAGE)" "$(VERSION)"
+
+## US-305 AC7: smoke tests and, only if they pass, the switch.
+blue-green-switch:
+	./scripts/blue-green.sh switch
+
+blue-green-rollback:
+	./scripts/blue-green.sh rollback
+
+blue-green-status:
+	./scripts/blue-green.sh status
 
 ## US-305 AC6 against any gateway URL: make gateway-smoke-test URL=http://localhost:8080
 gateway-smoke-test:
