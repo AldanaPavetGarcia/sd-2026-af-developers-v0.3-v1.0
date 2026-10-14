@@ -40,6 +40,9 @@ services/go/
 Successful responses: `{"data": …, "meta": {"timestamp": …, "trace_id": …}}`.
 Errors: `{"error": {"code": …, "message": …, "field": …}, "meta": …}`. The full contract is
 [`api/openapi.yaml`](api/openapi.yaml); unit tests validate every response against it.
+Every response also carries `X-EOP-Version` and `X-EOP-Track`, taken from the pod's `version`
+and `track` labels, so a client or the load test can tell which deployment answered during a
+rollout (ADR-011).
 
 Analysis requests are validated in the gateway first (`400` naming the offending field, e.g.
 `edges[3].weight`), so an invalid graph never occupies the engine. An analysis that cannot run
@@ -113,8 +116,15 @@ cd services/go && EOP_SERVER_ADDR=127.0.0.1:9026 go run ./cmd/api-gateway
 ```
 
 Kubernetes: `kubectl apply -f k8s/redis/ -f k8s/external-stubs/ && kubectl apply -k
-k8s/api-gateway/base` (also part of `make k8s-apply`). `make gateway-image` builds both images,
-`api-gateway:local` and `external-stub:local`.
+k8s/api-gateway/overlays/canary` (also part of `make k8s-apply`). `make gateway-image` builds
+both images, `api-gateway:local` and `external-stub:local`.
+
+`k8s/api-gateway/base` holds the shared configuration and Service (`common/`) and one
+Deployment (`deployment/`); the overlays instantiate that Deployment once per track or slot
+(ADR-011). `overlays/canary` runs `api-gateway-stable` and `api-gateway-canary` behind the
+Ingress host `api.eop.local`; the canary procedure (`make canary-deploy`, `canary-rollout
+WEIGHT=N`, `canary-rollback`, `canary-promote`) is in [docs/RUNBOOK.md](../../docs/RUNBOOK.md),
+and `make gateway-load-test` keeps load on the Ingress while it runs.
 
 ### Circuit breaker demo (US-303 AC7)
 

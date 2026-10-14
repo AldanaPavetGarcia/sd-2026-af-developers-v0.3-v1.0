@@ -97,6 +97,34 @@ zero-downtime claim and is done before the load test starts.
 * A continuous load script (`tests/load/`) runs through every weight change and switch, and fails
   if it sees any 5xx or connection error (US-304 AC6, US-305 AC4).
 
+## Implementation Notes (US-304, #55)
+
+* **Layout.** `k8s/api-gateway/base` is split into `common/` (ConfigMaps and the shared Service)
+  and `deployment/` (the Deployment alone), because an overlay can only instantiate a
+  Kustomize directory, not a single file, and renaming one copy of a Deployment with a patch also
+  renames every other copy built from it. `overlays/canary` therefore has one sub-directory per
+  track (`stable/`, `canary/`), each adding its name suffix and the track to the selector.
+  `make k8s-apply` deploys this overlay and deletes the earlier plain `api-gateway` Deployment,
+  whose selector is different (a one-time, not zero-downtime, migration).
+* **Telling versions apart.** Version and track reach the process from the pod labels through the
+  Downward API (US-301). Besides metrics and spans, every response now carries `X-EOP-Version`
+  and `X-EOP-Track`, so the load test reports the split that clients actually see and the
+  rollback can be timed from the client side.
+* **Safety in the tooling.** `canary-rollout` refuses a weight above 0 while the canary has no
+  ready pod (ingress-nginx would answer 503 for that share). `canary-rollback` measures from the
+  start of the command until 40 consecutive responses come from stable.
+* **Rollback trigger.** Grafana alert `eop-gateway-canary-error-rate`
+  (`monitoring/grafana/provisioning/alerting/eop-gateway-alerts.yaml`): 5xx share of the canary
+  track over 5 minutes above 1 %, no data counts as OK. Procedure in `docs/RUNBOOK.md`.
+* **Measured on minikube (13/10/2026),** with `make gateway-load-test` running throughout (4
+  clients, ~73 requests/s): deploy → 10 % → 50 % → 100 % → rollback → 10 % → promote, 24,068
+  requests, no 5xx and no connection error; observed split 9–10 % at weight 10 and 43–61 % at
+  weight 50 (10 s windows). Rollback: clients stopped reaching the canary 1.08 s after
+  `make canary-rollback` started from weight 50 and 1.02 s from weight 100 (limit 30 s), again
+  with no client error (14,601 requests). SigNoz kept the versions apart: spans of
+  `api-gateway` grouped by `service.version`/`deployment.track` gave 0.3.1 (stable) and 0.3.2
+  (canary) with their own P99 and error count (US-304 AC3).
+
 ## When to Use Each
 
 | Situation | Pattern |
