@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -215,4 +216,45 @@ TEST(EngineRequestDispatchTest, DispatchesShortestPathsAndReturnsItsResult)
     // The per-request log must name the algorithm that actually ran (US-201 AC5).
     const auto entry = nlohmann::json::parse(log);
     EXPECT_EQ(entry["algorithms"], nlohmann::json::array({"shortest_paths"}));
+}
+
+// ADR-024: above the exact threshold the engine samples sources, and the response has to say so,
+// or a caller would read estimated scores as exact ones. computeCentrality() is tested for the
+// sampling itself; this checks that the engine turns it into response metadata.
+TEST(EngineRequestDispatchTest, DeclaresApproximateCentralityInTheResponse)
+{
+    setenv("EOP_HPC_CENTRALITY_EXACT_MAX_NODES", "2", 1);
+    setenv("EOP_HPC_CENTRALITY_SAMPLES", "2", 1);
+
+    nlohmann::json request = nlohmann::json::parse(buildRequest(""));
+    request["payload"]["algorithms"] = {"centrality"};
+
+    testing::internal::CaptureStderr();
+    const auto result = hpc::processAnalyzeGraphRequest(request.dump());
+    testing::internal::GetCapturedStderr();
+
+    unsetenv("EOP_HPC_CENTRALITY_EXACT_MAX_NODES");
+    unsetenv("EOP_HPC_CENTRALITY_SAMPLES");
+
+    ASSERT_EQ(result.exit_code, 0) << result.payload;
+    const auto response = nlohmann::json::parse(result.payload);
+    const auto& metadata = response["result"]["algorithm_metadata"]["centrality"];
+    EXPECT_EQ(metadata["approximate"], true);
+    EXPECT_EQ(metadata["method"], "brandes_pivot_sampling");
+    EXPECT_EQ(metadata["sampled_sources"], 2);
+    EXPECT_EQ(metadata["total_sources"], 3);
+    EXPECT_EQ(response["result"]["algorithms"]["centrality"].size(), 3u);
+}
+
+// Below the threshold the result is exact and the response stays as it was before ADR-024.
+TEST(EngineRequestDispatchTest, ExactCentralityAddsNoMetadata)
+{
+    unsetenv("EOP_HPC_CENTRALITY_EXACT_MAX_NODES");
+
+    testing::internal::CaptureStderr();
+    const auto result = hpc::processAnalyzeGraphRequest(buildRequest(""));
+    testing::internal::GetCapturedStderr();
+
+    ASSERT_EQ(result.exit_code, 0) << result.payload;
+    EXPECT_FALSE(nlohmann::json::parse(result.payload)["result"].contains("algorithm_metadata"));
 }
