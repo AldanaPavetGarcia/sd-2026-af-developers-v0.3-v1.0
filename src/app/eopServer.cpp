@@ -3,6 +3,7 @@
 
 #include "../../include/eopServer.hpp"
 #include "../../lib/include/configLoader.hpp"
+#include "../../lib/include/traceContext.hpp"
 
 #include <arpa/inet.h>
 #include <poll.h>
@@ -596,12 +597,13 @@ static std::string buildTraceparentFromCurrentSpan()
  *
  * Without this the HPC Engine has no parent to attach its own span to, so engine-side work shows
  * up as a disconnected trace instead of a child of the request that caused it (US-203 AC5 /
- * US-206 AC5). A `traceparent` the caller already supplied is left untouched: an upstream client
- * that started the trace owns the context, and the server is only forwarding it.
+ * US-206 AC5). A `traceparent` the caller supplied is replaced, not kept: when it was valid the
+ * server's span already continues the caller's trace (same trace-id), and the engine must hang
+ * from the server's span, which is the one that dispatched it.
  *
  * @param jsonRequest ANALYZE_GRAPH envelope to forward, as JSON text.
- * @return The envelope with `traceparent` set, or unchanged if it is not parseable JSON, already
- *         carries one, or there is no active span to propagate.
+ * @return The envelope with `traceparent` set, or unchanged if it is not parseable JSON or there
+ *         is no active span to propagate.
  */
 static std::string injectTraceparent(const std::string& jsonRequest)
 {
@@ -619,14 +621,120 @@ static std::string injectTraceparent(const std::string& jsonRequest)
         return jsonRequest;
     }
 
-    if (envelope.contains("traceparent") && envelope["traceparent"].is_string() &&
-        !envelope["traceparent"].get<std::string>().empty())
-    {
-        return jsonRequest;
-    }
-
     envelope["traceparent"] = traceparent;
     return envelope.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
+/**
+ * @brief SAX handler that reads the top-level `traceparent` of an ANALYZE_GRAPH envelope.
+ *
+ * It stops at that value or at the top-level `payload` key, whichever comes first, so a
+ * multi-megabyte graph is never scanned only to find the trace context (a full parse here made
+ * every large request pay for a second parse of the whole envelope).
+ */
+class TraceparentSax : public nlohmann::json_sax<nlohmann::json>
+{
+public:
+    /// The traceparent found, or an empty string.
+    const std::string& value() const
+    {
+        return m_value;
+    }
+
+    bool null() override
+    {
+        return true;
+    }
+    bool boolean(bool) override
+    {
+        return true;
+    }
+    bool number_integer(number_integer_t) override
+    {
+        return true;
+    }
+    bool number_unsigned(number_unsigned_t) override
+    {
+        return true;
+    }
+    bool number_float(number_float_t, const string_t&) override
+    {
+        return true;
+    }
+    // LCOV_EXCL_START: only binary formats (CBOR, BSON, MessagePack) call it, never a text envelope
+    bool binary(binary_t&) override
+    {
+        return true;
+    }
+    // LCOV_EXCL_STOP
+    bool string(string_t& s) override
+    {
+        if (m_depth == 1 && m_isTraceparent)
+        {
+            m_value = s;
+            return false; // found: stop parsing
+        }
+        return true;
+    }
+    bool start_object(std::size_t) override
+    {
+        ++m_depth;
+        return true;
+    }
+    bool end_object() override
+    {
+        --m_depth;
+        return true;
+    }
+    bool start_array(std::size_t) override
+    {
+        ++m_depth;
+        return true;
+    }
+    bool end_array() override
+    {
+        --m_depth;
+        return true;
+    }
+    bool key(string_t& k) override
+    {
+        if (m_depth != 1)
+        {
+            return true;
+        }
+        m_isTraceparent = (k == "traceparent");
+        return k != "payload"; // the graph follows: stop parsing
+    }
+    bool parse_error(std::size_t, const std::string&, const nlohmann::detail::exception&) override
+    {
+        return false;
+    }
+
+private:
+    std::string m_value;
+    int m_depth = 0;
+    bool m_isTraceparent = false;
+};
+
+/**
+ * @brief Returns the trace context a caller attached to a request, if any.
+ *
+ * ANALYZE_GRAPH carries it as the envelope's `traceparent` field (ADR-015), honored when it
+ * precedes `payload` as the API gateway sends it; text commands carry it as an optional trailing
+ * `traceparent=` key (ADR-026). The value is not validated here.
+ *
+ * @param request Raw request line.
+ * @return The traceparent value, or an empty string.
+ */
+static std::string callerTraceparent(const std::string& request)
+{
+    if (!isAnalyzeGraphRequest(request))
+    {
+        return extractTraceparentKey(request);
+    }
+    TraceparentSax sax;
+    nlohmann::json::sax_parse(normalizeAnalyzeGraphRequest(request), &sax);
+    return sax.value();
 }
 
 /**
@@ -932,6 +1040,9 @@ static void workerLoop(ServerContext& ctx)
         {
             auto tracer = opentelemetry::trace::Provider::GetTracerProvider()->GetTracer("eop-server");
             opentelemetry::trace::StartSpanOptions options;
+            // A caller that sends its own trace context (the API gateway does, ADR-026) owns the
+            // trace: the command span continues it. Otherwise it hangs from the connection span.
+            const opentelemetry::trace::SpanContext callerContext = parseTraceparent(callerTraceparent(msg.message));
             {
                 std::lock_guard<std::mutex> lock(ctx.sessionsMutex);
                 auto it = ctx.activeSessions.find(msg.clientFd);
@@ -943,6 +1054,10 @@ static void workerLoop(ServerContext& ctx)
                         options.parent = it->second.connectionSpan->GetContext();
                     }
                 }
+            }
+            if (callerContext.IsValid())
+            {
+                options.parent = callerContext;
             }
             opSpan = tracer->StartSpan(opName, options);
             scope = std::make_unique<opentelemetry::trace::Scope>(tracer->WithActiveSpan(opSpan));
@@ -995,6 +1110,9 @@ static void workerLoop(ServerContext& ctx)
             if (resultStr == "ERROR")
             {
                 opSpan->SetStatus(opentelemetry::trace::StatusCode::kError);
+                // One ERROR line per failed traced operation, written while its span is active,
+                // so the span with result=ERROR and its log share trace_id (US-306 AC6).
+                auditLogger.writeString(opName + " failed", ERROR_LOG);
             }
             else
             {

@@ -774,3 +774,63 @@ TEST_F(EopServerTest, AnalyzeGraphReturnsTimeoutWhenHpcEngineStalls)
     close(engineSock);
     unsetenv("EOP_HPC_TIMEOUT_MS");
 }
+
+// ---------------------------------------------------------------------------
+// ANALYZE_GRAPH: the HPC Engine drops the connection after receiving the request
+// ---------------------------------------------------------------------------
+TEST_F(EopServerTest, AnalyzeGraphReturnsServiceUnavailableWhenHpcEngineDisconnectsMidDispatch)
+{
+    int engineSock = openClientSocket();
+    ASSERT_GE(engineSock, 0);
+
+    const std::string engineAck = sendOnOpenSocketAndReceive(
+        engineSock, "REGISTER node_id=hpc-engine bunker_name=HPC ip_address=127.0.0.1 capacity=1");
+    ASSERT_NE(engineAck.find("ACK"), std::string::npos) << engineAck;
+
+    const std::string request =
+        R"({"type":"ANALYZE_GRAPH","request_id":"req-drop","payload":{"nodes":["A"],"edges":[],"algorithms":["connected_components"]}})";
+
+    std::string clientResponse;
+    std::thread clientThread([&clientResponse, &request]() { clientResponse = sendAndReceive(request); });
+
+    // The engine crashes while working on the request: it read it but never answers.
+    const std::string forwardedRequest = receiveFromSocketWithTimeout(engineSock, 2000);
+    EXPECT_NE(forwardedRequest.find("req-drop"), std::string::npos) << forwardedRequest;
+    close(engineSock);
+
+    clientThread.join();
+
+    // The client gets a structured error at once instead of waiting for EOP_HPC_TIMEOUT_MS...
+    EXPECT_NE(clientResponse.find(getCmdStringFromCode(CMD_ERROR_SERVICE_UNAVAILABLE)), std::string::npos)
+        << clientResponse;
+    // ...and the dead engine is dropped, so the next request is not dispatched to it.
+    EXPECT_TRUE(waitForNodeStatus("hpc-engine", "OFFLINE"));
+    EXPECT_NE(sendAndReceive(request).find(getCmdStringFromCode(CMD_ERROR_SERVICE_UNAVAILABLE)), std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// US-104: a registered node that stops sending heartbeats is marked OFFLINE
+// ---------------------------------------------------------------------------
+TEST_F(EopServerTest, SilentRegisteredNodeGoesOfflineAfterHeartbeatTimeout)
+{
+    const std::string nodeId = "silent-node";
+
+    int sock = openClientSocket();
+    ASSERT_GE(sock, 0);
+
+    const std::string ack = sendOnOpenSocketAndReceive(
+        sock, "REGISTER node_id=" + nodeId + " bunker_name=Silent ip_address=10.0.0.9 capacity=1");
+    ASSERT_NE(ack.find("ACK"), std::string::npos) << ack;
+    ASSERT_TRUE(waitForNodeStatus(nodeId, "ONLINE"));
+
+    // The socket stays open but nothing else is sent: only the heartbeat timeout (twice the
+    // default 5 s interval) can detect this node, unlike a disconnect.
+    constexpr int kHeartbeatTimeoutSeconds = 10;
+    constexpr int kPollDelayMs = 500;
+    EXPECT_TRUE(
+        waitForNodeStatus(nodeId, "OFFLINE", (kHeartbeatTimeoutSeconds + 5) * 1000 / kPollDelayMs, kPollDelayMs));
+
+    char buf[16];
+    EXPECT_LE(recv(sock, buf, sizeof(buf), 0), 0) << "the server should close the silent session";
+    close(sock);
+}

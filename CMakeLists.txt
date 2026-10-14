@@ -60,6 +60,7 @@ add_executable(eop_server
   lib/src/systemTimeValidator.cpp
   lib/src/commonProtocol.cpp
   lib/src/configLoader.cpp
+  lib/src/traceContext.cpp
 )
 
 target_include_directories(eop_server PRIVATE include lib/include)
@@ -109,12 +110,14 @@ if(EXODUS_BUILD_TESTS)
     tests/unit/testClient.cpp
     tests/unit/testClientDisconnect.cpp
     tests/unit/testMetrics.cpp
+    tests/unit/traceContextTest.cpp
     src/app/eop_client.c
     src/app/eopServer.cpp
     lib/src/eventAuditLogger.cpp
     lib/src/systemTimeValidator.cpp
     lib/src/commonProtocol.cpp
     lib/src/configLoader.cpp
+    lib/src/traceContext.cpp
   )
 
   target_include_directories(unit_tests PRIVATE include lib/include)
@@ -219,6 +222,20 @@ if(EXODUS_BUILD_TESTS)
     NAME smoke_v01_protocol_backward_compat
     COMMAND python3
       ${CMAKE_SOURCE_DIR}/tests/smoke/v01_protocol_backward_compat.py
+      $<TARGET_FILE:eop_server>
+  )
+
+  add_test(
+    NAME smoke_text_command_trace_context
+    COMMAND python3
+      ${CMAKE_SOURCE_DIR}/tests/smoke/text_command_trace_context.py
+      $<TARGET_FILE:eop_server>
+  )
+
+  add_test(
+    NAME smoke_server_config_limits
+    COMMAND python3
+      ${CMAKE_SOURCE_DIR}/tests/smoke/server_config_limits.py
       $<TARGET_FILE:eop_server>
   )
 

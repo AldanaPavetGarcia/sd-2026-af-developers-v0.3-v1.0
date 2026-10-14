@@ -30,6 +30,10 @@ spec:
               subPath: prometheus-datasource.yaml
               readOnly: true
             - name: provisioning
+              mountPath: /etc/grafana/provisioning/datasources/loki-datasource.yaml
+              subPath: loki-datasource.yaml
+              readOnly: true
+            - name: provisioning
               mountPath: /etc/grafana/provisioning/dashboards/eop-dashboard-provider.yaml
               subPath: eop-dashboard-provider.yaml
               readOnly: true

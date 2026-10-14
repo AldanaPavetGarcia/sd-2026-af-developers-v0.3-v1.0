@@ -1,4 +1,4 @@
-.PHONY: deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -16,15 +16,24 @@ k8s-apply:
 	kubectl create configmap eop-clickhouse-config \
 		--from-file=monitoring/signoz-common/clickhouse/ \
 		--dry-run=client -o yaml | kubectl label --local -f - app=clickhouse -o yaml | kubectl apply -f -
+	# loki-config and otel-log-agent-config: generated from monitoring/ like the dashboards, so
+	# those files stay the single source of truth (US-306 AC8).
+	kubectl create configmap loki-config --from-file=monitoring/loki/config.yaml \
+		--dry-run=client -o yaml | kubectl label --local -f - app=loki -o yaml | kubectl apply -f -
+	kubectl create configmap otel-log-agent-config --from-file=monitoring/otel-log-agent/config.yaml \
+		--dry-run=client -o yaml | kubectl label --local -f - app=otel-log-agent -o yaml | kubectl apply -f -
 	kubectl apply -f k8s/
 	kubectl apply -f k8s/redis/
 	kubectl apply -f k8s/external-stubs/
+	kubectl apply -f k8s/loki/ -f k8s/otel-log-agent/
 	kubectl apply -k k8s/api-gateway/base
 	# 180s, not 60s: US-204 AC6 requires this target to wait up to 3 minutes for all pods to
 	# be Ready. 60s already failed live (31/08) — Grafana's 1.4GB image alone took ~70s to
 	# pull on a cold node.
 	kubectl rollout status deployment/eop-server --timeout=180s
 	kubectl rollout status deployment/redis --timeout=180s
+	kubectl rollout status deployment/loki --timeout=180s
+	kubectl rollout status daemonset/otel-log-agent --timeout=180s
 	kubectl rollout status deployment/ai-service --timeout=180s
 	kubectl rollout status deployment/corporate-service --timeout=180s
 	kubectl rollout status deployment/api-gateway --timeout=180s
@@ -71,6 +80,10 @@ gateway-image:
 	docker build -t api-gateway:local $(GO_DIR)
 	docker build --target external-stub -t external-stub:local $(GO_DIR)
 
+## US-306 AC6 on a running cluster: a failed request has the same trace_id in SigNoz and Loki.
+k8s-log-trace-test:
+	python3 tests/k8s/log-trace-correlation.py
+
 k8s-recovery-test:
 	./tests/k8s/pod-recovery-cycle.sh
 
@@ -92,6 +105,10 @@ k8s-rollout-restart-test:
 
 observability-test:
 	python3 tests/smoke/test_signoz_integration.py
+
+## US-306: retention as code, log agent pipeline, Loki datasource and request-logs dashboard.
+loki-test:
+	python3 tests/smoke/test_loki_contract.py
 
 slo-dashboard-test:
 	python3 tests/smoke/test_grafana_dashboard_contract.py

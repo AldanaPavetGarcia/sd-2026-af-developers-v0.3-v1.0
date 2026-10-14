@@ -1,5 +1,6 @@
 #include "../include/eventAuditLogger.hpp"
 #include <chrono>
+#include <cstdlib>
 #include <iomanip>
 #include <mutex>
 #include <sstream>
@@ -44,6 +45,18 @@ static std::string escapeJson(const std::string& s)
             out += c;
     }
     return out;
+}
+
+// ADR-019 log schema: "service" names the emitter so Loki can filter by it (US-306 AC1). Same
+// variable the OpenTelemetry SDKs read; read once, the environment does not change at runtime.
+static const std::string& serviceName()
+{
+    static const std::string name = []() -> std::string
+    {
+        const char* env = std::getenv("OTEL_SERVICE_NAME");
+        return (env != nullptr && *env != '\0') ? std::string(env) : std::string(DEFAULT_SERVICE_NAME);
+    }();
+    return name;
 }
 
 EventAuditLogger::EventAuditLogger()
@@ -113,9 +126,10 @@ int EventAuditLogger::writeLog(const char* logMessage, LogType type)
         eventStr = levelStr + "_EVENT";
     }
 
-    std::cout << "{\"timestamp\":\"" << getIsoTimestamp() << "\",\"level\":\"" << levelStr << "\",\"trace_id\":\""
-              << traceIdStr << "\",\"span_id\":\"" << spanIdStr << "\",\"node_id\":\"" << nodeIdStr << "\",\"event\":\""
-              << eventStr << "\",\"message\":\"" << escapeJson(logMessage) << "\"}" << std::endl;
+    std::cout << "{\"timestamp\":\"" << getIsoTimestamp() << "\",\"level\":\"" << levelStr << "\",\"service\":\""
+              << escapeJson(serviceName()) << "\",\"trace_id\":\"" << traceIdStr << "\",\"span_id\":\"" << spanIdStr
+              << "\",\"node_id\":\"" << nodeIdStr << "\",\"event\":\"" << eventStr << "\",\"message\":\""
+              << escapeJson(logMessage) << "\"}" << std::endl;
 
     Date dateObj = {};
     Time timeObj = {};

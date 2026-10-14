@@ -140,6 +140,30 @@ sequenceDiagram
 * **Follow-ups:** ADR-003 addendum; C++ changes covered by unit tests and ASan/TSan; the AC6
   integration test; runbook section "From a Grafana alert to the request logs".
 
+## Implementation Notes (US-306, #54)
+
+* **One ERROR line per failed traced operation.** The server already marks a failed command's
+  span with `result=ERROR`, but the matching log line could be a WARNING (an unknown node, for
+  instance). Every traced command that ends in `result=ERROR` now also writes `<operation> failed`
+  at ERROR level while its span is active, so the span and the error log share `trace_id`
+  (US-306 AC6).
+* **Where the server looks for `traceparent` in ANALYZE_GRAPH.** It reads the envelope with a
+  streaming parser that stops at the top-level `traceparent` or at `payload`, whichever comes
+  first, so the trace context is honored when it precedes `payload` — the API gateway always
+  writes it first. A first version parsed the whole envelope and made every large request pay
+  for a second full parse (a 9 MB graph exceeded its 30 s budget under the sanitizers in CI).
+  A client that writes `traceparent` after `payload` is traced from its connection, as before.
+* **ANALYZE_GRAPH forwards the server's own span.** The server used to keep a `traceparent` the
+  caller had put in the envelope. Now that the server's span continues the caller's trace, the
+  engine is attached to the server's span instead, which is the one that dispatched it; the
+  trace-id does not change.
+* **Third-party containers** have no `service` field: the agent names them after their `app`
+  label, so every pod appears under a `service_name`.
+* **Verified on minikube:** all pods collected; a failed request through the gateway produced
+  one trace with the server span as a child of the gateway span (SigNoz) and the ERROR line with
+  the same `trace_id` (Loki); lines written while the agent restarted were collected afterwards
+  without duplicates, and lines survived a Loki restart.
+
 ## References
 
 * PRD — Milestone 3, US-306.

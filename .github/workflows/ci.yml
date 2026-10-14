@@ -195,7 +195,8 @@ jobs:
             graphviz \
             unzip \
             bc \
-            ccache
+            ccache \
+            python3-yaml
 
           # Crear symlinks versionados como nombres canónicos
           sudo ln -sf /usr/bin/clang-${{ env.CLANG_VERSION }}        /usr/local/bin/clang
@@ -412,6 +413,7 @@ jobs:
         run: |
           make slo-dashboard-test
           make hpc-dashboard-test
+          make loki-test
 
       # -----------------------------------
       # Benchmark Report analysis (US-202 AC5/AC6)

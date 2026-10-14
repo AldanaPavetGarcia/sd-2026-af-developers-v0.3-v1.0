@@ -95,6 +95,7 @@ if(HPC_BUILD_TESTS)
     tests/test_concurrent_algorithms.cpp
     tests/test_metrics.cpp
     tests/test_engine.cpp
+    tests/test_tracing.cpp
   )
 
   target_link_libraries(hpc_tests PRIVATE
