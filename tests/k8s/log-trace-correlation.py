@@ -85,8 +85,15 @@ def wait_for(label, fetch):
     return None
 
 
+def gateway_service():
+    """api-gateway in the canary layout, api-gateway-active in the blue-green one (ADR-011)."""
+    found = subprocess.run(["kubectl", "get", "service", "api-gateway", "-o", "name"],
+                           capture_output=True, text=True, check=False)
+    return "svc/api-gateway" if found.returncode == 0 else "svc/api-gateway-active"
+
+
 def main():
-    gateway, gw_port = port_forward("svc/api-gateway", 80)
+    gateway, gw_port = port_forward(gateway_service(), 80)
     loki, loki_port = port_forward("svc/loki", 3100)
     passed = True
     try:
