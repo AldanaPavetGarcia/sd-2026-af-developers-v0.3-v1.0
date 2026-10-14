@@ -1,0 +1,17 @@
+# Canary layout of the api-gateway (US-304, ADR-011 §2).
+#
+#   Ingress api-gateway        -> Service api-gateway-stable -> Deployment api-gateway-stable
+#   Ingress api-gateway-canary -> Service api-gateway-canary -> Deployment api-gateway-canary
+#   Service api-gateway (app=api-gateway) selects both Deployments.
+#
+# Steady state, as versioned here: canary weight 0 and the canary Deployment at 0 replicas.
+# A rollout only changes the weight annotation (make canary-rollout WEIGHT=N); re-applying this
+# overlay resets it to 0, so do not run make k8s-apply in the middle of a rollout.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base/common
+  - stable
+  - canary
+  - track-services.yaml
+  - ingress.yaml

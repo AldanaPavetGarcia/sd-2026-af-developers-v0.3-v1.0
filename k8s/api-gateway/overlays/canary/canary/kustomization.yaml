@@ -1,0 +1,22 @@
+# The canary track: a second instance of the base Deployment (ADR-011 §2). make canary-deploy
+# sets its image and version label and scales it up; make canary-promote scales it back to 0.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../base/deployment
+nameSuffix: -canary
+patches:
+  # The track label joins the selector so the two Deployments never select each other's pods.
+  - target:
+      kind: Deployment
+      name: api-gateway
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 0
+      - op: add
+        path: /spec/selector/matchLabels/track
+        value: canary
+      - op: replace
+        path: /spec/template/metadata/labels/track
+        value: canary

@@ -26,7 +26,11 @@ k8s-apply:
 	kubectl apply -f k8s/redis/
 	kubectl apply -f k8s/external-stubs/
 	kubectl apply -f k8s/loki/ -f k8s/otel-log-agent/
-	kubectl apply -k k8s/api-gateway/base
+	# The gateway runs in the canary layout (ADR-011 §4): stable serving, canary at 0 replicas and
+	# weight 0. The plain Deployment of v0.3's first releases has a different selector and is
+	# replaced by api-gateway-stable.
+	kubectl delete deployment api-gateway --ignore-not-found
+	kubectl apply -k k8s/api-gateway/overlays/canary
 	# 180s, not 60s: US-204 AC6 requires this target to wait up to 3 minutes for all pods to
 	# be Ready. 60s already failed live (31/08) — Grafana's 1.4GB image alone took ~70s to
 	# pull on a cold node.
@@ -36,7 +40,7 @@ k8s-apply:
 	kubectl rollout status daemonset/otel-log-agent --timeout=180s
 	kubectl rollout status deployment/ai-service --timeout=180s
 	kubectl rollout status deployment/corporate-service --timeout=180s
-	kubectl rollout status deployment/api-gateway --timeout=180s
+	kubectl rollout status deployment/api-gateway-stable --timeout=180s
 	kubectl rollout status deployment/hpc-engine --timeout=180s
 	kubectl rollout status deployment/prometheus --timeout=180s
 	kubectl rollout status deployment/grafana --timeout=180s
