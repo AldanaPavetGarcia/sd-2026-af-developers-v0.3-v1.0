@@ -338,6 +338,30 @@ func TestPanicBecomesInternalError(t *testing.T) {
 	}
 }
 
+// ADR-011: during a canary or blue-green switch the load test attributes each response to a
+// deployment by these headers, so they must be on every response, errors and panics included.
+func TestResponsesNameTheServingDeployment(t *testing.T) {
+	h := newHarness(t, &fakeStore{nodes: sampleNodes, panicOnList: true}, func(o *Options) {
+		o.Version, o.Track = "0.3.1", "canary"
+	})
+	for _, path := range []string{"/v1/nodes/alpha-01", "/v1/nodes/ghost", "/v2/nodes", "/v1/nodes"} {
+		rec := h.do(http.MethodGet, path)
+		if got := rec.Header().Get(HeaderVersion); got != "0.3.1" {
+			t.Errorf("%s (%d): %s = %q, want 0.3.1", path, rec.Code, HeaderVersion, got)
+		}
+		if got := rec.Header().Get(HeaderTrack); got != "canary" {
+			t.Errorf("%s (%d): %s = %q, want canary", path, rec.Code, HeaderTrack, got)
+		}
+	}
+}
+
+func TestVersionHeadersAreOmittedWhenUnset(t *testing.T) {
+	rec := newHarness(t, &fakeStore{}).do(http.MethodGet, "/v1/nodes")
+	if rec.Header().Get(HeaderVersion) != "" || rec.Header().Get(HeaderTrack) != "" {
+		t.Fatalf("unexpected headers: %v", rec.Header())
+	}
+}
+
 func TestMetricsUseRoutePatternNotRawPath(t *testing.T) {
 	h := newHarness(t, &fakeStore{nodes: sampleNodes})
 	h.do(http.MethodGet, "/v1/nodes/alpha-01")

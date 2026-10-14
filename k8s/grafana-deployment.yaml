@@ -45,6 +45,10 @@ spec:
               mountPath: /etc/grafana/provisioning/alerting/eop-hpc-alerts.yaml
               subPath: eop-hpc-alerts.yaml
               readOnly: true
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/alerting/eop-gateway-alerts.yaml
+              subPath: eop-gateway-alerts.yaml
+              readOnly: true
             # eop-grafana-dashboards is generated from monitoring/grafana/dashboards/ by
             # `make k8s-apply` (kubectl create configmap --from-file), not committed as YAML —
             # see k8s/grafana-provisioning-configmap.yaml's top comment for why.

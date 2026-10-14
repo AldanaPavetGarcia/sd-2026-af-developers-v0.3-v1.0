@@ -378,6 +378,96 @@
         "x": 8,
         "y": 18
       }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Gateway Error Rate by Version",
+      "description": "Share of API gateway responses that are 5xx, per deployed version and track (US-304 AC3). The canary rollback trigger is this value above 1 % over 5 minutes for the canary track (ADR-011 §2, alert 'API gateway canary error rate above 1%').",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (version, track) (rate(eop_gateway_http_requests_total{status_class=\"5xx\"}[5m])) / sum by (version, track) (rate(eop_gateway_http_requests_total[5m]))",
+          "legendFormat": "{{version}} ({{track}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 24
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Gateway P99 Latency by Version",
+      "description": "P99 of the time the API gateway takes to serve a request, per version and track (US-304 AC3). Objective: < 300 ms (ADR-010 §6).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le, version, track) (rate(eop_gateway_http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{version}} ({{track}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 24
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Gateway Requests per Second by Version",
+      "description": "Requests served per second by each version and track: shows the actual traffic split during a canary rollout or a blue-green switch (US-304 AC3, AC5).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (version, track) (rate(eop_gateway_http_requests_total[1m]))",
+          "legendFormat": "{{version}} ({{track}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 24
+      }
     }
   ]
 }

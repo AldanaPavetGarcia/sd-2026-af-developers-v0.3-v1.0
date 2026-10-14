@@ -166,3 +166,61 @@ data:
                 Sustained for over 2 minutes. Compare against the OpenMP Benchmark Report
                 (US-202 AC5) -- this usually means either genuine contention/overload, or the
                 configured baseline (EOP_HPC_BASELINE_P99_MS) no longer matches real hardware.
+  # Same content as monitoring/grafana/provisioning/alerting/eop-gateway-alerts.yaml, kept in
+  # sync by hand — US-304 AC4.
+  eop-gateway-alerts.yaml: |
+    apiVersion: 1
+
+    # US-304 AC4: "If the canary error rate exceeds 1% in a 5-minute window, a documented rollback
+    # procedure sets the canary weight to 0 in < 30 seconds." This rule is the trigger; the procedure
+    # is `make canary-rollback` (docs/RUNBOOK.md, "Canary rollback"). Native Grafana alerting, like
+    # eop-slo-alerts.yaml. No canary traffic means no data, which is not an alert.
+    groups:
+      - orgId: 1
+        name: eop-gateway-alerts
+        folder: EOP
+        interval: 1m
+        rules:
+          - uid: eop-gateway-canary-error-rate
+            title: "API gateway canary error rate above 1%"
+            condition: threshold
+            data:
+              - refId: query
+                queryType: ""
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: prometheus
+                model:
+                  refId: query
+                  instant: true
+                  # Same expression as the "Gateway Error Rate by Version" panel, restricted to the
+                  # canary track and expressed in percent.
+                  expr: 100 * sum(rate(eop_gateway_http_requests_total{track="canary",status_class="5xx"}[5m])) / sum(rate(eop_gateway_http_requests_total{track="canary"}[5m]))
+              - refId: threshold
+                queryType: ""
+                relativeTimeRange:
+                  from: 300
+                  to: 0
+                datasourceUid: "-100"
+                model:
+                  refId: threshold
+                  type: threshold
+                  expression: query
+                  conditions:
+                    - evaluator:
+                        type: gt
+                        params: [1]
+            noDataState: OK
+            execErrState: Error
+            # The 5-minute window is already in the query; firing on the first evaluation above the
+            # threshold leaves the 30 s of the rollback for the procedure itself.
+            for: 0s
+            labels:
+              severity: critical
+            annotations:
+              summary: "Canary error rate above 1% over 5 minutes: roll back the canary."
+              description: >-
+                Run `make canary-rollback` (sets the canary weight to 0). Compare versions on the
+                "Gateway Error Rate by Version" panel of the EOP SLO Dashboard and follow
+                docs/RUNBOOK.md, "Canary rollback".

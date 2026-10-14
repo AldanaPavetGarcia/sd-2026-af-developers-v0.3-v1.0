@@ -1,0 +1,45 @@
+# Public entry point (host api.eop.local) through ingress-nginx (minikube addons enable ingress).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-gateway
+  labels:
+    app: api-gateway
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.eop.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway-stable
+                port:
+                  name: http
+---
+# Same host: ingress-nginx sends canary-weight percent of the requests to the canary track
+# (US-304 AC2). The weight is the only field a rollout changes (AC7).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-gateway-canary
+  labels:
+    app: api-gateway
+  annotations:
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "0"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.eop.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway-canary
+                port:
+                  name: http

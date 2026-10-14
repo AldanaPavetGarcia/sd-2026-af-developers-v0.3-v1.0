@@ -415,6 +415,13 @@ jobs:
           make hpc-dashboard-test
           make loki-test
 
+      # Canary layout as rendered by Kustomize (selectors, Services, Ingress weight) and the load
+      # tool that measures rollouts (US-304, ADR-011). kubectl is preinstalled on the runner.
+      - name: Gateway Delivery Tests
+        run: |
+          make gateway-overlays-test
+          make gateway-load-tool-test
+
       # -----------------------------------
       # Benchmark Report analysis (US-202 AC5/AC6)
       # -----------------------------------

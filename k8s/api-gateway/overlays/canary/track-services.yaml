@@ -1,0 +1,38 @@
+# One Service per track. ingress-nginx applies a canary weight between two distinct backends, so
+# each Ingress needs its own; these are created once and never edited during a rollout (ADR-011
+# §2). In-cluster clients keep using the shared Service api-gateway, which selects both tracks.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway-stable
+  labels:
+    app: api-gateway
+    track: stable
+spec:
+  type: ClusterIP
+  selector:
+    app: api-gateway
+    track: stable
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway-canary
+  labels:
+    app: api-gateway
+    track: canary
+spec:
+  type: ClusterIP
+  selector:
+    app: api-gateway
+    track: canary
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

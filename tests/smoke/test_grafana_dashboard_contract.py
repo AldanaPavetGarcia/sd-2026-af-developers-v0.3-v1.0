@@ -11,10 +11,16 @@ import json
 import sys
 from pathlib import Path
 
+import yaml
+
 
 DASHBOARD_PATH = Path("monitoring/grafana/dashboards/eop-slo-dashboard.json")
 PROVIDER_PATH = Path("monitoring/grafana/provisioning/dashboards/eop-dashboard-provider.yaml")
 DATASOURCE_PATH = Path("monitoring/grafana/provisioning/datasources/prometheus-datasource.yaml")
+GATEWAY_ALERTS_PATH = Path("monitoring/grafana/provisioning/alerting/eop-gateway-alerts.yaml")
+GRAFANA_CONFIGMAP_PATH = Path("k8s/grafana-provisioning-configmap.yaml")
+GRAFANA_DEPLOYMENT_PATH = Path("k8s/grafana-deployment.yaml")
+COMPOSE_PATH = Path("docker-compose.yml")
 
 REQUIRED_TITLES = {
     "Service Availability",
@@ -27,6 +33,10 @@ REQUIRED_TITLES = {
     # US-303 AC5: circuit breaker state of the API gateway's external services.
     "External Service Circuit Breakers",
     "Circuit Breaker Fallbacks and Transitions",
+    # US-304 AC3: error rate, P99 and RPS of the API gateway per version during a rollout.
+    "Gateway Error Rate by Version",
+    "Gateway P99 Latency by Version",
+    "Gateway Requests per Second by Version",
 }
 
 REQUIRED_QUERY_TOKENS = {
@@ -39,6 +49,9 @@ REQUIRED_QUERY_TOKENS = {
     "eop_gateway_circuit_state",
     "eop_gateway_fallback_responses_total",
     "eop_circuit_breaker_state_transitions_total",
+    "eop_gateway_http_requests_total",
+    "eop_gateway_http_request_duration_seconds_bucket",
+    "by (version, track)",
 }
 
 
@@ -146,12 +159,42 @@ def validate_prometheus_datasource() -> None:
             fail(f"Prometheus datasource provisioning is missing token: {token}")
 
 
+def validate_canary_alert() -> None:
+    """US-304 AC4: the canary rollback trigger is versioned, provisioned and means what it says."""
+    alerts = yaml.safe_load(read_required_file(GATEWAY_ALERTS_PATH))
+    rules = {rule["uid"]: rule for group in alerts.get("groups", []) for rule in group.get("rules", [])}
+    rule = rules.get("eop-gateway-canary-error-rate")
+    if rule is None:
+        fail("Missing alert rule eop-gateway-canary-error-rate.")
+
+    data = {item["refId"]: item["model"] for item in rule["data"]}
+    expr = data.get("query", {}).get("expr", "")
+    for token in ('track="canary"', 'status_class="5xx"', "[5m]", "eop_gateway_http_requests_total"):
+        if token not in expr:
+            fail(f"Canary alert query is missing {token!r}: {expr}")
+    evaluator = data.get("threshold", {}).get("conditions", [{}])[0].get("evaluator", {})
+    if evaluator != {"type": "gt", "params": [1]}:
+        fail(f"Canary alert must fire above 1 %, got {evaluator}")
+    if rule.get("noDataState") != "OK":
+        fail("Canary alert must not fire when there is no canary traffic (noDataState: OK).")
+
+    configmap = yaml.safe_load(read_required_file(GRAFANA_CONFIGMAP_PATH))
+    copy = configmap.get("data", {}).get(GATEWAY_ALERTS_PATH.name)
+    if copy is None or yaml.safe_load(copy) != alerts:
+        fail(f"{GRAFANA_CONFIGMAP_PATH} must carry the same {GATEWAY_ALERTS_PATH.name} as {GATEWAY_ALERTS_PATH}.")
+    mount = f"/etc/grafana/provisioning/alerting/{GATEWAY_ALERTS_PATH.name}"
+    for path in (GRAFANA_DEPLOYMENT_PATH, COMPOSE_PATH):
+        if mount not in read_required_file(path):
+            fail(f"{path} does not mount {mount}.")
+
+
 def main() -> None:
     dashboard = load_dashboard()
 
     validate_dashboard(dashboard)
     validate_dashboard_provider()
     validate_prometheus_datasource()
+    validate_canary_alert()
 
     print(
         "[slo-dashboard-test] contract passed: "

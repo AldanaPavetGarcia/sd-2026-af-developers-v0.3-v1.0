@@ -308,6 +308,7 @@ services:
       - ./monitoring/grafana/provisioning/dashboards/eop-dashboard-provider.yaml:/etc/grafana/provisioning/dashboards/eop-dashboard-provider.yaml:ro
       - ./monitoring/grafana/provisioning/alerting/eop-slo-alerts.yaml:/etc/grafana/provisioning/alerting/eop-slo-alerts.yaml:ro
       - ./monitoring/grafana/provisioning/alerting/eop-hpc-alerts.yaml:/etc/grafana/provisioning/alerting/eop-hpc-alerts.yaml:ro
+      - ./monitoring/grafana/provisioning/alerting/eop-gateway-alerts.yaml:/etc/grafana/provisioning/alerting/eop-gateway-alerts.yaml:ro
       - ./monitoring/grafana/dashboards/:/etc/grafana/provisioning/dashboards/eop/:ro
     ports:
       - "3000:3000"

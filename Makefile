@@ -1,4 +1,4 @@
-.PHONY: loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -26,7 +26,11 @@ k8s-apply:
 	kubectl apply -f k8s/redis/
 	kubectl apply -f k8s/external-stubs/
 	kubectl apply -f k8s/loki/ -f k8s/otel-log-agent/
-	kubectl apply -k k8s/api-gateway/base
+	# The gateway runs in the canary layout (ADR-011 §4): stable serving, canary at 0 replicas and
+	# weight 0. The plain Deployment of v0.3's first releases has a different selector and is
+	# replaced by api-gateway-stable.
+	kubectl delete deployment api-gateway --ignore-not-found
+	kubectl apply -k k8s/api-gateway/overlays/canary
 	# 180s, not 60s: US-204 AC6 requires this target to wait up to 3 minutes for all pods to
 	# be Ready. 60s already failed live (31/08) — Grafana's 1.4GB image alone took ~70s to
 	# pull on a cold node.
@@ -36,7 +40,7 @@ k8s-apply:
 	kubectl rollout status daemonset/otel-log-agent --timeout=180s
 	kubectl rollout status deployment/ai-service --timeout=180s
 	kubectl rollout status deployment/corporate-service --timeout=180s
-	kubectl rollout status deployment/api-gateway --timeout=180s
+	kubectl rollout status deployment/api-gateway-stable --timeout=180s
 	kubectl rollout status deployment/hpc-engine --timeout=180s
 	kubectl rollout status deployment/prometheus --timeout=180s
 	kubectl rollout status deployment/grafana --timeout=180s
@@ -79,6 +83,41 @@ gateway-coverage:
 gateway-image:
 	docker build -t api-gateway:local $(GO_DIR)
 	docker build --target external-stub -t external-stub:local $(GO_DIR)
+
+## Canary release of the api-gateway (US-304, ADR-011). The Ingress needs ingress-nginx
+## (minikube addons enable ingress). Typical run, with make gateway-load-test in another terminal:
+##   make canary-deploy IMAGE=api-gateway:0.3.1 VERSION=0.3.1
+##   make canary-rollout WEIGHT=10   (then 50, then 100)
+##   make canary-promote             or, if the canary misbehaves, make canary-rollback
+canary-deploy:
+	@test -n "$(IMAGE)" -a -n "$(VERSION)" || { echo "usage: make canary-deploy IMAGE=<image> VERSION=<version>"; exit 1; }
+	./scripts/canary.sh deploy "$(IMAGE)" "$(VERSION)"
+
+canary-rollout:
+	@test -n "$(WEIGHT)" || { echo "usage: make canary-rollout WEIGHT=<0-100>"; exit 1; }
+	./scripts/canary.sh rollout "$(WEIGHT)"
+
+## US-304 AC4: weight 0, timed until no client gets a canary response (< 30 s).
+canary-rollback:
+	./scripts/canary.sh rollback
+
+canary-promote:
+	./scripts/canary.sh promote
+
+canary-status:
+	./scripts/canary.sh status
+
+## Continuous load through the Ingress; fails on any 5xx or connection error (US-304 AC6,
+## US-305 AC4). Runs until Ctrl-C unless LOAD_ARGS="--duration N".
+gateway-load-test:
+	python3 tests/load/gateway_load.py $(LOAD_ARGS)
+
+## Static contract of the gateway delivery layouts (ADR-011) and tests of the load tool.
+gateway-overlays-test:
+	python3 tests/smoke/test_gateway_overlays.py
+
+gateway-load-tool-test:
+	python3 tests/load/test_gateway_load.py
 
 ## US-306 AC6 on a running cluster: a failed request has the same trace_id in SigNoz and Loki.
 k8s-log-trace-test:

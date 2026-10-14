@@ -1,0 +1,6 @@
+# The gateway Deployment alone, so the canary and blue-green overlays can instantiate it more
+# than once (ADR-011 §4) without duplicating the shared ConfigMaps and Service.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
