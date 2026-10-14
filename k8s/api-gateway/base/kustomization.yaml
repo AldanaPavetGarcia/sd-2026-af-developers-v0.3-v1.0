@@ -1,9 +1,8 @@
-# Base of the api-gateway (US-301, ADR-010). The canary and blue-green layouts of ADR-011 are
-# overlays on top of this base (US-304, US-305).
+# Base of the api-gateway (US-301, ADR-010): one Deployment and its shared configuration. The
+# canary and blue-green layouts of ADR-011 are overlays that reuse common/ and instantiate
+# deployment/ once per track or slot (US-304, US-305).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - configmap.yaml
-  - breaker-configmap.yaml
-  - deployment.yaml
-  - service.yaml
+  - common
+  - deployment
