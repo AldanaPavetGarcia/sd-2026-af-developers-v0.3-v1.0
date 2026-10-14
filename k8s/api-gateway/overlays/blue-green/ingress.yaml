@@ -1,0 +1,21 @@
+# Same public entry point as the canary layout (host api.eop.local); only one layout is applied
+# at a time (ADR-011 §4).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-gateway
+  labels:
+    app: api-gateway
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.eop.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway-active
+                port:
+                  name: http

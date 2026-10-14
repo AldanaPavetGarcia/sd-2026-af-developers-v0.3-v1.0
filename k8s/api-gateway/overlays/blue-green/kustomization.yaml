@@ -1,0 +1,28 @@
+# Blue-green layout of the api-gateway (US-305, ADR-011 §3).
+#
+#   Ingress api-gateway -> Service api-gateway-active (slot=blue) -> Deployment api-gateway-blue
+#                          make blue-green-switch patches slot=green -> Deployment api-gateway-green
+#   Service api-gateway-<slot>-preview -> that slot only: smoke tests before the switch.
+#
+# The shared Service api-gateway of the base is replaced by api-gateway-active here: a Service
+# selecting both slots would send traffic to the new version before its smoke tests ran.
+# Versioned state: blue active and serving, green at 0 replicas. Re-applying this overlay points
+# api-gateway-active back to blue, so do not run it in the middle of a release.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base/common
+  - blue
+  - green
+  - services.yaml
+  - ingress.yaml
+patches:
+  - target:
+      kind: Service
+      name: api-gateway
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: api-gateway
