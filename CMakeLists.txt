@@ -233,6 +233,13 @@ if(EXODUS_BUILD_TESTS)
   )
 
   add_test(
+    NAME smoke_server_config_limits
+    COMMAND python3
+      ${CMAKE_SOURCE_DIR}/tests/smoke/server_config_limits.py
+      $<TARGET_FILE:eop_server>
+  )
+
+  add_test(
     NAME smoke_message_framing_split_recv
     COMMAND python3
       ${CMAKE_SOURCE_DIR}/tests/smoke/message_framing_split_recv.py
