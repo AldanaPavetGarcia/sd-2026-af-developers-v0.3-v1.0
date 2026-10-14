@@ -1,0 +1,26 @@
+# The green slot: a complete instance of the base Deployment (ADR-011 §3). Its slot label is in
+# the selector, and the track label (what the gateway reports in metrics, spans and the
+# X-EOP-Track header) names the slot, so dashboards and the load test tell the slots apart.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../base/deployment
+nameSuffix: -green
+patches:
+  - target:
+      kind: Deployment
+      name: api-gateway
+    patch: |-
+      # Idle until make blue-green-deploy gives it the new version and starts it.
+      - op: replace
+        path: /spec/replicas
+        value: 0
+      - op: add
+        path: /spec/selector/matchLabels/slot
+        value: green
+      - op: add
+        path: /spec/template/metadata/labels/slot
+        value: green
+      - op: replace
+        path: /spec/template/metadata/labels/track
+        value: green

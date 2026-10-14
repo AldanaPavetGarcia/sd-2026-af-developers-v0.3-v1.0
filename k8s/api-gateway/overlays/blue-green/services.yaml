@@ -1,0 +1,57 @@
+# The Service the Ingress and in-cluster clients use. The switch is one patch of its selector's
+# slot, an atomic update of the endpoint list (US-305 AC2).
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway-active
+  labels:
+    app: api-gateway
+spec:
+  type: ClusterIP
+  selector:
+    app: api-gateway
+    slot: blue
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+# One preview Service per slot, never switched: the smoke tests reach the slot about to go live
+# through it (US-305 AC3). ADR-011 names green's; blue's serves the next release, which goes to
+# blue while green is active.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway-green-preview
+  labels:
+    app: api-gateway
+    slot: green
+spec:
+  type: ClusterIP
+  selector:
+    app: api-gateway
+    slot: green
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway-blue-preview
+  labels:
+    app: api-gateway
+    slot: blue
+spec:
+  type: ClusterIP
+  selector:
+    app: api-gateway
+    slot: blue
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

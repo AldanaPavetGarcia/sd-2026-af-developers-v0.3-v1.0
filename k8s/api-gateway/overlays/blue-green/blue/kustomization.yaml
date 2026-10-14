@@ -1,0 +1,22 @@
+# The blue slot: a complete instance of the base Deployment (ADR-011 §3). Its slot label is in
+# the selector, and the track label (what the gateway reports in metrics, spans and the
+# X-EOP-Track header) names the slot, so dashboards and the load test tell the slots apart.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../base/deployment
+nameSuffix: -blue
+patches:
+  - target:
+      kind: Deployment
+      name: api-gateway
+    patch: |-
+      - op: add
+        path: /spec/selector/matchLabels/slot
+        value: blue
+      - op: add
+        path: /spec/template/metadata/labels/slot
+        value: blue
+      - op: replace
+        path: /spec/template/metadata/labels/track
+        value: blue
