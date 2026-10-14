@@ -2,7 +2,7 @@
 """Contract test for the api-gateway delivery layouts (ADR-011), on the rendered manifests.
 
 kubeconform proves the objects are valid Kubernetes; this proves they route traffic the way the
-canary procedure assumes:
+canary and blue-green procedures assume. Canary:
 
   * two Deployments whose selectors cannot overlap, the canary at 0 replicas (steady state);
   * the shared Service api-gateway selects both tracks (US-304 AC7), each per-track Service only
@@ -11,6 +11,13 @@ canary procedure assumes:
     host and path (US-304 AC1, AC2);
   * every gateway pod keeps what makes a switch error-free: readiness probe, preStop sleep and a
     rolling update that never removes a ready pod first (ADR-011 §5).
+
+Blue-green:
+
+  * two complete Deployments, blue and green, with disjoint selectors (US-305 AC1);
+  * the Ingress goes to api-gateway-active, which selects blue (US-305 AC2) and nothing else;
+    no Service selects both slots;
+  * each preview Service selects only its slot (the smoke tests' way in, AC3).
 
 Needs kubectl (for `kubectl kustomize`) and PyYAML.
 """
@@ -21,6 +28,7 @@ import sys
 import yaml
 
 CANARY_OVERLAY = "k8s/api-gateway/overlays/canary"
+BLUE_GREEN_OVERLAY = "k8s/api-gateway/overlays/blue-green"
 WEIGHT = "nginx.ingress.kubernetes.io/canary-weight"
 
 
@@ -113,9 +121,50 @@ def check_canary(objects):
         fail(f"Ingress backends are wrong: {routes}")
 
 
+def check_blue_green(objects):
+    pods = {}
+    for slot in ("blue", "green"):
+        name = f"api-gateway-{slot}"
+        deployment = get(objects, "Deployment", name)
+        selector = deployment["spec"]["selector"]["matchLabels"]
+        labels = deployment["spec"]["template"]["metadata"]["labels"]
+        if selector.get("slot") != slot or labels.get("slot") != slot:
+            fail(f"{name}: selector and pod labels must carry slot={slot}")
+        if labels.get("track") != slot:
+            fail(f"{name}: track must name the slot, so telemetry and X-EOP-Track tell slots apart")
+        check_safe_rollout(name, deployment)
+        pods[slot] = (selector, labels)
+    if selects(pods["blue"][0], pods["green"][1]) or selects(pods["green"][0], pods["blue"][1]):
+        fail("blue and green Deployments select each other's pods")
+    if get(objects, "Deployment", "api-gateway-blue")["spec"].get("replicas", 1) < 1:
+        fail("blue must be versioned serving")
+
+    for (kind, name), obj in objects.items():
+        if kind == "Service":
+            selector = obj["spec"]["selector"]
+            if selects(selector, pods["blue"][1]) and selects(selector, pods["green"][1]):
+                fail(f"Service {name} selects both slots: it would expose green before its smoke tests")
+
+    active = get(objects, "Service", "api-gateway-active")["spec"]["selector"]
+    if active.get("slot") != "blue" or not selects(active, pods["blue"][1]):
+        fail(f"api-gateway-active must select blue, got {active}")
+    for slot in ("blue", "green"):
+        preview = get(objects, "Service", f"api-gateway-{slot}-preview")["spec"]["selector"]
+        if not selects(preview, pods[slot][1]):
+            fail(f"api-gateway-{slot}-preview must select the {slot} pods")
+
+    ingress = get(objects, "Ingress", "api-gateway")
+    backend = ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["name"]
+    if backend != "api-gateway-active":
+        fail(f"the Ingress must target api-gateway-active, got {backend}")
+    if any(kind == "Ingress" and name != "api-gateway" for kind, name in objects):
+        fail("the blue-green layout must not carry a second Ingress")
+
+
 def main():
     check_canary(render(CANARY_OVERLAY))
-    print(f"[gateway-overlays-test] contract passed: {CANARY_OVERLAY}")
+    check_blue_green(render(BLUE_GREEN_OVERLAY))
+    print(f"[gateway-overlays-test] contract passed: {CANARY_OVERLAY}, {BLUE_GREEN_OVERLAY}")
 
 
 if __name__ == "__main__":
