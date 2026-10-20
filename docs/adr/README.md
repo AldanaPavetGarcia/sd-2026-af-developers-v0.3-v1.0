@@ -19,8 +19,8 @@ added beyond that index are numbered from ADR-015 onwards, in the order they wer
 | [ADR-010](ADR-010-api-gateway-go.md) | API Gateway — Go, REST Contract and Async Job Store | v0.3 | Accepted |
 | [ADR-011](ADR-011-deployment-strategy-canary-blue-green.md) | Deployment Strategy — Canary and Blue-Green | v0.3 | Accepted |
 | [ADR-012](ADR-012-circuit-breaker-configuration.md) | Circuit Breaker Configuration | v0.3 | Accepted |
-| ADR-013 | Edge Protocol Selection — MQTT over gRPC | v1.0 | Reserved |
-| ADR-014 | ZephyrOS Thread Architecture | v1.0 | Reserved |
+| [ADR-013](ADR-013-edge-protocol-mqtt.md) | Edge Protocol Selection — MQTT over gRPC | v1.0 | Accepted |
+| [ADR-014](ADR-014-zephyr-thread-architecture.md) | ZephyrOS Thread Architecture | v1.0 | Accepted |
 
 ## Squad decisions beyond the PRD index
 
@@ -38,6 +38,9 @@ added beyond that index are numbered from ADR-015 onwards, in the order they wer
 | [ADR-024](ADR-024-approximate-betweenness-centrality.md) | Approximate Betweenness Centrality for Large Graphs | v0.2 |
 | ADR-025 | Pod-Crash MTTR | v0.2 |
 | [ADR-026](ADR-026-centralized-logging-loki.md) | Centralized Logging — Loki, OTel Collector Agent and Trace Correlation | v0.3 |
+| [ADR-027](ADR-027-shared-registry-and-mttr.md) | Shared Node Registry and Pod-Crash MTTR by Replica Failover | v1.0 |
+| [ADR-028](ADR-028-edge-ingestion.md) | Edge Ingestion — Delivery, Deduplication and Tracing | v1.0 |
+| [ADR-029](ADR-029-product-delivery-kustomize.md) | Product Delivery — One Kustomize Overlay and One Configuration File | v1.0 |
 
 ADR-025 is open in the course repository as `ADR020-Pod-Crash-MTTR.md` (PR #68) and is renumbered
 here when it is synced.
