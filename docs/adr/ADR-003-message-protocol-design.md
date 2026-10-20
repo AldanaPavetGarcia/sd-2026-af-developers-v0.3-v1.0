@@ -74,3 +74,15 @@ non-breaking: servers that do not know the key ignore it, and clients that do no
 unaffected. The decision and its compatibility analysis are documented in:
 
 `docs/adr/ADR-026-centralized-logging-loki.md`
+
+## v1.0 Addendum: `TELEMETRY` for Edge Devices
+
+For Milestone 4, the edge ingestor forwards device telemetry with a new text command,
+`TELEMETRY node_id=… bunker_name=… message_id=… boot_id=… temperature=… status=… sampled_at=…`,
+optionally followed by `traceparent=`. It upserts an edge node whose liveness comes from the time of
+its last telemetry instead of a session, and `LIST_NODES` / `QUERY_NODE` add `source=edge` and the
+telemetry keys to edge nodes only. The change is additive: v0.1 commands, answers for TCP nodes and
+existing clients are unchanged. The decision is documented in
+`docs/adr/ADR-028-edge-ingestion.md` and the grammar in:
+
+`docs/edge-telemetry-protocol-v1.0.md`
