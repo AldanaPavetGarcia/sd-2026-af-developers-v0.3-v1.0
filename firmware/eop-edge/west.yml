@@ -1,0 +1,24 @@
+# Zephyr workspace of the EOP edge firmware (ADR-014). scripts/zephyr-setup.sh builds the
+# workspace outside the repository from this file, and make, CI and the Dockerfile all use it,
+# so the Zephyr version is pinned in one place.
+manifest:
+  version: "1.2"
+
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+
+  # The ESP32 HAL is only needed for the board build (zephyr-setup.sh --esp32 enables it).
+  group-filter: [-hal]
+
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: v4.4.2
+      clone-depth: 1
+      import:
+        name-allowlist:
+          - hal_espressif
+
+  self:
+    path: eop-edge-manifest

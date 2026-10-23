@@ -1,0 +1,11 @@
+# What twister needs to run the native_sim tests (make firmware-test). Zephyr's own
+# requirements-run-test.txt adds hardware tooling (pyocd, OpenCV, python-can) the simulated
+# device never uses.
+natsort
+tabulate
+psutil
+pytest
+junitparser
+ply
+colorama
+python-dotenv
