@@ -1,0 +1,59 @@
+name: Firmware
+
+# Edge firmware (US-401..US-403, ADR-014) on Zephyr's native_sim. A separate workflow filtered on
+# its paths, so PRs that do not touch the firmware do not spend Actions minutes building Zephyr.
+on:
+  pull_request:
+    paths:
+      - "firmware/**"
+      - "mosquitto/**"
+      - "scripts/zephyr-setup.sh"
+      - ".github/workflows/firmware.yml"
+
+permissions:
+  contents: read
+
+env:
+  EOP_ZEPHYR_WS: ${{ github.workspace }}/../eop-zephyr-ws
+
+jobs:
+  firmware:
+    name: firmware (native_sim)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install host tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
+
+      # The workspace only changes with the Zephyr pin and the Python requirements.
+      - name: Cache Zephyr workspace
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.EOP_ZEPHYR_WS }}
+          key: zephyr-${{ runner.os }}-${{ hashFiles('firmware/eop-edge/west.yml', 'firmware/eop-edge/requirements-test.txt') }}
+
+      - name: Zephyr workspace
+        run: make firmware-setup
+
+      - name: Build
+        run: make firmware-build
+
+      - name: Unit tests (ztest)
+        run: make firmware-test
+
+      - name: Integration tests against Mosquitto (US-401 AC2-AC6)
+        run: make firmware-integration-test
+
+      - name: Image size (<= 50 MB)
+        run: |
+          make firmware-image
+          size=$(docker image inspect eop-edge:local --format '{{.Size}}')
+          echo "eop-edge:local is $((size / 1024 / 1024)) MB"
+          test "$size" -le $((50 * 1024 * 1024))
