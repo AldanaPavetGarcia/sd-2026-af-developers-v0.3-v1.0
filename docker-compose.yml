@@ -204,6 +204,32 @@ services:
       retries: 12
       start_period: 5s
 
+  # US-401 (#68, ADR-013): MQTT broker for the edge devices. Plain 1883 for local work; the
+  # Kubernetes broker adds the TLS listener for devices.
+  mosquitto:
+    <<: *common
+    image: eclipse-mosquitto:2.0.18
+    container_name: mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - eop-mosquitto-data:/mosquitto/data
+
+  # A simulated bunker: the native_sim firmware (ADR-014). Behind a profile because the image
+  # builds Zephyr: docker compose --profile edge up -d eop-edge
+  eop-edge:
+    <<: *common
+    profiles: ["edge"]
+    build:
+      context: .
+      dockerfile: firmware/eop-edge/Dockerfile
+    image: eop-edge:local
+    container_name: eop-edge
+    command: ["--broker-host=mosquitto", "--node-id=vault-101", "--bunker-name=Vault-101"]
+    depends_on:
+      - mosquitto
+
   # US-205 (#43): Prometheus + Grafana, scraping eop-server's /metrics (#42) and provisioning
   # the dashboards already versioned under monitoring/grafana/ (#38, #39). Not chained to
   # eop-server via depends_on — Prometheus tolerates a target being down at scrape time, no
@@ -251,6 +277,7 @@ services:
       start_period: 10s
 
 volumes:
+  eop-mosquitto-data:
   eop-signoz-clickhouse:
   eop-signoz-clickhouse-user-scripts:
   eop-signoz-sqlite:
