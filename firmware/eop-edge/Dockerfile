@@ -4,11 +4,13 @@
 # Each container is one device; --node-id, --bunker-name, --broker-host and --broker-port
 # override the prj.conf values (see firmware/eop-edge/README.md).
 
-FROM debian:12-slim AS build
+# Zephyr 4.4 needs Python >= 3.12, newer than Debian 12's 3.11: this image is Debian 12 (same glibc
+# as the runtime below) with Python 3.12.
+FROM python:3.12-slim-bookworm AS build
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates git cmake ninja-build gcc libc6-dev make python3 python3-venv file \
+        ca-certificates git cmake ninja-build gcc libc6-dev make file \
     && rm -rf /var/lib/apt/lists/*
 
 ENV EOP_ZEPHYR_WS=/zephyr-ws
