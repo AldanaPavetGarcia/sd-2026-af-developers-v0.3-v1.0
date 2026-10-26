@@ -107,8 +107,11 @@ EOP_ZEPHYR_WS ?= $(HOME)/.cache/eop-zephyr-ws
 FIRMWARE_BUILD ?= build/firmware
 FIRMWARE_BOARD ?= native_sim/native/64
 BROKER_HOST ?= 127.0.0.1
+## native_sim uses the host compiler; the ESP32 build needs ZEPHYR_TOOLCHAIN=zephyr and the
+## Zephyr SDK (firmware/eop-edge/README.md, "ESP32 build").
+ZEPHYR_TOOLCHAIN ?= host
 ZEPHYR_ENV = . $(EOP_ZEPHYR_WS)/.venv/bin/activate && \
-	ZEPHYR_BASE=$(EOP_ZEPHYR_WS)/zephyr ZEPHYR_TOOLCHAIN_VARIANT=host
+	ZEPHYR_BASE=$(EOP_ZEPHYR_WS)/zephyr ZEPHYR_TOOLCHAIN_VARIANT=$(ZEPHYR_TOOLCHAIN)
 
 firmware-setup:
 	./scripts/zephyr-setup.sh

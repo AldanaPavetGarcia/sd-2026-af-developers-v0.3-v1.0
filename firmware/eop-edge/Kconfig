@@ -161,4 +161,24 @@ config EOP_SNTP_TIMEOUT_MS
 
 endmenu
 
+menu "EOP WiFi (hardware build)"
+	depends on WIFI
+
+config EOP_WIFI_SSID
+	string "WiFi network"
+	default ""
+	help
+	  Set it in an untracked overlay (see README, "ESP32 build"), never in prj.conf: it is
+	  site configuration, and the password next to it is a credential.
+
+config EOP_WIFI_PSK
+	string "WiFi password (empty for an open network)"
+	default ""
+
+config EOP_WIFI_TIMEOUT_MS
+	int "Time to join the network and get an address (ms)"
+	default 30000
+
+endmenu
+
 source "Kconfig.zephyr"

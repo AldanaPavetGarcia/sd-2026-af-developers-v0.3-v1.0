@@ -35,7 +35,7 @@ source "$WS/.venv/bin/activate"
 [[ -d "$WS/.west" ]] || west init -l "$MANIFEST_DIR"
 cd "$WS"
 if (( ESP32 )); then
-    west config manifest.group-filter -- +hal
+    west config manifest.group-filter -- +hal,+crypto
 fi
 # Fetching Zephyr is the step a flaky connection breaks (an early EOF ends the shallow fetch), so
 # it is retried; west resumes from what it already has.
@@ -49,6 +49,7 @@ pip install --quiet -r "$WS/zephyr/scripts/requirements-base.txt"
 pip install --quiet -r "$ROOT/firmware/eop-edge/requirements-test.txt"
 if (( ESP32 )); then
     west blobs fetch hal_espressif
+    west packages pip --install    # the HAL's Python tools (esptool)
 fi
 
 echo "zephyr-setup: workspace ready in $WS (zephyr $(west list zephyr -f "{revision}"))"

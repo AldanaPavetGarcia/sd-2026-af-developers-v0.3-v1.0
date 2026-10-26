@@ -13,6 +13,9 @@
 #include <zephyr/sys/clock.h>
 
 #include "platform_board.h"
+#if defined(CONFIG_WIFI)
+#include "wifi_link.h"
+#endif
 
 LOG_MODULE_REGISTER(eop_sntp, LOG_LEVEL_INF);
 
@@ -34,6 +37,13 @@ int eop_board_set_clock(void)
 	struct sntp_time now;
 	int ret;
 
+#if defined(CONFIG_WIFI)
+	/* SNTP is the first thing that needs the network, so the board joins it here. */
+	ret = eop_wifi_connect(K_MSEC(CONFIG_EOP_WIFI_TIMEOUT_MS));
+	if (ret < 0) {
+		return ret;
+	}
+#endif
 	ret = sntp_simple(CONFIG_EOP_SNTP_SERVER, CONFIG_EOP_SNTP_TIMEOUT_MS, &now);
 
 	if (ret < 0) {

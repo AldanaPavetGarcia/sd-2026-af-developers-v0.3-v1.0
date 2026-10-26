@@ -8,8 +8,9 @@ manifest:
     - name: zephyrproject-rtos
       url-base: https://github.com/zephyrproject-rtos
 
-  # The ESP32 HAL is only needed for the board build (zephyr-setup.sh --esp32 enables it).
-  group-filter: [-hal]
+  # The ESP32 HAL and mbedTLS + TF-PSA-Crypto (used by its WiFi driver) are only needed for the board build;
+  # zephyr-setup.sh --esp32 enables both groups.
+  group-filter: [-hal, -crypto]
 
   projects:
     - name: zephyr
@@ -19,6 +20,8 @@ manifest:
       import:
         name-allowlist:
           - hal_espressif
+          - mbedtls
+          - tf-psa-crypto
 
   self:
     path: eop-edge-manifest

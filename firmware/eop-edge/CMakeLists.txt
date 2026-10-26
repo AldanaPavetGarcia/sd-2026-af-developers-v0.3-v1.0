@@ -20,6 +20,7 @@ target_sources(app PRIVATE
 # The board decides where the wall clock and the configuration overrides come from.
 if(CONFIG_EOP_CLOCK_SNTP)
   target_sources(app PRIVATE src/platform_sntp.c)
+  target_sources_ifdef(CONFIG_WIFI app PRIVATE src/wifi_link.c)
 else()
   target_sources(app PRIVATE src/platform_native_sim.c)
 endif()
