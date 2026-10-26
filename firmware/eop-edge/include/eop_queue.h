@@ -21,6 +21,7 @@
 struct eop_queue {
 	struct k_msgq msgq; /**< Samples in FIFO order. */
 	atomic_t dropped;   /**< Samples discarded because the queue was full, since boot. */
+	atomic_t newest_id; /**< message_id of the last sample put, 0 before the first. */
 };
 
 /**
@@ -61,5 +62,12 @@ uint32_t eop_queue_count(struct eop_queue *queue);
  * @return Number of samples.
  */
 uint32_t eop_queue_dropped(struct eop_queue *queue);
+
+/**
+ * @brief message_id of the last sample put, whether still queued or not.
+ * @param queue Queue.
+ * @return The message_id, 0 before the first put.
+ */
+uint32_t eop_queue_newest_id(struct eop_queue *queue);
 
 #endif /* EOP_QUEUE_H */
