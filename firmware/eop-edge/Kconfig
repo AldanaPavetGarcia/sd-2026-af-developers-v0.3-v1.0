@@ -104,7 +104,11 @@ config EOP_MQTT_BUFFER_SIZE
 
 config EOP_PAYLOAD_MAX_LEN
 	int "Largest JSON payload (bytes)"
-	default 256
+	default 320
+	help
+	  Telemetry of a device whose node id and bunker name are both 63 characters long takes
+	  277 bytes; tests/unit checks that every payload fits in the default.
+
 
 config EOP_BACKOFF_INITIAL_S
 	int "First reconnection delay (s)"

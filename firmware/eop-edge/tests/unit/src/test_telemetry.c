@@ -137,3 +137,21 @@ ZTEST(telemetry, test_bunker_name_rules)
 	zassert_false(eop_bunker_name_valid("Vault=101"));
 	zassert_false(eop_bunker_name_valid("Vault\"101"), "would break the JSON payload");
 }
+
+/* Default of CONFIG_EOP_PAYLOAD_MAX_LEN (the unit tests do not load the firmware's Kconfig). */
+#define PAYLOAD_MAX_LEN 320
+
+/* The longest identity still fits the payload buffer. */
+ZTEST(telemetry, test_longest_payloads_fit)
+{
+	struct eop_device_config wide = CONFIG;
+	struct eop_telemetry sample = {UINT32_MAX, EXAMPLE_MS, -500, EOP_STATUS_ALERT};
+	char buf[PAYLOAD_MAX_LEN];
+
+	memset(wide.node_id, 'a', EOP_NAME_MAX_LEN);
+	wide.node_id[EOP_NAME_MAX_LEN] = '\0';
+	memset(wide.bunker_name, 'B', EOP_NAME_MAX_LEN);
+	wide.bunker_name[EOP_NAME_MAX_LEN] = '\0';
+
+	zassert_true(eop_telemetry_encode(&sample, &wide, buf, sizeof(buf)) > 0);
+}
