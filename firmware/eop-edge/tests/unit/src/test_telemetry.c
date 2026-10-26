@@ -138,6 +138,62 @@ ZTEST(telemetry, test_bunker_name_rules)
 	zassert_false(eop_bunker_name_valid("Vault\"101"), "would break the JSON payload");
 }
 
+/* Protocol §2.2. */
+ZTEST(telemetry, test_encodes_events)
+{
+	char buf[256];
+	const char *boot = "{\"node_id\":\"vault-101\",\"boot_id\":\"9f3c27a1\","
+			   "\"timestamp\":\"2026-11-02T14:03:07.120Z\",\"event\":\"BOOT\"}";
+	const char *reconnected = "{\"node_id\":\"vault-101\",\"boot_id\":\"9f3c27a1\","
+				  "\"timestamp\":\"2026-11-02T14:03:07.120Z\",\"event\":"
+				  "\"RECONNECTED\",\"delivered\":37}";
+
+	zassert_equal(eop_event_encode(EOP_EVENT_BOOT, 37, EXAMPLE_MS, &CONFIG, buf, sizeof(buf)),
+		      (int)strlen(boot));
+	zassert_str_equal(buf, boot, "BOOT carries no count");
+	zassert_equal(
+		eop_event_encode(EOP_EVENT_RECONNECTED, 37, EXAMPLE_MS, &CONFIG, buf, sizeof(buf)),
+		(int)strlen(reconnected));
+	zassert_str_equal(buf, reconnected);
+}
+
+ZTEST(telemetry, test_event_errors)
+{
+	char buf[256];
+	char small[40];
+
+	zassert_equal(eop_event_encode((enum eop_event)7, 0, EXAMPLE_MS, &CONFIG, buf, sizeof(buf)),
+		      -EINVAL);
+	zassert_equal(eop_event_encode(EOP_EVENT_BOOT, 0, -1, &CONFIG, buf, sizeof(buf)), -EINVAL);
+	zassert_equal(eop_event_encode(EOP_EVENT_RECONNECTED, UINT32_MAX, EXAMPLE_MS, &CONFIG,
+				       small, sizeof(small)),
+		      -ENOSPC);
+}
+
+/* Protocol §2.3: the dropped count is the overflow metric of US-402 AC8. */
+ZTEST(telemetry, test_encodes_health)
+{
+	char buf[256];
+	struct eop_health health = {
+		.uptime_s = 3600,
+		.restarts_sensor = 0,
+		.restarts_mqtt = 1,
+		.buffered = 12,
+		.dropped = 5,
+	};
+	const char *expected =
+		"{\"node_id\":\"vault-101\",\"boot_id\":\"9f3c27a1\","
+		"\"timestamp\":\"2026-11-02T14:03:07.120Z\",\"uptime_s\":3600,"
+		"\"restarts\":{\"sensor\":0,\"mqtt\":1},\"buffered\":12,\"dropped\":5}";
+
+	zassert_equal(eop_health_encode(&health, EXAMPLE_MS, &CONFIG, buf, sizeof(buf)),
+		      (int)strlen(expected));
+	zassert_str_equal(buf, expected);
+	zassert_equal(eop_health_encode(&health, EXAMPLE_MS, &CONFIG, buf, strlen(expected)),
+		      -ENOSPC, "no room for the terminator");
+	zassert_equal(eop_health_encode(&health, -1, &CONFIG, buf, sizeof(buf)), -EINVAL);
+}
+
 /* Default of CONFIG_EOP_PAYLOAD_MAX_LEN (the unit tests do not load the firmware's Kconfig). */
 #define PAYLOAD_MAX_LEN 320
 
@@ -145,6 +201,7 @@ ZTEST(telemetry, test_bunker_name_rules)
 ZTEST(telemetry, test_longest_payloads_fit)
 {
 	struct eop_device_config wide = CONFIG;
+	struct eop_health health = {UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
 	struct eop_telemetry sample = {UINT32_MAX, EXAMPLE_MS, -500, EOP_STATUS_ALERT};
 	char buf[PAYLOAD_MAX_LEN];
 
@@ -154,4 +211,7 @@ ZTEST(telemetry, test_longest_payloads_fit)
 	wide.bunker_name[EOP_NAME_MAX_LEN] = '\0';
 
 	zassert_true(eop_telemetry_encode(&sample, &wide, buf, sizeof(buf)) > 0);
+	zassert_true(eop_health_encode(&health, EXAMPLE_MS, &wide, buf, sizeof(buf)) > 0);
+	zassert_true(eop_event_encode(EOP_EVENT_RECONNECTED, UINT32_MAX, EXAMPLE_MS, &wide, buf,
+				      sizeof(buf)) > 0);
 }
