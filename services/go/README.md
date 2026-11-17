@@ -1,21 +1,28 @@
 # EOP Go services
 
-Go module for the EOP services written in Go (ADR-010). Today it contains the **API gateway**
-(US-301..US-303) and **external-stub**, a test double for the external AI and corporate services
-(ADR-012); the v1.0 edge-ingestor (US-404) will be another binary in the same module and reuse
-`internal/eopclient`.
+Go module for the EOP services written in Go (ADR-010): the **API gateway** (US-301..US-303),
+**external-stub**, a test double for the external AI and corporate services (ADR-012), the
+**edge-ingestor** and **edge-sim** of v1.0 (US-404, ADR-028) and **mttr-watcher**, which measures
+eop-server's failover (US-407 AC4, ADR-027). They share `internal/eopclient`.
 
 ```text
 services/go/
 ├── api/openapi.yaml         # REST contract (OpenAPI 3.0), embedded in the binary
 ├── cmd/api-gateway/         # entry point
 ├── cmd/external-stub/       # fake AI / corporate service with fault injection (ADR-012 §1)
+├── cmd/edge-ingestor/       # MQTT → eop-server TELEMETRY, dedup, status snapshot (ADR-028)
+├── cmd/edge-sim/            # synthetic edge devices with the firmware's payload
+├── cmd/mttr-watcher/        # eop-server failover measurement and its test probe (ADR-027 §4)
 ├── internal/eopclient/      # TCP client of the EOP socket protocol (pool, framing, parsing, ANALYZE_GRAPH)
 ├── internal/analysis/       # graph request validation and error classification
 ├── internal/jobs/           # asynchronous analysis jobs: Redis store and worker pool
 ├── internal/breaker/        # circuit breaker with a sliding window, settings file format
 ├── internal/external/       # external service clients: breaker, timeout, fallback cache, live reload
 ├── internal/stub/           # the external-stub HTTP handlers
+├── internal/edge/           # device payloads (protocol §2) and the edge:status snapshot
+├── internal/ingest/         # the edge ingestor: subscribe, validate, dedup, forward, retry, metrics
+├── internal/sim/            # the edge device simulator
+├── internal/mttr/           # Kubernetes watch, failure tracker, client probe
 ├── internal/api/            # /v1 routes, response envelope, error mapping
 ├── internal/app/            # wiring, HTTP servers, graceful shutdown
 ├── internal/config/         # environment configuration
@@ -34,6 +41,7 @@ services/go/
 | `POST /v1/graph/analyze` | Graph analysis: `200` with the result for graphs under 1,000 nodes, `202` with a `job_id` above |
 | `GET /v1/graph/jobs` | Recent jobs, newest first (`?limit=1..200`, default 50), without results |
 | `GET /v1/graph/jobs/{job_id}` | Job state and, once succeeded, its result; kept 5 minutes after it finishes |
+| `GET /v1/edge/status` | Edge ingestor state (`connected`, `reconnecting`, `disconnected`), messages received and forwarded in the last 60 s, devices with their last-seen time (US-404 AC7) |
 | `GET /v1/health` | Readiness: `200` when eop-server answers (`status: degraded` if Redis is down), `503` otherwise |
 | `GET /v1/openapi.json` | The contract |
 
@@ -147,6 +155,42 @@ sleep 30; curl -s localhost:8080/v1/nodes/<node_id>/insights  # half-open probe 
 Failures can also be injected without stopping the stub: `POST /admin/fault` on the stub with
 `{"mode": "error"}`, `{"mode": "slow"}` or `{"mode": "ok"}`.
 
+## Edge ingestion (US-404, ADR-028)
+
+Bunker devices publish to Mosquitto (`eop/bunker/{node_id}/telemetry`, QoS 1,
+[`docs/edge-telemetry-protocol-v1.0.md`](../../docs/edge-telemetry-protocol-v1.0.md)). The
+**edge-ingestor** subscribes with a fixed client id and a persistent session, validates each
+message, and forwards it to eop-server as a `TELEMETRY` line; it acknowledges the message to the
+broker **only after the server's `ACK`** (or when it is a duplicate or permanently invalid), so a
+crash or a server outage makes the broker deliver it again instead of losing it.
+
+* **Dedup (AC3):** `edge:dedup:{node_id}:{boot_id}:{message_id}` in Redis, written with a 5-minute
+  TTL after the server's ACK; a message whose key exists is acknowledged and not forwarded.
+* **Server down (AC5):** the same message is retried with backoff (100 ms doubling to 5 s), each
+  attempt logged; later messages wait in the broker. **Broker down (AC6):** reconnects with
+  exponential backoff.
+* **Traces (AC4):** `edge.message` (starts at the device's `sampled_at`) → `edge.ingest` (broker
+  receipt → server ACK) → the server's span through `traceparent=`.
+* **Status (AC7):** every second the ingestor writes `edge:status` to Redis (TTL 5 s);
+  `GET /v1/edge/status` reads it, and answers `disconnected` when it is missing.
+* **Metrics** (`:9103/metrics`): `eop_edge_messages_{received,forwarded,duplicate,invalid}_total`,
+  `eop_edge_forward_retries_total`, `eop_edge_broker_connected`,
+  `eop_edge_e2e_latency_seconds{node_id}`, `eop_edge_clock_skew_total`, and per-device health and
+  events (`eop_edge_device_{dropped,buffered,thread_restarts,uptime_seconds}`,
+  `eop_edge_device_{reconnections,buffered_delivered,boots}_total`).
+
+```bash
+docker compose up -d eop-server redis mosquitto edge-ingestor api-gateway
+docker compose --profile edge-sim up -d edge-sim       # 5 synthetic devices, one sample per second each
+curl -s localhost:8080/v1/edge/status
+curl -s localhost:8080/v1/nodes | jq '.data[] | select(.source == "edge")'
+```
+
+Kubernetes: `k8s/mosquitto/` (persistent sessions on a PVC, internal listener 1883, TLS device
+listener 8883 with certificates from `scripts/edge-certs.sh`, never committed) and
+`k8s/edge-ingestor.yaml`, both in `make k8s-apply`. The firmware has no TLS client yet, so a real
+ESP32 uses 1883 on a trusted network.
+
 ## Tests
 
 ```bash
@@ -155,4 +199,6 @@ make gateway-lint                # gofmt + golangci-lint
 make gateway-coverage            # fails below 90 % of statements
 make gateway-integration-test    # US-301/US-302 AC8 and US-303 AC7 against build/dev/eop_server and hpc_engine
                                  # (EOP_SERVER_BIN=… EOP_HPC_ENGINE_BIN=… to override)
+make edge-integration-test       # US-404 AC8: edge-sim → embedded broker → ingestor → eop_server → /v1/nodes,
+                                 # and nothing lost while the server is down
 ```
