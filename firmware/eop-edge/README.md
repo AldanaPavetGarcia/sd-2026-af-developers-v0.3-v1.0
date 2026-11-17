@@ -243,12 +243,12 @@ What `native_sim` does not prove, and what would close the gap on a board (ADR-0
 
 | On an ESP32 | Here | Not proven |
 |---|---|---|
-| WiFi association, link loss and rejoin (`CONFIG_ESP32_WIFI_STA_RECONNECT`) | The host network; link loss is the shell's `eop net down/up` | WiFi driver events and timing; on the board a lost link is seen when the socket fails, and the reconnection waits for the next backoff attempt (up to 30 s) instead of being woken early |
-| Boot ROM + WiFi before the first publish | Process start → first PUBACK | Real boot time |
-| 520 KB of SRAM | Host memory | Measured on the ESP32 build: 140 KB of DRAM, 64 KB of IRAM ([ESP32 build](#esp32-build)) |
-| Wall clock from SNTP (`src/platform_sntp.c`) | Host clock (`src/platform_native_sim.c`) | SNTP on the device |
+| WiFi association, link loss and rejoin (`CONFIG_ESP32_WIFI_STA_RECONNECT`) | The host network; link loss is the shell's `eop net down/up` | Checked on the board ([below](#tested-on-an-esp32-2026-11-17)) except a real WiFi loss; there the reconnection waits for the next backoff attempt (up to 30 s), covered by the board's 120-sample buffer |
+| Boot ROM + WiFi before the first publish | Process start → first PUBACK | Measured on the board: 8.9 s cold, 15 s on quick resets |
+| 520 KB of SRAM | Host memory | Measured on the ESP32 build: 142 KB of DRAM, 64 KB of IRAM ([ESP32 build](#esp32-build)) |
+| Wall clock from SNTP (`src/platform_sntp.c`) | Host clock (`src/platform_native_sim.c`) | Checked on the board |
 | Status LED on GPIO2 | Emulated GPIO, pattern shown by `eop status` | The blink itself |
-| Reboot by the ROM after `sys_reboot` | The process restarts itself (`execv`) | Boot time after a crash |
+| Reboot by the ROM after `sys_reboot` | The process restarts itself (`execv`) | Checked on the board: back publishing ~16 s after the crash |
 | Hardware RNG for `boot_id` | Host clock mixed with the test entropy source (`WARNING: Using a test - not safe - entropy source` at boot is expected) | — |
 
 Thread scheduling, the queue and buffering, backoff, the watchdog and thread restarts, and the
@@ -275,18 +275,40 @@ name with DNS (`boards/esp32_devkitc_procpu.conf`). It needs:
 make firmware-build FIRMWARE_BOARD=esp32_devkitc/esp32/procpu ZEPHYR_TOOLCHAIN=zephyr \
      FIRMWARE_BUILD=build/firmware-esp32 \
      ZEPHYR_SDK_INSTALL_DIR=~/zephyr-sdk-1.0.1 EXTRA_CONF_FILE=$PWD/firmware/eop-edge/wifi.local.conf
-west flash -d build/firmware-esp32
+west flash -d build/firmware-esp32 --esp-device /dev/ttyUSB0
 ```
 
-Built on 2026-11-16 without a board (no overlay, so the device would stop at boot asking for
-the network name), the image fits with room to spare in the ESP32's memory:
+Differences of the board build, all in `boards/esp32_devkitc_procpu.conf`:
+
+* **120-sample buffer**, not the minimum 60: a 30 s outage plus the up to 30 s wait of the
+  reconnection backoff can keep the board offline for about 60 s, and the board, unlike
+  `native_sim`, is not told when the broker or the WiFi comes back.
+* **DHCP asks for an address 2 s after joining** instead of up to 10 s.
+* The WiFi driver rejoins on its own after a loss, and at power-on the firmware keeps retrying
+  WiFi, DHCP and SNTP with backoff until the network is there, instead of stopping.
 
 | Region | Used | Size | |
 |---|---|---|---|
-| DRAM (dram0 + dram1) | 140 KB | 288 KB | 49 % |
+| DRAM (dram0 + dram1) | 142 KB | 288 KB | 49 % |
 | IRAM | 64 KB | 224 KB | 28 % |
-| Flash | 577 KB | 4 MB | 14 % |
+| Flash | 578 KB | 4 MB | 14 % |
 
-It has not been flashed or run: there is no board. It is not built in CI either (the SDK and the
-HAL would add several minutes to every firmware run); build it by hand when the firmware changes
-until a board is available.
+It is not built in CI (the SDK and the HAL would add several minutes to every firmware run);
+build it by hand when the firmware changes.
+
+### Tested on an ESP32 (2026-11-17)
+
+ESP32-D0WD-V3 (rev 3.1) on a DevKitC-style board, home WiFi (WPA2, 2.4 GHz), Mosquitto on the
+laptop through docker-compose:
+
+| Check | Result |
+|---|---|
+| US-401: joins WiFi, sets the clock with SNTP, publishes telemetry, events and health | OK: one sample per second with consecutive `message_id`s, `BOOT` event, health every 10 s |
+| US-401 AC6: first sample at the broker < 10 s after power-on | 8.9 s on a cold start; 15 s on quick resets, where this router rejects the first authentication attempts of a MAC that was just connected (reason 2/205, then accepted) |
+| US-402: broker down 31 s (62 s offline with the backoff) | all samples delivered in order, no gaps, no duplicates; `RECONNECTED` with 62; `dropped` 0 (with a 60-sample buffer the same test lost one sample, hence 120) |
+| US-403: `eop fault hang mqtt` / `hang sensor` (fault build) | restarted after ~6 s; health with the new counter at once; MQTT restart delivered the 6 samples buffered meanwhile; sensor ids continued |
+| US-403: `eop fault crash` | the board rebooted and published again, new `boot_id` |
+
+Not checked on the board: a real WiFi loss (the broker loss above exercises the same buffer and
+reconnection path) and the LED blinking (no LED wired to GPIO2 during the test; `eop status`
+showed the pattern).
