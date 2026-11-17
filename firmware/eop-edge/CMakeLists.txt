@@ -16,6 +16,12 @@ target_sources(app PRIVATE
   src/flush.c
   src/link.c
   src/status.c
+  src/shell.c
+  src/watchdog.c
+  src/supervisor.c
+  src/led.c
+  src/led_pattern.c
+  src/fatal.c
   src/platform.c
 )
 
