@@ -27,6 +27,10 @@ namespace
         {
             return RegisterNodeResult::REGISTRY_UNAVAILABLE;
         }
+        TelemetryResult upsertTelemetry(const EdgeTelemetry&) override
+        {
+            return TelemetryResult::UNAVAILABLE;
+        }
         RegistryResult queryNode(const std::string&, NodeRecord&) const override
         {
             return RegistryResult::UNAVAILABLE;
@@ -212,4 +216,89 @@ TEST(ReplicaNodeRegistryTest, AnUnreachableSharedBackendIsReportedNotHidden)
 
     registry.useSharedBackend(nullptr);
     EXPECT_TRUE(registry.healthy());
+}
+
+// ---------------------------------------------------------------------------
+// Edge devices (ADR-028 §1)
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    EdgeTelemetry sample(const std::string& id, std::int64_t sampledAtMs, double temperature = 21.4)
+    {
+        EdgeTelemetry t;
+        t.nodeId = id;
+        t.bunkerName = "Vault-101";
+        t.messageId = 1;
+        t.bootId = "9f3c27a1";
+        t.temperature = temperature;
+        t.deviceStatus = "OK";
+        t.sampledAtMs = sampledAtMs;
+        t.receivedAt = std::chrono::system_clock::now();
+        return t;
+    }
+} // namespace
+
+TEST(InMemoryNodeRegistryTest, TelemetryCreatesAnEdgeNode)
+{
+    InMemoryNodeRegistry registry;
+    NodeRecord out;
+
+    EXPECT_EQ(registry.upsertTelemetry(sample("vault-101", 1000)), TelemetryResult::STORED);
+    ASSERT_EQ(registry.queryNode("vault-101", out), RegistryResult::OK);
+    EXPECT_EQ(out.source, NODE_SOURCE_EDGE);
+    EXPECT_EQ(out.ipAddress, "0.0.0.0");
+    EXPECT_EQ(out.capacity, 0);
+    EXPECT_DOUBLE_EQ(out.temperature, 21.4);
+    EXPECT_EQ(out.deviceStatus, "OK");
+    EXPECT_EQ(out.sampledAtMs, 1000);
+}
+
+// A buffered sample flushed after a reconnection (US-402) must not hide a newer one.
+TEST(InMemoryNodeRegistryTest, AnOlderSampleOnlyRefreshesLastSeen)
+{
+    InMemoryNodeRegistry registry;
+    NodeRecord out;
+
+    registry.upsertTelemetry(sample("vault-101", 2000, 30.0));
+    EdgeTelemetry older = sample("vault-101", 1000, 10.0);
+    older.receivedAt += std::chrono::seconds(5);
+    EXPECT_EQ(registry.upsertTelemetry(older), TelemetryResult::OLDER_SAMPLE);
+    ASSERT_EQ(registry.queryNode("vault-101", out), RegistryResult::OK);
+    EXPECT_DOUBLE_EQ(out.temperature, 30.0);
+    EXPECT_EQ(out.lastSeen, older.receivedAt);
+
+    EXPECT_EQ(registry.upsertTelemetry(sample("vault-101", 3000, 31.5)), TelemetryResult::STORED);
+    ASSERT_EQ(registry.queryNode("vault-101", out), RegistryResult::OK);
+    EXPECT_DOUBLE_EQ(out.temperature, 31.5);
+}
+
+// A node belongs to one source (ADR-028 §1).
+TEST(InMemoryNodeRegistryTest, TcpAndEdgeNodeIdsNeverMix)
+{
+    InMemoryNodeRegistry registry;
+
+    registry.registerOrReconnectNode(node("tcp-1"));
+    EXPECT_EQ(registry.upsertTelemetry(sample("tcp-1", 1000)), TelemetryResult::TCP_NODE);
+
+    registry.upsertTelemetry(sample("edge-1", 1000));
+    registry.markOffline("edge-1");
+    EXPECT_EQ(registry.registerOrReconnectNode(node("edge-1", "Vault-101", 0)),
+              RegisterNodeResult::DUPLICATE_ONLINE_NODE);
+}
+
+TEST(ReplicaNodeRegistryTest, TelemetryGoesToTheSharedBackend)
+{
+    ReplicaNodeRegistry registry(isEngine);
+    auto shared = std::make_unique<InMemoryNodeRegistry>();
+    InMemoryNodeRegistry* sharedView = shared.get();
+    registry.useSharedBackend(std::move(shared));
+    NodeRecord out;
+
+    EXPECT_EQ(registry.upsertTelemetry(sample("vault-101", 1000)), TelemetryResult::STORED);
+    EXPECT_EQ(sharedView->queryNode("vault-101", out), RegistryResult::OK);
+
+    ReplicaNodeRegistry down(isEngine);
+    down.useSharedBackend(std::make_unique<UnreachableRegistry>());
+    EXPECT_EQ(down.upsertTelemetry(sample("vault-101", 1000)), TelemetryResult::UNAVAILABLE);
 }

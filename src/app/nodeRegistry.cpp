@@ -2,6 +2,12 @@
 
 #include <utility>
 
+namespace
+{
+    // Edge devices are reached through the broker, never directly (ADR-028 §1).
+    constexpr const char* EDGE_IP_ADDRESS = "0.0.0.0";
+} // namespace
+
 // ---------------------------------------------------------------------------
 // InMemoryNodeRegistry
 // ---------------------------------------------------------------------------
@@ -20,8 +26,10 @@ RegisterNodeResult InMemoryNodeRegistry::registerOrReconnectNode(const NodeRecor
     }
 
     const bool sameMetadata = (it->second.bunkerName == record.bunkerName) && (it->second.capacity == record.capacity);
+    // A node belongs to one source: an edge device's node_id cannot register over TCP (ADR-028).
+    const bool edgeNode = it->second.source == NODE_SOURCE_EDGE;
 
-    if (it->second.status == NodeStatus::OFFLINE && sameMetadata)
+    if (it->second.status == NodeStatus::OFFLINE && sameMetadata && !edgeNode)
     {
         it->second.status = NodeStatus::ONLINE;
         it->second.lastSeen = record.lastSeen;
@@ -31,6 +39,39 @@ RegisterNodeResult InMemoryNodeRegistry::registerOrReconnectNode(const NodeRecor
     }
 
     return RegisterNodeResult::DUPLICATE_ONLINE_NODE;
+}
+
+TelemetryResult InMemoryNodeRegistry::upsertTelemetry(const EdgeTelemetry& telemetry)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = m_nodes.find(telemetry.nodeId);
+
+    if (it == m_nodes.end())
+    {
+        NodeRecord record;
+        record.nodeId = telemetry.nodeId;
+        record.ipAddress = EDGE_IP_ADDRESS;
+        record.capacity = 0;
+        record.source = NODE_SOURCE_EDGE;
+        it = m_nodes.emplace(telemetry.nodeId, std::move(record)).first;
+    }
+    else if (it->second.source != NODE_SOURCE_EDGE)
+    {
+        return TelemetryResult::TCP_NODE;
+    }
+
+    NodeRecord& node = it->second;
+    node.bunkerName = telemetry.bunkerName;
+    node.status = NodeStatus::ONLINE;
+    node.lastSeen = telemetry.receivedAt;
+    if (node.sampledAtMs > telemetry.sampledAtMs)
+    {
+        return TelemetryResult::OLDER_SAMPLE;
+    }
+    node.temperature = telemetry.temperature;
+    node.deviceStatus = telemetry.deviceStatus;
+    node.sampledAtMs = telemetry.sampledAtMs;
+    return TelemetryResult::STORED;
 }
 
 RegistryResult InMemoryNodeRegistry::queryNode(const std::string& nodeId, NodeRecord& out) const
@@ -152,6 +193,11 @@ std::shared_ptr<INodeRegistry> ReplicaNodeRegistry::backendFor(const std::string
 RegisterNodeResult ReplicaNodeRegistry::registerOrReconnectNode(const NodeRecord& record)
 {
     return backendFor(record.nodeId)->registerOrReconnectNode(record);
+}
+
+TelemetryResult ReplicaNodeRegistry::upsertTelemetry(const EdgeTelemetry& telemetry)
+{
+    return backendFor(telemetry.nodeId)->upsertTelemetry(telemetry);
 }
 
 RegistryResult ReplicaNodeRegistry::queryNode(const std::string& nodeId, NodeRecord& out) const

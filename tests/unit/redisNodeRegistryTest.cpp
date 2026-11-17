@@ -286,3 +286,73 @@ TEST_F(RedisConfigEnvTest, RejectsBadValues)
     setenv("EOP_REGISTRY_LEASE_REFRESH_MS", "5000", 1);
     EXPECT_FALSE(loadRedisRegistryConfig(config, error)) << "refresh must be shorter than the TTL";
 }
+
+// ---------------------------------------------------------------------------
+// Edge devices in Redis (ADR-028 §1)
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    EdgeTelemetry sample(const std::string& id, std::int64_t sampledAtMs, double temperature)
+    {
+        EdgeTelemetry t;
+        t.nodeId = id;
+        t.bunkerName = "Vault-101";
+        t.messageId = 7;
+        t.bootId = "9f3c27a1";
+        t.temperature = temperature;
+        t.deviceStatus = "WARN";
+        t.sampledAtMs = sampledAtMs;
+        t.receivedAt = std::chrono::system_clock::now();
+        return t;
+    }
+} // namespace
+
+TEST_F(RedisNodeRegistryTest, TelemetryIsSharedAndKeepsTheNewestSample)
+{
+    RedisNodeRegistry a(configFor("replica-a"));
+    RedisNodeRegistry b(configFor("replica-b"));
+    ASSERT_TRUE(a.start());
+    ASSERT_TRUE(b.start());
+    NodeRecord out;
+    std::vector<NodeRecord> nodes;
+
+    EXPECT_EQ(a.upsertTelemetry(sample("vault-101", 2000, 31.25)), TelemetryResult::STORED);
+    ASSERT_EQ(b.queryNode("vault-101", out), RegistryResult::OK) << "visible from the other replica";
+    EXPECT_EQ(out.source, NODE_SOURCE_EDGE);
+    EXPECT_EQ(out.ipAddress, "0.0.0.0");
+    EXPECT_DOUBLE_EQ(out.temperature, 31.25);
+    EXPECT_EQ(out.deviceStatus, "WARN");
+    EXPECT_EQ(out.sampledAtMs, 2000);
+    EXPECT_EQ(out.status, NodeStatus::ONLINE) << "no owner lease needed for an edge node";
+
+    EXPECT_EQ(b.upsertTelemetry(sample("vault-101", 1000, 10.0)), TelemetryResult::OLDER_SAMPLE);
+    ASSERT_EQ(a.queryNode("vault-101", out), RegistryResult::OK);
+    EXPECT_DOUBLE_EQ(out.temperature, 31.25);
+
+    ASSERT_EQ(a.listNodes(nodes), RegistryResult::OK);
+    ASSERT_EQ(nodes.size(), 1u);
+    EXPECT_EQ(nodes[0].source, NODE_SOURCE_EDGE);
+}
+
+TEST_F(RedisNodeRegistryTest, TcpAndEdgeNodeIdsNeverMix)
+{
+    RedisNodeRegistry a(configFor("replica-a"));
+    ASSERT_TRUE(a.start());
+
+    a.registerOrReconnectNode(node("tcp-1"));
+    EXPECT_EQ(a.upsertTelemetry(sample("tcp-1", 1000, 20.0)), TelemetryResult::TCP_NODE);
+
+    a.upsertTelemetry(sample("edge-1", 1000, 20.0));
+    EXPECT_EQ(a.registerOrReconnectNode(node("edge-1", "Vault-101", 0)), RegisterNodeResult::DUPLICATE_ONLINE_NODE);
+}
+
+TEST(RedisNodeRegistryDownTest, TelemetryWithoutRedisIsUnavailable)
+{
+    RedisRegistryConfig config;
+    config.host = "127.0.0.1";
+    config.port = CLOSED_PORT;
+    config.replicaName = "replica-a";
+    RedisNodeRegistry registry(config);
+    EXPECT_EQ(registry.upsertTelemetry(sample("vault-101", 1000, 20.0)), TelemetryResult::UNAVAILABLE);
+}

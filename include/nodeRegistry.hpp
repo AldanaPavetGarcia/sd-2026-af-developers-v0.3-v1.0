@@ -9,6 +9,10 @@
  * node in the replica's local table, because each replica dispatches to its own sidecar engine,
  * and sends every other node to the shared backend when there is one.
  *
+ * Edge devices (ADR-028) are nodes too: `upsertTelemetry` creates or updates them from the
+ * ingestor's `TELEMETRY` command. They have no session: the server derives their liveness from
+ * `lastSeen` when it reads them.
+ *
  * Errors are return codes; nothing here throws across the module boundary.
  */
 
@@ -16,6 +20,7 @@
 #define NODE_REGISTRY_HPP
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -54,6 +59,37 @@ enum class RegistryResult
 };
 
 /**
+ * @brief Result of storing a telemetry sample of an edge device (ADR-028 §1).
+ */
+enum class TelemetryResult
+{
+    STORED,       ///< Created or updated with this sample.
+    OLDER_SAMPLE, ///< last_seen updated; a newer sample was already shown, so it is kept.
+    TCP_NODE,     ///< The node_id belongs to a node registered over TCP: rejected.
+    UNAVAILABLE   ///< The backend could not be reached; nothing was written.
+};
+
+/** Where a node comes from. */
+constexpr const char* NODE_SOURCE_TCP = "tcp";
+/** Edge devices, through the ingestor (ADR-028). */
+constexpr const char* NODE_SOURCE_EDGE = "edge";
+
+/**
+ * @brief One telemetry sample of an edge device, as the `TELEMETRY` command carries it.
+ */
+struct EdgeTelemetry
+{
+    std::string nodeId;                               ///< Device node_id.
+    std::string bunkerName;                           ///< Device bunker name.
+    std::uint32_t messageId = 0;                      ///< Per-boot sequence number.
+    std::string bootId;                               ///< 8 hex digits, random per boot.
+    double temperature = 0.0;                         ///< Degrees C.
+    std::string deviceStatus;                         ///< OK, WARN or ALERT.
+    std::int64_t sampledAtMs = 0;                     ///< Device clock at sampling, epoch ms.
+    std::chrono::system_clock::time_point receivedAt; ///< Server clock at reception.
+};
+
+/**
  * @brief Metadata of one registered bunker node.
  *
  * Populated from a REGISTER message (US-103 AC1) and kept after the client disconnects (AC4).
@@ -67,6 +103,10 @@ struct NodeRecord
     NodeStatus status;                              ///< Effective liveness (ADR-027 §2 for Redis).
     std::chrono::system_clock::time_point lastSeen; ///< Last known activity.
     std::string sessionId;                          ///< Session holding the node, empty if none.
+    std::string source = NODE_SOURCE_TCP;           ///< NODE_SOURCE_TCP or NODE_SOURCE_EDGE.
+    double temperature = 0.0;                       ///< Edge only: last shown temperature.
+    std::string deviceStatus;                       ///< Edge only: OK, WARN or ALERT.
+    std::int64_t sampledAtMs = 0;                   ///< Edge only: sampled_at of the shown sample.
 
     NodeRecord()
         : capacity(0)
@@ -90,11 +130,23 @@ public:
     /**
      * @brief Registers a node, or reconnects it if it is OFFLINE with the same metadata.
      * @details Reconnection requires the same bunkerName and capacity; ipAddress is refreshed,
-     *          not compared (ADR-018: a reconnecting Pod gets a new IP).
+     *          not compared (ADR-018: a reconnecting Pod gets a new IP). The node_id of an edge
+     *          node is a duplicate: a node belongs to one source (ADR-028 §1).
      * @param record Candidate record; its status is ignored (a registered node is ONLINE).
      * @return The outcome.
      */
     virtual RegisterNodeResult registerOrReconnectNode(const NodeRecord& record) = 0;
+
+    /**
+     * @brief Creates or updates an edge node from a telemetry sample (ADR-028 §1).
+     * @details The node gets `source=edge`, `ip_address=0.0.0.0`, `capacity=0` and
+     *          `lastSeen=receivedAt`. The shown telemetry is the sample with the newest
+     *          `sampledAtMs`, so a buffered sample flushed after a reconnection does not hide a
+     *          newer one.
+     * @param telemetry The sample.
+     * @return The outcome; a node registered over TCP is never overwritten.
+     */
+    virtual TelemetryResult upsertTelemetry(const EdgeTelemetry& telemetry) = 0;
 
     /**
      * @brief Looks a node up.
@@ -156,6 +208,7 @@ class InMemoryNodeRegistry : public INodeRegistry
 {
 public:
     RegisterNodeResult registerOrReconnectNode(const NodeRecord& record) override;
+    TelemetryResult upsertTelemetry(const EdgeTelemetry& telemetry) override;
     RegistryResult queryNode(const std::string& nodeId, NodeRecord& out) const override;
     RegistryResult listNodes(std::vector<NodeRecord>& out) const override;
     void bindSession(const std::string& nodeId, const std::string& sessionId) override;
@@ -202,6 +255,7 @@ public:
     bool hasSharedBackend() const;
 
     RegisterNodeResult registerOrReconnectNode(const NodeRecord& record) override;
+    TelemetryResult upsertTelemetry(const EdgeTelemetry& telemetry) override;
     RegistryResult queryNode(const std::string& nodeId, NodeRecord& out) const override;
     RegistryResult listNodes(std::vector<NodeRecord>& out) const override;
     void bindSession(const std::string& nodeId, const std::string& sessionId) override;

@@ -4,7 +4,8 @@
  *
  * @details Data model (ADR-027 §2), with `<p>` the configurable key prefix:
  *          - `<p>:node:<node_id>`: hash with the v0.1 fields, `source`, `owner` (the replica
- *            holding the node's session) and `last_seen` in epoch milliseconds;
+ *            holding the node's session) and `last_seen` in epoch milliseconds; edge nodes
+ *            (ADR-028) have no owner and add `temperature`, `device_status`, `sampled_at`;
  *          - `<p>:nodes`: set of every node_id, for LIST_NODES;
  *          - `<p>:replica:<name>`: this replica's lease, refreshed every `leaseRefreshMs` with a
  *            `leaseTtlMs` expiry.
@@ -82,6 +83,7 @@ public:
     bool start();
 
     RegisterNodeResult registerOrReconnectNode(const NodeRecord& record) override;
+    TelemetryResult upsertTelemetry(const EdgeTelemetry& telemetry) override;
     RegistryResult queryNode(const std::string& nodeId, NodeRecord& out) const override;
     RegistryResult listNodes(std::vector<NodeRecord>& out) const override;
     void bindSession(const std::string& nodeId, const std::string& sessionId) override;

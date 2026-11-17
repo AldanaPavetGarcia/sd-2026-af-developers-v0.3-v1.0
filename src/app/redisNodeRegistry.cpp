@@ -1,6 +1,7 @@
 #include "redisNodeRegistry.hpp"
 
 #include <charconv>
+#include <cstdio>
 #include <cstdlib>
 #include <sys/time.h>
 #include <utility>
@@ -17,12 +18,16 @@ namespace
     // Return values of REGISTER_SCRIPT.
     constexpr long long REGISTER_NEW = 0;
     constexpr long long REGISTER_RECONNECTED = 1;
+    // Return values of TELEMETRY_SCRIPT.
+    constexpr long long TELEMETRY_STORED = 0;
+    constexpr long long TELEMETRY_OLDER = 1;
+    constexpr const char* SOURCE_EDGE = "edge";
 
     // REGISTER, atomic in Redis (ADR-027 §2). Returns 0 new, 1 reconnected / taken over, 2 duplicate.
     // KEYS: node hash, index set. ARGV: node_id, bunker_name, ip_address, capacity, last_seen,
     // session_id, owner, lease key prefix.
     constexpr const char* REGISTER_SCRIPT = R"lua(
-local n = redis.call('HMGET', KEYS[1], 'bunker_name', 'capacity', 'status', 'owner')
+local n = redis.call('HMGET', KEYS[1], 'bunker_name', 'capacity', 'status', 'owner', 'source')
 if not n[1] then
   redis.call('HSET', KEYS[1], 'node_id', ARGV[1], 'bunker_name', ARGV[2], 'ip_address', ARGV[3],
              'capacity', ARGV[4], 'status', 'ONLINE', 'last_seen', ARGV[5], 'session_id', ARGV[6],
@@ -30,6 +35,7 @@ if not n[1] then
   redis.call('SADD', KEYS[2], ARGV[1])
   return 0
 end
+if n[5] == 'edge' then return 2 end
 local alive = n[3] == 'ONLINE' and n[4] and n[4] ~= '' and
               redis.call('EXISTS', ARGV[8] .. n[4]) == 1
 if not alive and n[1] == ARGV[2] and n[2] == ARGV[4] then
@@ -38,6 +44,24 @@ if not alive and n[1] == ARGV[2] and n[2] == ARGV[4] then
   return 1
 end
 return 2
+)lua";
+
+    // TELEMETRY of an edge device (ADR-028 §1). Returns 0 stored, 1 older sample (last_seen only),
+    // 2 node registered over TCP. KEYS: node hash, index set. ARGV: node_id, bunker_name, last_seen,
+    // temperature, device_status, sampled_at.
+    constexpr const char* TELEMETRY_SCRIPT = R"lua(
+local source = redis.call('HGET', KEYS[1], 'source')
+if source and source ~= 'edge' then return 2 end
+if not source then
+  redis.call('HSET', KEYS[1], 'node_id', ARGV[1], 'ip_address', '0.0.0.0', 'capacity', '0',
+             'source', 'edge', 'owner', '', 'session_id', '')
+  redis.call('SADD', KEYS[2], ARGV[1])
+end
+redis.call('HSET', KEYS[1], 'bunker_name', ARGV[2], 'status', 'ONLINE', 'last_seen', ARGV[3])
+local shown = tonumber(redis.call('HGET', KEYS[1], 'sampled_at'))
+if shown and shown > tonumber(ARGV[6]) then return 1 end
+redis.call('HSET', KEYS[1], 'temperature', ARGV[4], 'device_status', ARGV[5], 'sampled_at', ARGV[6])
+return 0
 )lua";
 
     // Writes fields only if this replica still owns the node, so a replica that lost a node to
@@ -101,6 +125,26 @@ return 1
         return ec == std::errc() && ptr == end;
     }
 
+    bool parseDouble(const std::string& text, double& out)
+    {
+        if (text.empty())
+        {
+            return false;
+        }
+        char* end = nullptr;
+        out = std::strtod(text.c_str(), &end);
+        return end == text.c_str() + text.size();
+    }
+
+    // Lossless text form of a double, for Redis.
+    std::string formatDouble(double value)
+    {
+        constexpr int kLosslessDigits = 17;
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.*g", kLosslessDigits, value);
+        return buf;
+    }
+
     timeval toTimeval(int ms)
     {
         timeval tv {};
@@ -140,6 +184,7 @@ return 1
         record.bunkerName = fields["bunker_name"];
         record.ipAddress = fields["ip_address"];
         record.sessionId = fields["session_id"];
+        record.source = fields["source"].empty() ? SOURCE_TCP : fields["source"];
         std::int64_t lastSeenMs = 0;
         if (record.nodeId.empty() || !parseNumber(fields["capacity"], record.capacity) ||
             !parseNumber(fields["last_seen"], lastSeenMs))
@@ -147,6 +192,19 @@ return 1
             return false;
         }
         record.lastSeen = std::chrono::system_clock::time_point(std::chrono::milliseconds(lastSeenMs));
+        if (record.source == SOURCE_EDGE)
+        {
+            // No session and no owner: the server derives liveness from last_seen (ADR-028).
+            record.status = fields["status"] == ONLINE ? NodeStatus::ONLINE : NodeStatus::OFFLINE;
+            record.deviceStatus = fields["device_status"];
+            if (!fields["sampled_at"].empty() && (!parseNumber(fields["sampled_at"], record.sampledAtMs) ||
+                                                  !parseDouble(fields["temperature"], record.temperature)))
+            {
+                return false;
+            }
+            out = std::move(record);
+            return true;
+        }
         // ADR-027 §2: ONLINE needs both the stored status and a live owner.
         const bool ownerAlive = fields["owner_alive"] == "1";
         record.status = (fields["status"] == ONLINE && ownerAlive) ? NodeStatus::ONLINE : NodeStatus::OFFLINE;
@@ -327,6 +385,31 @@ RegisterNodeResult RedisNodeRegistry::registerOrReconnectNode(const NodeRecord& 
         m_owned[record.nodeId] = std::move(owned);
     }
     return result;
+}
+
+TelemetryResult RedisNodeRegistry::upsertTelemetry(const EdgeTelemetry& telemetry)
+{
+    ReplyPtr reply = command({"EVAL",
+                              TELEMETRY_SCRIPT,
+                              "2",
+                              nodeKey(telemetry.nodeId),
+                              indexKey(),
+                              telemetry.nodeId,
+                              telemetry.bunkerName,
+                              std::to_string(toEpochMs(telemetry.receivedAt)),
+                              formatDouble(telemetry.temperature),
+                              telemetry.deviceStatus,
+                              std::to_string(telemetry.sampledAtMs)});
+    if (!reply || reply->type != REDIS_REPLY_INTEGER)
+    {
+        return TelemetryResult::UNAVAILABLE;
+    }
+    switch (reply->integer)
+    {
+        case TELEMETRY_STORED: return TelemetryResult::STORED;
+        case TELEMETRY_OLDER: return TelemetryResult::OLDER_SAMPLE;
+        default: return TelemetryResult::TCP_NODE;
+    }
 }
 
 RegistryResult RedisNodeRegistry::queryNode(const std::string& nodeId, NodeRecord& out) const
