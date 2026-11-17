@@ -1,8 +1,8 @@
 # EOP edge firmware (ZephyrOS)
 
-Firmware of the bunker edge device (US-401, US-402, ADR-013, ADR-014). It samples the bunker every
-second and publishes the telemetry over MQTT with QoS 1, buffering up to 60 seconds of it while
-offline. The squad has no ESP32 board, so it runs
+Firmware of the bunker edge device (US-401, US-402, US-403, ADR-013, ADR-014). It samples the
+bunker every second and publishes the telemetry over MQTT with QoS 1, buffering up to 60 seconds of
+it while offline; a watchdog restarts a hung thread and a fatal error reboots the device. The squad has no ESP32 board, so it runs
 on Zephyr's **`native_sim`** board: a Linux process that uses the host's sockets, so the MQTT
 traffic, the broker and everything downstream are real. See [§ Simulation limits](#simulation-limits).
 
@@ -12,8 +12,10 @@ firmware/eop-edge/
 ├── Kconfig  prj.conf      # every setting (identity, broker, periods, priorities, stacks)
 ├── boards/                # per-board settings (native_sim: offloaded sockets, larger stacks)
 ├── include/  src/         # threads, MQTT, payload, queue, backoff, status + shell, platform
-├── tests/unit/            # ztest (twister): backoff, payloads, identity rules, queue, flush, link
-├── tests/integration/     # against a real Mosquitto: US-401 AC2-AC6, US-402 AC1-AC4, AC6, AC8
+├── fault_inject.conf      # test build with the `eop fault` shell commands (US-403 AC6)
+├── tests/unit/            # ztest (twister): backoff, payloads, identity rules, queue, flush, link,
+│                          # watchdog, LED patterns
+├── tests/integration/     # against a real Mosquitto: US-401, US-402 and (fault build) US-403
 └── Dockerfile             # native_sim build in a 50 MB-max image
 ```
 
@@ -23,6 +25,62 @@ firmware/eop-edge/
 |---|---|---|
 | sensor | 5 | Every `CONFIG_EOP_SAMPLE_PERIOD_MS` (1 s) builds a sample — `message_id` +1, wall-clock timestamp, simulated temperature (bounded random walk), status from the temperature — and puts it in the queue. A full queue loses its **oldest** sample, counted as *dropped*. |
 | MQTT | 6 | Owns the broker connection. Takes samples in FIFO order, publishes each with QoS 1 and waits for its PUBACK before the next one. A sample without PUBACK stays pending and goes first after reconnecting. Reconnects with exponential backoff 1, 2, 4, 8, 16, 30 s. Publishes the events and the health report. |
+| supervisor | 1 | The watchdog (US-403). Every second (`k_timer`) restarts a thread that has not checked in for 5 s, and picks the LED pattern. |
+
+## Thread resilience (US-403)
+
+The sensor and MQTT threads check in with the watchdog on every loop, and inside every wait that
+can last (PUBACK, CONNACK, backoff sleeps are split in 1 s steps), so a healthy thread is never
+silent for 5 s.
+
+* **A thread that misses its check-in for 5 s is aborted and created again**, alone: the other
+  thread is not touched. A restarted thread keeps its state, which lives in its module and not on
+  the aborted stack: the sensor goes on with the same `message_id` sequence, and the MQTT thread
+  closes the old socket, reconnects and resends the sample that had no PUBACK. Nothing is lost.
+* **Each restart is counted per thread** and a health report with the new `restarts` goes out at
+  once (within 10 s, AC7); `eop status` shows them too.
+* **A fatal kernel error reboots the device** (`k_sys_fatal_error_handler` → `sys_reboot`). On
+  `native_sim` the process starts itself again (`CONFIG_NATIVE_SIM_REBOOT`): new `boot_id`,
+  `BOOT` event, `message_id` from 1.
+* Limit: a thread aborted while holding a lock would leave it held. The threads never block while
+  holding one (ADR-014), so that only happens if a thread hangs inside a critical section.
+
+### LED patterns
+
+The status LED is the devicetree alias `led0`: the emulated GPIO on `native_sim` (shown by
+`eop status`), GPIO2 on the ESP32 (`boards/esp32_devkitc_procpu.overlay`; the DevKitC itself has
+no user LED, so an LED goes from GPIO2 through a resistor to GND).
+
+| Pattern | Blink | Meaning |
+|---|---|---|
+| ok | 100 ms on every 2 s | connected, every thread alive |
+| offline | 500 ms on, 500 ms off (1 Hz) | no broker connection: samples are being buffered |
+| thread error | 100 ms on, 100 ms off (5 Hz), for 10 s after a restart | a thread was restarted by the watchdog |
+
+A thread error hides being offline: a restarted MQTT thread is also briefly disconnected.
+
+### Fault injection (test builds)
+
+`make firmware-fault-build` adds `fault_inject.conf` (`CONFIG_EOP_FAULT_INJECT=y`) and with it:
+
+| Command | Does |
+|---|---|
+| `eop fault hang sensor` / `eop fault hang mqtt` | that thread stops at its next check-in, as if hung |
+| `eop fault crash` | raises a fatal kernel error (`k_oops`) |
+
+```text
+uart:~$ eop fault hang mqtt
+<wrn> eop_wdt: fault injection: mqtt thread hangs
+<err> eop_wdt: mqtt thread missed its check-in for more than 5000 ms; restarting it
+<wrn> eop_wdt: mqtt thread restarted (1 restarts since boot)
+<wrn> eop_mqtt: restarted; nothing in flight, reconnecting
+<inf> eop_mqtt: reconnected: 6 buffered samples delivered
+uart:~$ eop fault crash
+<err> eop_fatal: fatal kernel error (reason 3): rebooting
+native_sim_reboot: Restarting process.
+```
+
+The device build never has these commands.
 
 ## Offline buffering (US-402)
 
@@ -75,7 +133,7 @@ Also published, with QoS 1 (protocol §2.2, §2.3):
 | `eop/bunker/{node_id}/events` | first connection (`BOOT`), every reconnection (`RECONNECTED`) | `{"node_id":…,"boot_id":…,"timestamp":…,"event":"RECONNECTED","delivered":37}` |
 | `eop/bunker/{node_id}/health` | every `CONFIG_EOP_HEALTH_PERIOD_MS` (10 s) while connected | `{"node_id":…,"boot_id":…,"timestamp":…,"uptime_s":3600,"restarts":{"sensor":0,"mqtt":0},"buffered":0,"dropped":0}` |
 
-`restarts` stays at 0 until the watchdog arrives (US-403).
+`restarts` counts the watchdog restarts of each thread since boot (US-403).
 
 ## Configuration
 
@@ -90,6 +148,8 @@ Everything is a Kconfig option set in `prj.conf` (US-401 AC7); nothing is hardco
 | `CONFIG_EOP_SAMPLE_PERIOD_MS` | `1000` | Sampling period |
 | `CONFIG_EOP_QUEUE_LEN` | `60` | Queue / offline buffer, in samples |
 | `CONFIG_EOP_HEALTH_PERIOD_MS` | `10000` | Health report period |
+| `CONFIG_EOP_WDT_TIMEOUT_MS` / `_CHECK_MS` | `5000` / `1000` | Watchdog timeout and supervisor period |
+| `CONFIG_EOP_LED_ERROR_HOLD_MS` | `10000` | How long the LED shows a thread error |
 | `CONFIG_EOP_BACKOFF_INITIAL_S` / `_MAX_S` | `1` / `30` | Reconnection backoff |
 | `CONFIG_EOP_MQTT_KEEPALIVE_S` | `30` | MQTT keep-alive |
 | `CONFIG_EOP_SENSOR_PRIORITY` / `_MQTT_PRIORITY` | `5` / `6` | Thread priorities |
@@ -108,7 +168,7 @@ make firmware-build              # build/firmware/zephyr/zephyr.exe
 docker compose up -d mosquitto
 make firmware-run FIRMWARE_ARGS="--node-id=vault-7 --bunker-name=Vault-7"
 make firmware-test               # unit tests (ztest, twister)
-make firmware-integration-test   # US-401 AC2-AC6 against Mosquitto in Docker
+make firmware-integration-test   # US-401..US-403 against Mosquitto in Docker (also builds the fault build)
 make firmware-image              # eop-edge:local
 docker compose --profile edge up -d eop-edge
 ```
@@ -125,6 +185,7 @@ The device shell is on the process's stdin/stdout (`make firmware-run`, or
 |---|---|
 | `eop status` | Link and connection state, counters (below) |
 | `eop net down` / `eop net up` | `native_sim` only: cut and restore the simulated network link |
+| `eop fault …` | test builds only, see [Fault injection](#fault-injection-test-builds) |
 
 ```text
 uart:~$ eop status
@@ -136,6 +197,8 @@ buffered:       6
 dropped:        0 (oldest samples discarded when the buffer is full)
 connect failures: 3
 reconnections:  0 (last one delivered 0 buffered samples)
+restarts:       sensor 0, mqtt 0
+led:            offline
 ```
 
 `connect failures` counts every attempt made while offline, link down included.
@@ -164,6 +227,16 @@ reconnections:  0 (last one delivered 0 buffered samples)
 | AC7 | `message_id` +1 per sample within a boot | US-401 AC1 test; dedup itself is US-404 |
 | AC8 | `dropped` in the health report | `tests/unit`, `tests/integration`; the panel is US-405 |
 
+| US-403 | Check | Where |
+|---|---|---|
+| AC1 | a hung thread is restarted after 5 s | `tests/unit` (watchdog), `tests/integration/test_resilience.py` |
+| AC2 | per-thread restart counter on `…/health` | `tests/integration/test_resilience.py` |
+| AC3 | the other thread keeps working: samples keep flowing / no reconnection | `tests/integration/test_resilience.py` |
+| AC4 | fatal error → reboot → publishing again | `tests/integration/test_resilience.py` (`native_sim` reboot) |
+| AC5 | LED pattern per state, documented above | `tests/unit` (patterns); visual on the board |
+| AC6 | injected fault (Kconfig test build) → restart and counter | `tests/integration/test_resilience.py` |
+| AC7 | health with the new counter within 10 s of the restart | `tests/integration/test_resilience.py` |
+
 ## Simulation limits
 
 What `native_sim` does not prove, and what would close the gap on a board (ADR-014):
@@ -172,12 +245,14 @@ What `native_sim` does not prove, and what would close the gap on a board (ADR-0
 |---|---|---|
 | WiFi association, link loss and rejoin (`CONFIG_ESP32_WIFI_STA_RECONNECT`) | The host network; link loss is the shell's `eop net down/up` | WiFi driver events and timing; on the board a lost link is seen when the socket fails, and the reconnection waits for the next backoff attempt (up to 30 s) instead of being woken early |
 | Boot ROM + WiFi before the first publish | Process start → first PUBACK | Real boot time |
-| 520 KB of SRAM | Host memory | Measured on the ESP32 build: 139 KB of DRAM, 62 KB of IRAM ([ESP32 build](#esp32-build)) |
+| 520 KB of SRAM | Host memory | Measured on the ESP32 build: 140 KB of DRAM, 64 KB of IRAM ([ESP32 build](#esp32-build)) |
 | Wall clock from SNTP (`src/platform_sntp.c`) | Host clock (`src/platform_native_sim.c`) | SNTP on the device |
+| Status LED on GPIO2 | Emulated GPIO, pattern shown by `eop status` | The blink itself |
+| Reboot by the ROM after `sys_reboot` | The process restarts itself (`execv`) | Boot time after a crash |
 | Hardware RNG for `boot_id` | Host clock mixed with the test entropy source (`WARNING: Using a test - not safe - entropy source` at boot is expected) | — |
 
-Thread scheduling, the queue and buffering, backoff and the whole MQTT exchange are the real
-Zephyr code paths.
+Thread scheduling, the queue and buffering, backoff, the watchdog and thread restarts, and the
+whole MQTT exchange are the real Zephyr code paths.
 
 ## ESP32 build
 
@@ -203,14 +278,14 @@ make firmware-build FIRMWARE_BOARD=esp32_devkitc/esp32/procpu ZEPHYR_TOOLCHAIN=z
 west flash -d build/firmware-esp32
 ```
 
-Built on 2026-10-26 without a board (no overlay, so the device would stop at boot asking for
+Built on 2026-11-16 without a board (no overlay, so the device would stop at boot asking for
 the network name), the image fits with room to spare in the ESP32's memory:
 
 | Region | Used | Size | |
 |---|---|---|---|
-| DRAM (dram0 + dram1) | 139 KB | 288 KB | 48 % |
-| IRAM | 62 KB | 224 KB | 28 % |
-| Flash | 575 KB | 4 MB | 14 % |
+| DRAM (dram0 + dram1) | 140 KB | 288 KB | 49 % |
+| IRAM | 64 KB | 224 KB | 28 % |
+| Flash | 577 KB | 4 MB | 14 % |
 
 It has not been flashed or run: there is no board. It is not built in CI either (the SDK and the
 HAL would add several minutes to every firmware run); build it by hand when the firmware changes
