@@ -134,7 +134,7 @@ func TestSnapshotInRedis(t *testing.T) {
 	if _, ok, _ := ReadSnapshot(ctx, rdb); ok {
 		t.Fatal("the snapshot must expire when the ingestor stops writing")
 	}
-	mr.Set(StatusKey, "{")
+	_ = mr.Set(StatusKey, "{")
 	if _, _, err := ReadSnapshot(ctx, rdb); err == nil {
 		t.Fatal("garbage accepted")
 	}
