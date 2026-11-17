@@ -1,4 +1,4 @@
-.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-mttr-test edge-certs edge-integration-test k8s-rollout-restart-test slo-run-start slo-run-status slo-run-export observability-test slo-dashboard-test edge-dashboard-test edge-test edge-load-tool-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-prod-apply k8s-ready-time smoke-test-prod k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-mttr-test edge-certs edge-integration-test k8s-rollout-restart-test slo-run-start slo-run-status slo-run-export observability-test slo-dashboard-test edge-dashboard-test production-config-test edge-test edge-load-tool-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -60,6 +60,22 @@ k8s-apply:
 	kubectl rollout status deployment/signoz-otel-collector --timeout=180s
 	kubectl rollout status deployment/signoz --timeout=180s
 	kubectl rollout status deployment/otel-collector --timeout=180s
+
+## EOP v1.0 as a product (US-406, ADR-029): the complete stack from deploy/production, with every
+## production value in config/production.env. Needs the images (make gateway-image, eop-server,
+## hpc-engine) in the cluster; prerequisites in the README ("Deploy v1.0").
+k8s-prod-apply:
+	kubectl apply -k deploy/production
+	./tests/k8s/wait-ready.sh
+
+## US-406 AC4: apply on a clean cluster and fail if the stack is not Ready within 3 minutes.
+k8s-ready-time:
+	./tests/k8s/ready-time.sh
+
+## US-406 AC8: server, registration, graph analysis, edge ingestion and gateway health on the
+## deployed stack (current kubectl context).
+smoke-test-prod:
+	python3 tests/k8s/smoke_test_prod.py
 
 ## API gateway (US-301, ADR-010). Go module under services/go.
 GO_DIR := services/go
@@ -242,6 +258,10 @@ edge-load-tool-test:
 ## US-405: edge dashboard, its P99 alert and their provisioning (static, no Grafana needed).
 edge-dashboard-test:
 	python3 tests/smoke/test_edge_dashboard_contract.py
+
+## US-406 AC1/AC3: config/production.env, the Kustomization listings and the deploy/production render.
+production-config-test:
+	python3 tests/smoke/test_production_config_contract.py
 
 hpc-dashboard-test:
 	python3 tests/smoke/test_hpc_dashboard_contract.py
