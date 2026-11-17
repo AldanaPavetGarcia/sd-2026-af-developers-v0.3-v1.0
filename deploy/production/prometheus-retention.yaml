@@ -1,0 +1,21 @@
+# Retention from config/production.env (ADR-029): Kubernetes expands $(VAR) in arguments from the
+# container's environment. Args 2 and 3 of k8s/prometheus-deployment.yaml.
+- op: add
+  path: /spec/template/spec/containers/0/env
+  value:
+    - name: EOP_PROMETHEUS_RETENTION
+      valueFrom:
+        configMapKeyRef:
+          name: eop-global-config
+          key: EOP_PROMETHEUS_RETENTION
+    - name: EOP_PROMETHEUS_RETENTION_SIZE
+      valueFrom:
+        configMapKeyRef:
+          name: eop-global-config
+          key: EOP_PROMETHEUS_RETENTION_SIZE
+- op: replace
+  path: /spec/template/spec/containers/0/args/2
+  value: --storage.tsdb.retention.time=$(EOP_PROMETHEUS_RETENTION)
+- op: replace
+  path: /spec/template/spec/containers/0/args/3
+  value: --storage.tsdb.retention.size=$(EOP_PROMETHEUS_RETENTION_SIZE)

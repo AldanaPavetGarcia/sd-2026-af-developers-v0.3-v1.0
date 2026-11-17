@@ -1,0 +1,13 @@
+# Log retention from config/production.env (ADR-029). Loki applies command-line flags after its
+# configuration file, so -store.retention overrides monitoring/loki/config.yaml's retention_period.
+- op: add
+  path: /spec/template/spec/containers/0/env
+  value:
+    - name: EOP_LOKI_RETENTION
+      valueFrom:
+        configMapKeyRef:
+          name: eop-global-config
+          key: EOP_LOKI_RETENTION
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: -store.retention=$(EOP_LOKI_RETENTION)
