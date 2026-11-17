@@ -110,8 +110,7 @@ namespace
         void SetUp() override
         {
             // Reset registry between tests so they stay independent.
-            std::lock_guard<std::mutex> lock(serverContext.registry.registryMutex);
-            serverContext.registry.nodesMap.clear();
+            serverContext.registry.clear();
         }
 
         static std::thread serverThread;
@@ -255,7 +254,7 @@ TEST_F(EopServerTest, DuplicateRegisterReturnsErrorDuplicate)
 
     // The original entry must be preserved (capacity=30, not 99).
     NodeRecord rec;
-    const bool found = serverContext.registry.queryNode("dup-1", rec);
+    const bool found = serverContext.registry.queryNode("dup-1", rec) == RegistryResult::OK;
     ASSERT_TRUE(found);
     EXPECT_EQ(rec.capacity, 30) << "Original entry must not be overwritten";
     EXPECT_EQ(rec.bunkerName, "Beta");
@@ -270,7 +269,7 @@ TEST_F(EopServerTest, RegistryPersistsAfterClientDisconnects)
 
     // Socket is already closed by sendAndReceive.  Verify the entry is still there.
     NodeRecord rec;
-    EXPECT_TRUE(serverContext.registry.queryNode("persist-1", rec));
+    EXPECT_EQ(serverContext.registry.queryNode("persist-1", rec), RegistryResult::OK);
     EXPECT_EQ(rec.nodeId, "persist-1");
 }
 
@@ -476,7 +475,7 @@ TEST_F(EopServerTest, ConcurrentClientsCanRegisterSuccessfully)
     for (int i = 0; i < kClients; ++i)
     {
         NodeRecord rec;
-        ASSERT_TRUE(serverContext.registry.queryNode("conc-" + std::to_string(i), rec));
+        ASSERT_EQ(serverContext.registry.queryNode("conc-" + std::to_string(i), rec), RegistryResult::OK);
         EXPECT_EQ(rec.nodeId, "conc-" + std::to_string(i));
     }
 }

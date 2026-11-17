@@ -2,6 +2,8 @@
 // Implements the EOP server with node-registry commands (AC1-AC7).
 
 #include "../../include/eopServer.hpp"
+#include "../../include/readinessPort.hpp"
+#include "../../include/redisNodeRegistry.hpp"
 #include "../../lib/include/configLoader.hpp"
 #include "../../lib/include/traceContext.hpp"
 
@@ -17,6 +19,8 @@
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <limits>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -453,7 +457,7 @@ static void updateSessionActivity(ServerContext& ctx, int clientSock)
  * @param nodeId Registered node identifier.
  * @return true if the node id represents an HPC Engine.
  */
-static bool isHpcEngineNodeId(const std::string& nodeId)
+bool isHpcEngineNodeId(const std::string& nodeId)
 {
     constexpr const char* kHpcEngineNodeId = "hpc-engine";
     constexpr const char* kHpcEngineNodePrefix = "hpc-engine-";
@@ -763,16 +767,7 @@ static void bindNodeToSession(ServerContext& ctx, int clientSock, const std::str
         }
     }
 
-    {
-        std::lock_guard<std::mutex> lock(ctx.registry.registryMutex);
-        auto nodeIt = ctx.registry.nodesMap.find(nodeId);
-        if (nodeIt != ctx.registry.nodesMap.end())
-        {
-            nodeIt->second.status = NodeStatus::ONLINE;
-            nodeIt->second.lastSeen = std::chrono::system_clock::now();
-            nodeIt->second.sessionId = sessionId;
-        }
-    }
+    ctx.registry.bindSession(nodeId, sessionId);
 }
 
 /**
@@ -799,13 +794,7 @@ static void handleHeartbeat(int clientSock)
 
     if (!nodeId.empty())
     {
-        std::lock_guard<std::mutex> lock(serverContext.registry.registryMutex);
-        auto nodeIt = serverContext.registry.nodesMap.find(nodeId);
-        if (nodeIt != serverContext.registry.nodesMap.end())
-        {
-            nodeIt->second.status = NodeStatus::ONLINE;
-            nodeIt->second.lastSeen = std::chrono::system_clock::now();
-        }
+        serverContext.registry.touch(nodeId);
     }
 
     const std::string ack = getCmdStringFromCode(CMD_ACK) + " HEARTBEAT\n";
@@ -857,14 +846,7 @@ static void unregisterSession(ServerContext& ctx, int clientSock, const std::str
 
     if (!nodeId.empty())
     {
-        std::lock_guard<std::mutex> lock(ctx.registry.registryMutex);
-        auto nodeIt = ctx.registry.nodesMap.find(nodeId);
-        if (nodeIt != ctx.registry.nodesMap.end())
-        {
-            nodeIt->second.status = NodeStatus::OFFLINE;
-            nodeIt->second.lastSeen = std::chrono::system_clock::now();
-            nodeIt->second.sessionId.clear();
-        }
+        ctx.registry.markOffline(nodeId);
     }
 
     if (foundSession)
@@ -1309,6 +1291,30 @@ static std::string buildErrorServiceUnavailable()
 }
 
 /**
+ * @brief Build an ERROR_SERVICE_UNAVAILABLE response for a registry that cannot be reached.
+ *
+ * @return Formatted service-unavailable response (ADR-027: Redis backend down).
+ */
+static std::string buildErrorRegistryUnavailable()
+{
+    return getCmdStringFromCode(CMD_ERROR_SERVICE_UNAVAILABLE) + " desc=Node registry unavailable\n";
+}
+
+/**
+ * @brief Answers a command the registry could not serve.
+ *
+ * @param clientSock Connected client socket.
+ * @param command Command name, for the log.
+ */
+static void replyRegistryUnavailable(int clientSock, const std::string& command)
+{
+    const std::string err = buildErrorRegistryUnavailable();
+    send(clientSock, err.c_str(), err.size(), 0);
+    auditLogger.writeString(command + " failed: node registry unavailable", ERROR_LOG);
+    g_logContext.result = "ERROR";
+}
+
+/**
  * @brief Build an ERROR_HPC_TIMEOUT response for ANALYZE_GRAPH.
  *
  * @return Formatted HPC timeout response.
@@ -1386,6 +1392,11 @@ static void handleRegister(int clientSock, const std::string& line)
 
     const RegisterNodeResult result = serverContext.registry.registerOrReconnectNode(record);
 
+    if (result == RegisterNodeResult::REGISTRY_UNAVAILABLE)
+    {
+        replyRegistryUnavailable(clientSock, "REGISTER");
+        return;
+    }
     if (result == RegisterNodeResult::NEW_NODE || result == RegisterNodeResult::RECONNECTED_NODE)
     {
         bindNodeToSession(serverContext, clientSock, record.nodeId);
@@ -1442,7 +1453,14 @@ static void handleQueryNode(int clientSock, const std::string& line)
     NodeRecord record;
     g_logContext.nodeId = nodeId;
 
-    if (serverContext.registry.queryNode(nodeId, record))
+    const RegistryResult found = serverContext.registry.queryNode(nodeId, record);
+
+    if (found == RegistryResult::UNAVAILABLE)
+    {
+        replyRegistryUnavailable(clientSock, "QUERY_NODE");
+        return;
+    }
+    if (found == RegistryResult::OK)
     {
         const std::string response = serializeRecord(record) + "\n";
         send(clientSock, response.c_str(), response.size(), 0);
@@ -1469,7 +1487,13 @@ static void handleQueryNode(int clientSock, const std::string& line)
  */
 static void handleListNodes(int clientSock)
 {
-    const std::vector<NodeRecord> nodes = serverContext.registry.listNodes();
+    std::vector<NodeRecord> nodes;
+
+    if (serverContext.registry.listNodes(nodes) != RegistryResult::OK)
+    {
+        replyRegistryUnavailable(clientSock, "LIST_NODES");
+        return;
+    }
 
     std::ostringstream response;
     response << "LIST_NODES count=" << nodes.size() << "\n";
@@ -1522,7 +1546,6 @@ static int getHpcDispatchTimeoutMs()
 static bool findAvailableHpcEngineSession(int& engineFd, std::string& engineNodeId)
 {
     std::lock_guard<std::mutex> sessionsLock(serverContext.sessionsMutex);
-    std::lock_guard<std::mutex> registryLock(serverContext.registry.registryMutex);
 
     for (const auto& [fd, session] : serverContext.activeSessions)
     {
@@ -1531,13 +1554,9 @@ static bool findAvailableHpcEngineSession(int& engineFd, std::string& engineNode
             continue;
         }
 
-        auto nodeIt = serverContext.registry.nodesMap.find(session.nodeId);
-        if (nodeIt == serverContext.registry.nodesMap.end())
-        {
-            continue;
-        }
-
-        if (nodeIt->second.status != NodeStatus::ONLINE)
+        // Engine nodes are always in this replica's local registry (ADR-027 §3): no network call
+        // is made while holding sessionsMutex.
+        if (!serverContext.registry.isOnline(session.nodeId))
         {
             continue;
         }
@@ -1824,6 +1843,74 @@ void handleClientMessage(int clientSock, const std::string& clientIp, const std:
  * @param port TCP port to bind.
  * @param idleTimeout Initial idle timeout value.
  */
+/**
+ * @brief Reads a non-negative integer from the environment.
+ *
+ * @param name Variable name.
+ * @param fallback Value when unset or malformed.
+ * @return The value.
+ */
+static int getNonNegativeEnvInt(const char* name, int fallback)
+{
+    const char* raw = std::getenv(name);
+    if (raw == nullptr || *raw == '\0')
+    {
+        return fallback;
+    }
+    char* end = nullptr;
+    const long parsed = std::strtol(raw, &end, 10);
+    if (*end != '\0' || parsed < 0 || parsed > std::numeric_limits<int>::max())
+    {
+        return fallback;
+    }
+    return static_cast<int>(parsed);
+}
+
+/**
+ * @brief Selects the registry backend from EOP_REGISTRY_BACKEND (ADR-027 §1).
+ *
+ * `memory` (default) keeps every node in this process, as in v0.1. `redis` shares the registry
+ * between replicas; a Redis that does not answer yet is not fatal: the lease thread keeps trying
+ * and the replica stays not ready meanwhile.
+ *
+ * @param ctx Server context.
+ * @return false if the configuration is invalid (the server must not start).
+ */
+static bool configureRegistry(ServerContext& ctx)
+{
+    const char* backend = std::getenv("EOP_REGISTRY_BACKEND");
+    const std::string name = (backend == nullptr || *backend == '\0') ? "memory" : backend;
+
+    if (name == "memory")
+    {
+        ctx.registry.useSharedBackend(nullptr);
+        return true;
+    }
+    if (name != "redis")
+    {
+        std::cerr << "Critical error: EOP_REGISTRY_BACKEND must be memory or redis, not " << name << std::endl;
+        return false;
+    }
+
+    RedisRegistryConfig config;
+    std::string error;
+    if (!loadRedisRegistryConfig(config, error))
+    {
+        std::cerr << "Critical error: " << error << std::endl;
+        return false;
+    }
+    auto redis = std::make_unique<RedisNodeRegistry>(config);
+    if (!redis->start())
+    {
+        auditLogger.writeString("Redis registry not reachable yet at " + config.host + "; retrying", WARNING_LOG);
+    }
+    ctx.registry.useSharedBackend(std::move(redis));
+    auditLogger.writeString("Node registry in Redis " + config.host + ":" + std::to_string(config.port) +
+                                " as replica " + config.replicaName,
+                            INFO_LOG);
+    return true;
+}
+
 void startServer(int port, int idleTimeout)
 {
     InitTracer();
@@ -1832,6 +1919,13 @@ void startServer(int port, int idleTimeout)
     serverContext.idleTimeoutSeconds = idleTimeout;
     serverContext.running = true;
     loadServerConfig(serverContext);
+    if (!configureRegistry(serverContext))
+    {
+        auditLogger.writeString("Invalid node registry configuration", CRITICAL_LOG);
+        ShutdownTracer();
+        ShutdownMetrics();
+        return;
+    }
 
     int serverSock = socket(AF_INET, SOCK_STREAM, 0);
     // LCOV_EXCL_START
@@ -1894,6 +1988,38 @@ void startServer(int port, int idleTimeout)
 
     std::thread timeoutMonitor(timeoutMonitorLoop, std::ref(serverContext));
 
+    // Readiness (ADR-027 §3): the registry answers and the server is not draining for shutdown.
+    std::atomic<bool> acceptingTraffic {true};
+    std::unique_ptr<ReadinessPort> readinessPort;
+    const int readyPort = getNonNegativeEnvInt("EOP_READY_PORT", 0);
+    if (readyPort > 0)
+    {
+        readinessPort = std::make_unique<ReadinessPort>(
+            readyPort, [&acceptingTraffic]() { return acceptingTraffic.load() && serverContext.registry.healthy(); });
+        readinessPort->start();
+    }
+
+    // On SIGTERM keep serving for EOP_SHUTDOWN_DRAIN_MS with readiness already failed, so the
+    // Service stops routing here before the listener closes (MTTR, ADR-027 §4).
+    const int drainMs = getNonNegativeEnvInt("EOP_SHUTDOWN_DRAIN_MS", 0);
+    bool drainStarted = false;
+    std::chrono::steady_clock::time_point drainDeadline;
+    auto stopServing = [&]()
+    {
+        if (!isTerminationSignalReceived)
+        {
+            return false;
+        }
+        if (!drainStarted)
+        {
+            drainStarted = true;
+            acceptingTraffic = false;
+            drainDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(drainMs);
+            auditLogger.writeString("SIGTERM: not ready, draining for " + std::to_string(drainMs) + " ms", INFO_LOG);
+        }
+        return std::chrono::steady_clock::now() >= drainDeadline;
+    };
+
     std::cout << "Server started on port " << port << ". Inactivity timeout: " << serverContext.idleTimeoutSeconds
               << "s | Max clients: " << serverContext.maxClients
               << " | Heartbeat interval: " << serverContext.heartbeatIntervalSeconds
@@ -1903,7 +2029,7 @@ void startServer(int port, int idleTimeout)
     std::vector<struct pollfd> pollfds;
     pollfds.reserve(serverContext.maxClients + 1);
 
-    while (!isTerminationSignalReceived)
+    while (!stopServing())
     {
         pollfds.clear();
 
@@ -1922,7 +2048,10 @@ void startServer(int port, int idleTimeout)
             }
         }
 
-        int ret = poll(pollfds.data(), static_cast<nfds_t>(pollfds.size()), 1000); // 1s timeout
+        constexpr int kPollTimeoutMs = 1000;
+        constexpr int kDrainPollTimeoutMs = 50; // ends the drain on time
+        int ret = poll(
+            pollfds.data(), static_cast<nfds_t>(pollfds.size()), drainStarted ? kDrainPollTimeoutMs : kPollTimeoutMs);
         if (ret > 0)
         {
             // Check listener
@@ -1934,7 +2063,7 @@ void startServer(int port, int idleTimeout)
 
                 if (clientSock >= 0)
                 {
-                    if (isTerminationSignalReceived || !serverContext.running.load())
+                    if (stopServing() || !serverContext.running.load())
                     {
                         shutdown(clientSock, SHUT_RDWR);
                         close(clientSock);
@@ -2124,6 +2253,11 @@ void startServer(int port, int idleTimeout)
 
     auditLogger.writeString("Graceful shutdown requested", INFO_LOG);
 
+    acceptingTraffic = false;
+    if (readinessPort)
+    {
+        readinessPort->stop();
+    }
     close(serverSock);
 
     serverContext.running = false;
@@ -2149,6 +2283,9 @@ void startServer(int port, int idleTimeout)
             worker.join();
         }
     }
+
+    // Releases the Redis lease at once, so the other replica takes the nodes over (ADR-027).
+    serverContext.registry.useSharedBackend(nullptr);
 
     std::cout << "Server stopped." << std::endl;
     ShutdownTracer();

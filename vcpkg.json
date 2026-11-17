@@ -10,7 +10,8 @@
       "name": "prometheus-cpp",
       "features": ["pull"]
     },
-    "nlohmann-json"
+    "nlohmann-json",
+    "hiredis"
   ],
   "features": {
     "tests": {

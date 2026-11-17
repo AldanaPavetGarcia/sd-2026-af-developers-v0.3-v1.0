@@ -177,11 +177,21 @@ jobs:
     runs-on: ${{ vars.EOP_CI_RUNNER || 'ubuntu-24.04' }}
     needs: validate-branch-name
 
+    # The Redis node registry tests (ADR-027) need a real Redis; without it they are skipped and
+    # the coverage gate fails.
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+
     env:
       BUILD_TYPE: Debug
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       ENABLE_SANITIZERS: "true"
+      EOP_TEST_REDIS_HOST: 127.0.0.1
+      EOP_TEST_REDIS_PORT: "6379"
       # Versión fija — misma que los alumnos tienen localmente
       CLANG_VERSION: "18"
 
@@ -777,11 +787,21 @@ jobs:
     runs-on: ${{ vars.EOP_CI_RUNNER || 'ubuntu-24.04' }}
     needs: validate-branch-name
 
+    # The Redis node registry tests (ADR-027) need a real Redis; without it they are skipped and
+    # the coverage gate fails.
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+
     env:
       BUILD_TYPE: Debug
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CLANG_VERSION: "18"
+      EOP_TEST_REDIS_HOST: 127.0.0.1
+      EOP_TEST_REDIS_PORT: "6379"
 
     steps:
       - uses: actions/checkout@v4
