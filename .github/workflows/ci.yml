@@ -77,6 +77,16 @@ jobs:
             dockerfile: ./services/go/Dockerfile
             target: mttr-watcher
             tag: mttr-watcher:ci
+          - name: edge-ingestor
+            context: ./services/go
+            dockerfile: ./services/go/Dockerfile
+            target: edge-ingestor
+            tag: edge-ingestor:ci
+          - name: edge-sim
+            context: ./services/go
+            dockerfile: ./services/go/Dockerfile
+            target: edge-sim
+            tag: edge-sim:ci
 
     steps:
       - uses: actions/checkout@v4
