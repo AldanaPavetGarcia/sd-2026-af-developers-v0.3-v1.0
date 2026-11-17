@@ -14,12 +14,24 @@ data:
   EOP_IDLE_TIMEOUT: "30"
   EOP_MAX_CLIENTS: "100"
   EOP_HEARTBEAT_INTERVAL: "5"
-  # In-cluster DNS name of the eop-server Service (see service.yaml) — hpc-engine
-  # is an outbound-only client and discovers eop-server through this, not a Service of its own.
+  # Shared node registry and failover (ADR-027): two eop-server replicas keep the registry in
+  # Redis; each one's lease lasts EOP_REGISTRY_LEASE_TTL_MS. EOP_READY_PORT is open only while the
+  # registry answers and the replica is not shutting down (readinessProbe); on SIGTERM the replica
+  # keeps serving for EOP_SHUTDOWN_DRAIN_MS after leaving the Service, so no client is refused.
+  EOP_REGISTRY_BACKEND: "redis"
+  EOP_REDIS_HOST: "redis"
+  EOP_REDIS_PORT: "6379"
+  EOP_REDIS_TIMEOUT_MS: "200"
+  EOP_REGISTRY_LEASE_TTL_MS: "3000"
+  EOP_REGISTRY_LEASE_REFRESH_MS: "1000"
+  EOP_READY_PORT: "9027"
+  EOP_SHUTDOWN_DRAIN_MS: "3000"
+  # In-cluster DNS name of the eop-server Service (see service.yaml), for clients outside the
+  # server Pod (the hpc-engine batch Job). The sidecar engine connects to 127.0.0.1 instead.
   EOP_SERVER_HOST: "eop-server"
-  # US-201 AC3 measures latency at 4 threads specifically; must stay <=
-  # hpc-engine-deployment.yaml's CPU limit, otherwise OpenMP defaults to the
-  # host's core count and oversubscribes under the cgroup CPU quota.
+  # US-201 AC3 measures latency at 4 threads specifically; must stay <= the hpc-engine sidecar's
+  # CPU limit (deployment.yaml), otherwise OpenMP defaults to the host's core count and
+  # oversubscribes under the cgroup CPU quota.
   OMP_NUM_THREADS: "4"
   # ADR-024 (option D): exact below this, pivot-sampled above it. 10,000 is US-201 AC3's own
   # graph size, so the AC is met without approximating anything; sampling only kicks in for

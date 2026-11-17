@@ -1,3 +1,7 @@
+# eop-server with its HPC engine (ADR-027). Two replicas share the node registry in Redis, so a
+# Pod crash is absorbed by the other one (MTTR < 200 ms, US-407 AC4); each replica has its own
+# hpc-engine sidecar, registered over localhost as hpc-engine-<pod>, so ANALYZE_GRAPH is
+# dispatched inside the Pod and an engine always dies with its server.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -5,7 +9,13 @@ metadata:
   labels:
     app: eop-server
 spec:
-  replicas: 1
+  replicas: 2
+  # Never below one Ready replica while rolling out (the PodDisruptionBudget covers evictions).
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: eop-server
@@ -19,7 +29,18 @@ spec:
         prometheus.io/port: "9100"
     spec:
       restartPolicy: Always
+      # Longer than EOP_SHUTDOWN_DRAIN_MS (3 s) plus the server's graceful shutdown.
       terminationGracePeriodSeconds: 20
+      # The two replicas on different nodes when there are several; minikube has one.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: eop-server
       containers:
         - name: eop-server
           image: eop-server:local
@@ -27,6 +48,12 @@ spec:
           envFrom:
             - configMapRef:
                 name: eop-global-config
+          env:
+            # Owner of this replica's nodes and name of its lease in Redis (ADR-027 §2).
+            - name: EOP_REPLICA_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           ports:
             - name: tcp-eop
               containerPort: 9026
@@ -34,16 +61,26 @@ spec:
             - name: metrics
               containerPort: 9100
               protocol: TCP
-          readinessProbe:
+            - name: ready
+              containerPort: 9027
+              protocol: TCP
+          # Open from the first accept, so a replacement is in the Service as soon as it can serve.
+          startupProbe:
             tcpSocket:
               port: tcp-eop
-            initialDelaySeconds: 3
-            periodSeconds: 5
-            failureThreshold: 3
+            periodSeconds: 1
+            failureThreshold: 30
+          # EOP_READY_PORT listens only while the registry answers and the replica is not
+          # draining for shutdown: losing Redis or receiving SIGTERM takes it out of the Service.
+          readinessProbe:
+            tcpSocket:
+              port: ready
+            periodSeconds: 1
+            failureThreshold: 1
+            successThreshold: 1
           livenessProbe:
             tcpSocket:
               port: tcp-eop
-            initialDelaySeconds: 5
             periodSeconds: 10
             failureThreshold: 3
           resources:
@@ -53,3 +90,71 @@ spec:
             limits:
               cpu: "500m"
               memory: "128Mi"
+        - name: hpc-engine
+          image: hpc-engine:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: eop-global-config
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          ports:
+            # Scraped by the hpc-engine-sidecar job (prometheus-configmap.yaml), by this name.
+            - name: hpc-metrics
+              containerPort: 9101
+              protocol: TCP
+          # The server of its own Pod, over localhost. ADR-022's multi-instance node_id keeps the
+          # two replicas' engines apart in LIST_NODES; hpc-engine retries until the server listens.
+          args:
+            - "--server-host"
+            - "127.0.0.1"
+            - "--server-port"
+            - "$(EOP_PORT)"
+            - "--node-id"
+            - "hpc-engine-$(POD_NAME)"
+            - "--bunker-name"
+            - "$(HPC_BUNKER_NAME)"
+            - "--ip-address"
+            - "$(POD_IP)"
+            - "--capacity"
+            - "$(HPC_CAPACITY)"
+          # No readinessProbe on purpose: the engine only serves ANALYZE_GRAPH, so a slow engine
+          # must not take the replica out of the Service for every other command. Liveness
+          # restarts it (only this container) if the process is gone; hpc_engine is PID 1 of its
+          # container because the image uses an exec-form ENTRYPOINT.
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "grep -qi hpc_engine /proc/1/comm"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            # CPU-bound (OpenMP graph algorithms). limits.cpu tracks OMP_NUM_THREADS in
+            # eop-global-config (US-201 AC3: 4 threads). limits.memory comes from measured peak
+            # RSS: ~287 MiB for a 100,000-node graph at 4 threads (see BENCHMARK_REPORT.md).
+            requests:
+              cpu: "500m"
+              memory: "192Mi"
+            limits:
+              cpu: "4"
+              memory: "512Mi"
+---
+# A voluntary disruption (node drain, eviction) never takes both replicas at once.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: eop-server
+  labels:
+    app: eop-server
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: eop-server

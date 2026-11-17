@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Self-healing check for hpc-engine (US-109 equivalent for the hpc-engine
-# Deployment): deletes the running Pod, waits for the Deployment to recreate
-# it and reach Ready, then asserts the new Pod's logs show it re-registered.
-# Simpler success criterion than pod-recovery-cycle.sh: hpc-engine carries no
-# client traffic, so there is nothing to observe disconnecting cleanly.
+# Self-healing check for hpc-engine (US-109 equivalent for the engine). Since
+# ADR-027 the engine is a sidecar of every eop-server Pod: this deletes one
+# server Pod, waits for the Deployment to replace it, and asserts the new Pod's
+# engine container re-registered (as hpc-engine-<pod>).
 
 NAMESPACE="${EOP_K8S_NAMESPACE:-default}"
-DEPLOYMENT="${HPC_K8S_DEPLOYMENT:-hpc-engine}"
-# mode=persistent excludes the hpc-engine-batch-demo Job's Pod, which shares
-# app=hpc-engine but runs to Completed and can never satisfy condition=Ready —
-# a bare app=hpc-engine selector would hang/misfire waiting on it.
-APP_LABEL="${HPC_K8S_APP_LABEL:-app=hpc-engine,mode=persistent}"
+DEPLOYMENT="${HPC_K8S_DEPLOYMENT:-eop-server}"
+APP_LABEL="${HPC_K8S_APP_LABEL:-app=eop-server}"
+ENGINE_CONTAINER="${HPC_K8S_CONTAINER:-hpc-engine}"
 
 ROLLOUT_TIMEOUT_SECONDS="${HPC_ROLLOUT_TIMEOUT_SECONDS:-60}"
 
@@ -36,7 +33,7 @@ require_command() {
 }
 
 wait_for_ready_pod() {
-    log "Waiting for an hpc-engine Pod to become Ready..."
+    log "Waiting for every ${APP_LABEL} Pod to become Ready..."
     kubectl_ns wait --for=condition=Ready pod -l "${APP_LABEL}" --timeout="${ROLLOUT_TIMEOUT_SECONDS}s" >/dev/null
 
     kubectl_ns get pods \
@@ -52,7 +49,7 @@ assert_pod_logs_show_registration() {
     log "Checking logs of Pod ${pod} for registration confirmation..."
 
     local logs
-    logs="$(kubectl_ns logs "${pod}" 2>/dev/null || true)"
+    logs="$(kubectl_ns logs "${pod}" -c "${ENGINE_CONTAINER}" 2>/dev/null || true)"
 
     if ! grep -q "HPC Engine registered as node_id=" <<<"${logs}"; then
         printf '%s\n' "${logs}" >&2
@@ -79,6 +76,9 @@ main() {
     log "Deleting Pod ${pod_before} to validate Deployment-managed replacement..."
     kubectl_ns delete pod "${pod_before}" --wait=false >/dev/null
     kubectl_ns wait --for=delete "pod/${pod_before}" --timeout="${ROLLOUT_TIMEOUT_SECONDS}s" >/dev/null
+    # With two replicas the other one is already Ready: wait for the Deployment to be complete
+    # again, so the newest Pod below is the replacement.
+    kubectl_ns rollout status "deployment/${DEPLOYMENT}" --timeout="${ROLLOUT_TIMEOUT_SECONDS}s" >/dev/null
 
     local pod_after
     pod_after="$(wait_for_ready_pod)"
