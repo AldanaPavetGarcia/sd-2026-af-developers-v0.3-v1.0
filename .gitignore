@@ -73,3 +73,4 @@ __pycache__/
 
 # TLS material of the edge broker (scripts/edge-certs.sh): private keys never enter git.
 certs/
+slo-run-export/

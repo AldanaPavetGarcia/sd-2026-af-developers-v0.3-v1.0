@@ -1,4 +1,4 @@
-.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-mttr-test edge-certs edge-integration-test k8s-rollout-restart-test observability-test slo-dashboard-test edge-dashboard-test edge-test edge-load-tool-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-mttr-test edge-certs edge-integration-test k8s-rollout-restart-test slo-run-start slo-run-status slo-run-export observability-test slo-dashboard-test edge-dashboard-test edge-test edge-load-tool-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -92,6 +92,7 @@ gateway-image:
 	docker build --target mttr-watcher -t mttr-watcher:local $(GO_DIR)
 	docker build --target edge-ingestor -t edge-ingestor:local $(GO_DIR)
 	docker build --target edge-sim -t edge-sim:local $(GO_DIR)
+	docker build --target slo-traffic -t slo-traffic:local $(GO_DIR)
 
 ## Canary release of the api-gateway (US-304, ADR-011). The Ingress needs ingress-nginx
 ## (minikube addons enable ingress). Typical run, with make gateway-load-test in another terminal:
@@ -199,6 +200,20 @@ edge-integration-test:
 
 k8s-mttr-test:
 	./tests/k8s/mttr-cycle.sh
+
+## 30-day SLO run (#67, docs/slo-30-day-run.md): the stack with the persistent Prometheus, plus the
+## steady synthetic traffic of k8s/slo-run/ (needs the images of make gateway-image).
+slo-run-start: k8s-apply
+	kubectl apply -f k8s/slo-run/
+	kubectl rollout status deployment/slo-traffic --timeout=120s
+
+## Days collected, traffic flowing, 30-day SLO figures; exits 1 if the run is not collecting.
+slo-run-status:
+	./tests/k8s/slo-run-status.sh
+
+## End of the run: TSDB snapshot (tar.gz) and hourly SLO series (JSON) into slo-run-export/.
+slo-run-export:
+	./tests/k8s/slo-run-export.sh
 
 ## AC7: rollout restart of eop-server under continuous client load, zero failed operations
 k8s-rollout-restart-test:
