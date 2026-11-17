@@ -6,6 +6,9 @@ metadata:
     app: prometheus
 spec:
   replicas: 1
+  # The TSDB volume is ReadWriteOnce: the old Pod must release it before the new one starts.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: prometheus
@@ -18,13 +21,26 @@ spec:
       # targets via pod annotations (kubernetes_sd_configs) — see prometheus-rbac.yaml.
       serviceAccountName: prometheus
       restartPolicy: Always
+      # The image runs as nobody (65534); fsGroup makes the volume writable for it.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
       terminationGracePeriodSeconds: 20
       containers:
         - name: prometheus
           image: prom/prometheus:v3.9.1
           imagePullPolicy: IfNotPresent
+          # 35 days of data on the PVC (#67: 30 days of SLO data at delivery plus a margin), capped
+          # below the 10 Gi volume. The admin API is only reachable inside the cluster (ClusterIP)
+          # and is used for the end-of-run snapshot (docs/slo-30-day-run.md).
           args:
             - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=35d
+            - --storage.tsdb.retention.size=8GB
+            - --web.enable-admin-api
           ports:
             - name: http
               containerPort: 9090
@@ -34,6 +50,11 @@ spec:
               mountPath: /etc/prometheus/prometheus.yml
               subPath: prometheus.yml
               readOnly: true
+            - name: rules
+              mountPath: /etc/prometheus/rules
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
           readinessProbe:
             httpGet:
               path: /-/ready
@@ -48,14 +69,22 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
             failureThreshold: 3
+          # A month of series: the head block plus compaction of 35 days needs more than v0.2's
+          # 256 Mi.
           resources:
             requests:
               cpu: "100m"
-              memory: "128Mi"
-            limits:
-              cpu: "500m"
               memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
       volumes:
         - name: config
           configMap:
             name: eop-prometheus-config
+        - name: rules
+          configMap:
+            name: eop-prometheus-rules
+        - name: data
+          persistentVolumeClaim:
+            claimName: prometheus-data
