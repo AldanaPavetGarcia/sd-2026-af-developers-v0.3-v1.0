@@ -1,4 +1,4 @@
-.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-mttr-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-mttr-test edge-certs edge-integration-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -188,6 +188,15 @@ k8s-hpc-recovery-test:
 
 ## US-407 AC4 / ADR-027: deletes an eop-server Pod under a 20 ms probe; fails at an MTTR of 200 ms
 ## or more (needs make k8s-apply and the eop-server, hpc-engine and mttr-watcher images).
+## TLS material of the edge broker's device listener (8883) in certs/edge/ (git-ignored).
+edge-certs:
+	./scripts/edge-certs.sh
+
+## Edge ingestion end to end (US-404 AC8) against a real broker, eop_server and Redis: the
+## simulator publishes 10 messages, the ingestor forwards them, the gateway's /v1/nodes shows them.
+edge-integration-test:
+	cd $(GO_DIR) && EOP_SERVER_BIN=$(EOP_SERVER_BIN) go test -race -count=1 -tags integration -run TestEdge ./test/integration/
+
 k8s-mttr-test:
 	./tests/k8s/mttr-cycle.sh
 
