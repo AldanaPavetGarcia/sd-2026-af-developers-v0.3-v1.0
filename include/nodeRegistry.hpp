@@ -189,8 +189,9 @@ public:
 
     /**
      * @brief Sends every non-local node to @p shared from now on.
+     * @details Safe while other threads use the registry: a call in progress keeps the backend
+     *          it started with alive until it returns.
      * @param shared Shared backend; nullptr goes back to all-local.
-     * @pre Called before the server accepts connections.
      */
     void useSharedBackend(std::unique_ptr<INodeRegistry> shared);
 
@@ -211,11 +212,13 @@ public:
     void clear() override;
 
 private:
-    INodeRegistry& backendFor(const std::string& nodeId) const;
+    std::shared_ptr<INodeRegistry> shared() const;
+    std::shared_ptr<INodeRegistry> backendFor(const std::string& nodeId) const;
 
     std::function<bool(const std::string&)> m_isLocalOnly; ///< Routing rule.
     mutable InMemoryNodeRegistry m_local;                  ///< Local nodes (all, without shared).
-    std::unique_ptr<INodeRegistry> m_shared;               ///< Shared backend, or nullptr.
+    mutable std::mutex m_sharedMutex;                      ///< Guards m_shared (not the calls on it).
+    std::shared_ptr<INodeRegistry> m_shared;               ///< Shared backend, or nullptr.
 };
 
 #endif // NODE_REGISTRY_HPP

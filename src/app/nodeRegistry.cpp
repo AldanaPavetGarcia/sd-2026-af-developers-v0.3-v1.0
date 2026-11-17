@@ -121,82 +121,95 @@ ReplicaNodeRegistry::ReplicaNodeRegistry(std::function<bool(const std::string&)>
 
 void ReplicaNodeRegistry::useSharedBackend(std::unique_ptr<INodeRegistry> shared)
 {
-    m_shared = std::move(shared);
+    std::shared_ptr<INodeRegistry> next = std::move(shared);
+    std::lock_guard<std::mutex> lock(m_sharedMutex);
+    // The previous backend is released when the last call using it returns.
+    m_shared.swap(next);
 }
 
 bool ReplicaNodeRegistry::hasSharedBackend() const
 {
-    return m_shared != nullptr;
+    return shared() != nullptr;
 }
 
-INodeRegistry& ReplicaNodeRegistry::backendFor(const std::string& nodeId) const
+std::shared_ptr<INodeRegistry> ReplicaNodeRegistry::shared() const
 {
-    if (m_shared && !m_isLocalOnly(nodeId))
+    std::lock_guard<std::mutex> lock(m_sharedMutex);
+    return m_shared;
+}
+
+std::shared_ptr<INodeRegistry> ReplicaNodeRegistry::backendFor(const std::string& nodeId) const
+{
+    std::shared_ptr<INodeRegistry> backend = shared();
+    if (backend && !m_isLocalOnly(nodeId))
     {
-        return *m_shared;
+        return backend;
     }
-    return m_local;
+    // Non-owning: m_local lives as long as this object.
+    return std::shared_ptr<INodeRegistry>(std::shared_ptr<INodeRegistry>(), &m_local);
 }
 
 RegisterNodeResult ReplicaNodeRegistry::registerOrReconnectNode(const NodeRecord& record)
 {
-    return backendFor(record.nodeId).registerOrReconnectNode(record);
+    return backendFor(record.nodeId)->registerOrReconnectNode(record);
 }
 
 RegistryResult ReplicaNodeRegistry::queryNode(const std::string& nodeId, NodeRecord& out) const
 {
-    return backendFor(nodeId).queryNode(nodeId, out);
+    return backendFor(nodeId)->queryNode(nodeId, out);
 }
 
 RegistryResult ReplicaNodeRegistry::listNodes(std::vector<NodeRecord>& out) const
 {
     const RegistryResult localResult = m_local.listNodes(out);
-    if (!m_shared)
+    const std::shared_ptr<INodeRegistry> backend = shared();
+    if (!backend)
     {
         return localResult;
     }
 
-    std::vector<NodeRecord> shared;
-    const RegistryResult sharedResult = m_shared->listNodes(shared);
+    std::vector<NodeRecord> sharedNodes;
+    const RegistryResult sharedResult = backend->listNodes(sharedNodes);
     if (sharedResult != RegistryResult::OK)
     {
         out.clear();
         return sharedResult;
     }
-    out.insert(out.end(), shared.begin(), shared.end());
+    out.insert(out.end(), sharedNodes.begin(), sharedNodes.end());
     return RegistryResult::OK;
 }
 
 void ReplicaNodeRegistry::bindSession(const std::string& nodeId, const std::string& sessionId)
 {
-    backendFor(nodeId).bindSession(nodeId, sessionId);
+    backendFor(nodeId)->bindSession(nodeId, sessionId);
 }
 
 void ReplicaNodeRegistry::touch(const std::string& nodeId)
 {
-    backendFor(nodeId).touch(nodeId);
+    backendFor(nodeId)->touch(nodeId);
 }
 
 void ReplicaNodeRegistry::markOffline(const std::string& nodeId)
 {
-    backendFor(nodeId).markOffline(nodeId);
+    backendFor(nodeId)->markOffline(nodeId);
 }
 
 bool ReplicaNodeRegistry::isOnline(const std::string& nodeId) const
 {
-    return backendFor(nodeId).isOnline(nodeId);
+    return backendFor(nodeId)->isOnline(nodeId);
 }
 
 bool ReplicaNodeRegistry::healthy() const
 {
-    return !m_shared || m_shared->healthy();
+    const std::shared_ptr<INodeRegistry> backend = shared();
+    return !backend || backend->healthy();
 }
 
 void ReplicaNodeRegistry::clear()
 {
     m_local.clear();
-    if (m_shared)
+    if (const std::shared_ptr<INodeRegistry> backend = shared())
     {
-        m_shared->clear();
+        backend->clear();
     }
 }
