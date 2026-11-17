@@ -456,6 +456,7 @@ jobs:
           make slo-dashboard-test
           make hpc-dashboard-test
           make edge-dashboard-test
+          make vault-tec-dashboard-test
           make production-config-test
           make edge-load-tool-test
           make loki-test

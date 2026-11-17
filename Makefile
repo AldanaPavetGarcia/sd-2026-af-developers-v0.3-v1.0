@@ -1,4 +1,4 @@
-.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-prod-apply k8s-ready-time smoke-test-prod k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-mttr-test edge-certs edge-integration-test k8s-rollout-restart-test slo-run-start slo-run-status slo-run-export observability-test slo-dashboard-test edge-dashboard-test production-config-test edge-test edge-load-tool-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-prod-apply k8s-ready-time smoke-test-prod k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-mttr-test edge-certs edge-integration-test k8s-rollout-restart-test slo-run-start slo-run-status slo-run-export observability-test slo-dashboard-test edge-dashboard-test production-config-test edge-test edge-load-tool-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan vault-tec-dashboard-test
 
 deploy-local:
 	docker compose up --build -d
@@ -258,6 +258,10 @@ edge-load-tool-test:
 ## US-405: edge dashboard, its P99 alert and their provisioning (static, no Grafana needed).
 edge-dashboard-test:
 	python3 tests/smoke/test_edge_dashboard_contract.py
+
+## US-407: the Vault-Tec delivery dashboard (static, no Grafana needed).
+vault-tec-dashboard-test:
+	python3 tests/smoke/test_vault_tec_dashboard_contract.py
 
 ## US-406 AC1/AC3: config/production.env, the Kustomization listings and the deploy/production render.
 production-config-test:
