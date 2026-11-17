@@ -1,0 +1,138 @@
+# Edge ingestor (US-404, ADR-028): MQTT broker -> eop-server TELEMETRY, deduplicated in Redis.
+# One replica: messages are processed in order, and a second consumer of the same persistent
+# session would only take it over. Recreate, so old and new never share the client id.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-ingestor-config
+  labels:
+    app: edge-ingestor
+data:
+  EOP_MQTT_BROKER: "tcp://mosquitto:1883"
+  EOP_MQTT_CLIENT_ID: "eop-edge-ingestor"
+  EOP_MQTT_TOPIC_PREFIX: "eop/bunker"
+  EOP_MQTT_MAX_RECONNECT_INTERVAL: "30s"
+  EOP_SERVER_ADDR: "eop-server:9026"
+  EOP_SERVER_REQUEST_TIMEOUT: "3s"
+  EOP_REDIS_ADDR: "redis:6379"
+  EOP_EDGE_DEDUP_TTL: "5m"
+  EOP_EDGE_RETRY_INITIAL: "100ms"
+  EOP_EDGE_RETRY_MAX: "5s"
+  EOP_EDGE_STATUS_INTERVAL: "1s"
+  EOP_EDGE_STATUS_TTL: "5s"
+  EOP_EDGE_DEVICE_LIVENESS: "10s"
+  EOP_EDGE_METRICS_ADDR: ":9103"
+  EOP_TRACING_ENABLED: "1"
+  OTEL_SERVICE_NAME: "edge-ingestor"
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://otel-collector:4318/v1/traces"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-ingestor
+  labels:
+    app: edge-ingestor
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: edge-ingestor
+  template:
+    metadata:
+      labels:
+        app: edge-ingestor
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "9103"
+    spec:
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: edge-ingestor
+          image: edge-ingestor:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: edge-ingestor-config
+          ports:
+            - name: metrics
+              containerPort: 9103
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: metrics
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /livez
+              port: metrics
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "32Mi"
+            limits:
+              cpu: "250m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+# Five simulated bunkers in the cluster, for the edge dashboard and demos (US-405). Scale to 0
+# when real devices publish.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-sim
+  labels:
+    app: edge-sim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: edge-sim
+  template:
+    metadata:
+      labels:
+        app: edge-sim
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: edge-sim
+          image: edge-sim:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: EOP_MQTT_BROKER
+              value: "tcp://mosquitto:1883"
+            - name: EOP_SIM_DEVICES
+              value: "5"
+            - name: EOP_SIM_PERIOD
+              value: "1s"
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

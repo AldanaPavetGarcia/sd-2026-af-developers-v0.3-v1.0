@@ -70,3 +70,6 @@ logs/
 
 # Python bytecode (benchmark_report.py y sus tests)
 __pycache__/
+
+# TLS material of the edge broker (scripts/edge-certs.sh): private keys never enter git.
+certs/

@@ -17,3 +17,8 @@ scrape_configs:
   - job_name: api-gateway
     static_configs:
       - targets: ["api-gateway:9100"]
+  # Edge ingestor (US-404, US-405): edge message counters, end-to-end latency and device health.
+  # In K8s it is discovered by annotation like the other annotated pods.
+  - job_name: edge-ingestor
+    static_configs:
+      - targets: ["edge-ingestor:9103"]

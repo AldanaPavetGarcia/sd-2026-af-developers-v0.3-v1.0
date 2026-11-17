@@ -26,6 +26,9 @@ k8s-apply:
 	kubectl delete deployment hpc-engine --ignore-not-found
 	kubectl apply -f k8s/
 	kubectl apply -f k8s/redis/
+	# Edge broker and ingestor (US-404): the broker's TLS Secret is generated locally, never committed.
+	./scripts/edge-certs.sh --k8s
+	kubectl apply -f k8s/mosquitto/
 	kubectl apply -f k8s/external-stubs/
 	kubectl apply -f k8s/loki/ -f k8s/otel-log-agent/
 	# The gateway runs in the canary layout (ADR-011 §4): stable serving, canary at 0 replicas and
@@ -38,6 +41,8 @@ k8s-apply:
 	# pull on a cold node.
 	kubectl rollout status deployment/eop-server --timeout=180s
 	kubectl rollout status deployment/redis --timeout=180s
+	kubectl rollout status statefulset/mosquitto --timeout=180s
+	kubectl rollout status deployment/edge-ingestor --timeout=180s
 	kubectl rollout status deployment/loki --timeout=180s
 	kubectl rollout status daemonset/otel-log-agent --timeout=180s
 	kubectl rollout status deployment/ai-service --timeout=180s

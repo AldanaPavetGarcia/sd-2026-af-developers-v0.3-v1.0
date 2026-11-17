@@ -1,0 +1,157 @@
+# MQTT broker of the edge devices (ADR-013, US-404). Persistence on a PVC, so QoS 1 messages
+# queued for a disconnected persistent session (the edge ingestor, ADR-028 §2) survive a broker
+# restart. Two listeners:
+#   1883  plain, cluster-internal: the edge ingestor and the in-cluster simulator
+#   8883  TLS for devices: server certificate from the mosquitto-tls Secret (make edge-certs);
+#         exposed outside the cluster by the mosquitto-devices NodePort Service
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mosquitto-config
+  labels:
+    app: mosquitto
+data:
+  mosquitto.conf: |
+    per_listener_settings true
+
+    listener 1883
+    allow_anonymous true
+
+    listener 8883
+    allow_anonymous true
+    cafile /mosquitto/certs/ca.crt
+    certfile /mosquitto/certs/tls.crt
+    keyfile /mosquitto/certs/tls.key
+    tls_version tlsv1.2
+
+    persistence true
+    persistence_location /mosquitto/data/
+    autosave_interval 30
+    # The ingestor's persistent session may be away for minutes (a rollout, eop-server down):
+    # keep its QoS 1 backlog instead of Mosquitto's default of 1000 messages.
+    max_queued_messages 100000
+    log_dest stdout
+    log_type error
+    log_type warning
+    log_type notice
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mosquitto
+  labels:
+    app: mosquitto
+spec:
+  serviceName: mosquitto
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mosquitto
+  template:
+    metadata:
+      labels:
+        app: mosquitto
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1883
+        runAsGroup: 1883
+        fsGroup: 1883
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mosquitto
+          image: eclipse-mosquitto:2.0.18
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: mqtt
+              containerPort: 1883
+              protocol: TCP
+            - name: mqtts
+              containerPort: 8883
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: mqtt
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: mqtt
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "32Mi"
+            limits:
+              cpu: "250m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /mosquitto/config
+              readOnly: true
+            - name: certs
+              mountPath: /mosquitto/certs
+              readOnly: true
+            - name: data
+              mountPath: /mosquitto/data
+      volumes:
+        - name: config
+          configMap:
+            name: mosquitto-config
+        - name: certs
+          secret:
+            secretName: mosquitto-tls
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app: mosquitto
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mosquitto
+  labels:
+    app: mosquitto
+spec:
+  type: ClusterIP
+  selector:
+    app: mosquitto
+  ports:
+    - name: mqtt
+      port: 1883
+      targetPort: mqtt
+      protocol: TCP
+    - name: mqtts
+      port: 8883
+      targetPort: mqtts
+      protocol: TCP
+---
+# Devices reach the TLS listener from outside the cluster (minikube: <minikube ip>:30883).
+apiVersion: v1
+kind: Service
+metadata:
+  name: mosquitto-devices
+  labels:
+    app: mosquitto
+spec:
+  type: NodePort
+  selector:
+    app: mosquitto
+  ports:
+    - name: mqtts
+      port: 8883
+      targetPort: mqtts
+      nodePort: 30883
+      protocol: TCP
