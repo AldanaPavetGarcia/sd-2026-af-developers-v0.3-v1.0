@@ -970,12 +970,17 @@ static void closeRemainingSessions(ServerContext& ctx)
  * @param clientSock Accepted client socket.
  * @param clientIp Client IP.
  * @param message Client message.
+ * @param closeAfter Close the session once this message is answered (the peer already closed).
  */
-static void enqueueMessage(ServerContext& ctx, int clientSock, const std::string& clientIp, const std::string& message)
+static void enqueueMessage(ServerContext& ctx,
+                           int clientSock,
+                           const std::string& clientIp,
+                           const std::string& message,
+                           bool closeAfter = false)
 {
     {
         std::lock_guard<std::mutex> lock(ctx.queueMutex);
-        ctx.messageQueue.push({clientSock, clientIp, message});
+        ctx.messageQueue.push({clientSock, clientIp, message, closeAfter});
     }
     ctx.queueCv.notify_one();
 }
@@ -1066,6 +1071,11 @@ static void workerLoop(ServerContext& ctx)
         }
 
         handleClientMessage(msg.clientFd, msg.clientIp, msg.message);
+        if (msg.closeAfter)
+        {
+            // Only now may the fd be closed and reused: the answer above went to its own client.
+            unregisterSession(ctx, msg.clientFd, "client closed connection cleanly");
+        }
 
         auto endTime = std::chrono::steady_clock::now();
         auto durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
@@ -1175,7 +1185,8 @@ static void timeoutMonitorLoop(ServerContext& ctx)
                     }
                     continue;
                 }
-                if (!session.active)
+                // A draining session is closed by the worker that answers its last command.
+                if (!session.active || session.draining)
                 {
                     continue;
                 }
@@ -1903,7 +1914,7 @@ void startServer(int port, int idleTimeout)
             std::lock_guard<std::mutex> lock(serverContext.sessionsMutex);
             for (auto& [fd, session] : serverContext.activeSessions)
             {
-                if (session.active)
+                if (session.active && !session.draining)
                 {
                     const short events = session.reservedForDispatch ? 0 : POLLIN;
                     pollfds.push_back({fd, events, 0});
@@ -2008,10 +2019,25 @@ void startServer(int port, int idleTimeout)
 
                         if (!leftover.empty() && leftover != "quit" && leftover != "exit")
                         {
-                            enqueueMessage(serverContext, fd, clientIp, leftover);
+                            // El peer pudo cerrar solo su lado de escritura y seguir esperando la
+                            // respuesta. Si se cerrara el fd ya, el kernel podría dárselo a una
+                            // conexión nueva antes de que un worker responda, y la respuesta iría a
+                            // otro cliente: la sesión queda abierta ("draining", fuera del poll) y
+                            // la cierra el worker después de responder.
+                            {
+                                std::lock_guard<std::mutex> lock(serverContext.sessionsMutex);
+                                auto it = serverContext.activeSessions.find(fd);
+                                if (it != serverContext.activeSessions.end())
+                                {
+                                    it->second.draining = true;
+                                }
+                            }
+                            enqueueMessage(serverContext, fd, clientIp, leftover, true);
                         }
-
-                        unregisterSession(serverContext, fd, "client closed connection cleanly");
+                        else
+                        {
+                            unregisterSession(serverContext, fd, "client closed connection cleanly");
+                        }
                     }
                     else if (bytesRecv < 0)
                     {

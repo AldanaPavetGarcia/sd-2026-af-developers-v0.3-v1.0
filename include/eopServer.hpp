@@ -212,6 +212,7 @@ struct SessionContext
     bool registered;                                    ///< True if the client has completed REGISTER successfully.
     bool active;                                        ///< True while the session is considered alive.
     bool reservedForDispatch;                           ///< True when the session is reserved for server-side dispatch.
+    bool draining; ///< Peer closed with a last command pending: kept open until it is answered.
 
     /**
      * @brief Bytes received from this client that do not yet form a complete `\n`-terminated message.
@@ -235,6 +236,7 @@ struct SessionContext
         , registered(false)
         , active(true)
         , reservedForDispatch(false)
+        , draining(false)
     {
     }
 };
@@ -251,6 +253,9 @@ struct ClientMessage
     int clientFd;
     std::string clientIp;
     std::string message;
+    /// The peer already closed: the worker closes the session after answering this message, so
+    /// the fd cannot be reused by a new client before the answer is written.
+    bool closeAfter = false;
 };
 
 /**

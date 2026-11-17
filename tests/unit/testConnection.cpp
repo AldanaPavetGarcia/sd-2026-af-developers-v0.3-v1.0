@@ -834,3 +834,77 @@ TEST_F(EopServerTest, SilentRegisteredNodeGoesOfflineAfterHeartbeatTimeout)
     EXPECT_LE(recv(sock, buf, sizeof(buf), 0), 0) << "the server should close the silent session";
     close(sock);
 }
+
+// ---------------------------------------------------------------------------
+// v0.1 bug (#71): a command left without '\n' when the client closes is answered to that client,
+// never to whoever gets the same fd next
+// ---------------------------------------------------------------------------
+namespace
+{
+    /// Sends `command` without its terminator, half-closes, and reads until the server closes.
+    std::string sendUnterminatedAndHalfClose(const std::string& command)
+    {
+        int sock = openClientSocket();
+        if (sock < 0)
+        {
+            return "";
+        }
+        send(sock, command.c_str(), command.size(), 0);
+        shutdown(sock, SHUT_WR);
+
+        constexpr int kReadTimeoutMs = 5000;
+        std::string all;
+        for (;;)
+        {
+            const std::string chunk = receiveFromSocketWithTimeout(sock, kReadTimeoutMs);
+            if (chunk.empty())
+            {
+                break;
+            }
+            all += chunk;
+        }
+        close(sock);
+        return all;
+    }
+} // namespace
+
+TEST_F(EopServerTest, UnterminatedCommandBeforeHalfCloseIsAnsweredThenClosed)
+{
+    const std::string response = sendUnterminatedAndHalfClose("LIST_NODES");
+    EXPECT_NE(response.find("END_LIST"), std::string::npos)
+        << "a half-closed client still gets its answer: " << response;
+}
+
+TEST_F(EopServerTest, UnterminatedCommandsBeforeCloseNeverReachAnotherClient)
+{
+    // Many clients close with a pending command while others keep connecting: with the old code
+    // the fd was closed before the answer and could be handed to one of the new clients.
+    constexpr int kClients = 24;
+    std::vector<std::string> responses(kClients);
+    std::vector<std::thread> threads;
+    threads.reserve(kClients);
+    for (int i = 0; i < kClients; ++i)
+    {
+        threads.emplace_back(
+            [i, &responses]()
+            { responses[i] = sendUnterminatedAndHalfClose("QUERY_NODE node_id=fd-" + std::to_string(i)); });
+    }
+    for (auto& thread : threads)
+    {
+        thread.join();
+    }
+
+    for (int i = 0; i < kClients; ++i)
+    {
+        const std::string own = "node_id=fd-" + std::to_string(i) + " ";
+        EXPECT_NE(responses[i].find(own), std::string::npos) << "client " << i << " got: " << responses[i];
+        for (int j = 0; j < kClients; ++j)
+        {
+            if (j != i)
+            {
+                EXPECT_EQ(responses[i].find("node_id=fd-" + std::to_string(j) + " "), std::string::npos)
+                    << "client " << i << " got the answer meant for client " << j;
+            }
+        }
+    }
+}
