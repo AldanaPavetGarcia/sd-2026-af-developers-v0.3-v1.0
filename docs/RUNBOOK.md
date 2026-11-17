@@ -5,6 +5,9 @@ Operational procedures for EOP v1.0 on Kubernetes (US-406 AC5). The product is d
 development path `make k8s-apply` deploys the same workloads, so every procedure applies to both.
 `kubectl` must point at the cluster.
 
+The live SLA demo (US-407: MTTR, canary, edge, smoke test) and the export of the SLA period's
+evidence are in [SLA-DEMO.md](SLA-DEMO.md) (`make demo-script`, `make sla-export`).
+
 ## Deploying and changing the configuration
 
 - **Deploy or upgrade:** `make k8s-prod-apply`, then `make smoke-test-prod`. Applying again is
