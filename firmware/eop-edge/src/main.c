@@ -7,6 +7,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include "eop_backoff.h"
 #include "eop_led.h"
 #include "eop_link.h"
 #include "eop_platform.h"
@@ -25,6 +26,7 @@ static struct eop_status_board status_board;
 static struct eop_link network_link;
 static struct eop_watchdog watchdog;
 static struct eop_led status_led;
+static struct eop_backoff clock_backoff;
 static struct eop_context context;
 static char
 	__aligned(QUEUE_ALIGN) queue_buffer[CONFIG_EOP_QUEUE_LEN * sizeof(struct eop_telemetry)];
@@ -65,10 +67,15 @@ int main(void)
 		LOG_ERR("invalid configuration; not starting");
 		return ret;
 	}
-	ret = eop_platform_set_clock();
-	if (ret < 0) {
-		LOG_ERR("wall clock not set (%d); timestamps would be wrong, not starting", ret);
-		return ret;
+	/* Without the wall clock every timestamp would be wrong, so wait for it; on the board that
+	 * means waiting for the network (WiFi, DHCP, SNTP), which may not be there yet at power-on.
+	 */
+	eop_backoff_init(&clock_backoff, CONFIG_EOP_BACKOFF_INITIAL_S, CONFIG_EOP_BACKOFF_MAX_S);
+	while ((ret = eop_platform_set_clock()) < 0) {
+		uint32_t delay_s = eop_backoff_next(&clock_backoff);
+
+		LOG_ERR("wall clock not set (%d); retrying in %u s", ret, delay_s);
+		k_sleep(K_SECONDS(delay_s));
 	}
 
 	eop_queue_init(&telemetry_queue, queue_buffer, CONFIG_EOP_QUEUE_LEN);
