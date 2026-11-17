@@ -459,6 +459,7 @@ jobs:
           make vault-tec-dashboard-test
           make production-config-test
           make edge-load-tool-test
+          make sla-export-tool-test
           make loki-test
 
       # Canary and blue-green layouts as rendered by Kustomize (selectors, Services, Ingress), the
