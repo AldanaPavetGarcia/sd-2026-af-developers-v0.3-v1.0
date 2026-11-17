@@ -1,0 +1,569 @@
+{
+  "uid": "eop-edge",
+  "title": "EOP Edge Telemetry",
+  "tags": [
+    "eop",
+    "edge",
+    "slo"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "description": "Edge pipeline: ESP32 / native_sim devices \u2192 MQTT \u2192 edge-ingestor \u2192 eop-server (US-405, ADR-028).",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Edge Ingestor Broker Connection",
+      "description": "Whether the edge ingestor is connected to the MQTT broker (US-404 AC6). Disconnected means devices keep buffering (US-402) and the ingestor is reconnecting with backoff.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(eop_edge_broker_connected)",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Disconnected",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "Connected",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "ingestor down"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1
+    },
+    {
+      "type": "stat",
+      "title": "E2E Latency P99 (ESP32 to eop-server)",
+      "description": "P99 of device sampling to eop-server acknowledgement over the last minute (US-405 AC3, NFR < 500 ms; red at or above). The same expression drives the alert and make edge-test.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(eop_edge_e2e_latency_seconds_bucket[1m])))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          },
+          "noValue": "no telemetry"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "id": 2
+    },
+    {
+      "type": "stat",
+      "title": "Edge Message Loss Rate (buffer overflow)",
+      "description": "Samples devices discarded because their offline buffer was full (US-402 AC8), as a percentage of all samples taken in the last 5 minutes (dropped + received). Duplicates are not loss.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum(clamp_min(delta(eop_edge_device_dropped[5m]), 0)) / clamp_min(sum(clamp_min(delta(eop_edge_device_dropped[5m]), 0)) + sum(increase(eop_edge_messages_received_total[5m])), 1)",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.01
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "id": 3
+    },
+    {
+      "type": "stat",
+      "title": "Edge Devices Connected",
+      "description": "Devices heard from (telemetry, events or health) within the last 10 s, the ingestor's device liveness (EOP_EDGE_DEVICE_LIVENESS).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count(time() - max by (node_id) (eop_edge_device_last_seen_timestamp_seconds) < 10) or vector(0)",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 4
+    },
+    {
+      "type": "timeseries",
+      "title": "Edge Messages per Second",
+      "description": "Telemetry messages the ingestor received from the broker and forwarded to eop-server, plus duplicates acknowledged without forwarding (US-404 AC3) and invalid messages (US-405 AC3).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(eop_edge_messages_received_total[1m]))",
+          "legendFormat": "received"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(eop_edge_messages_forwarded_total[1m]))",
+          "legendFormat": "forwarded"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(eop_edge_messages_duplicate_total[1m]))",
+          "legendFormat": "duplicates"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(eop_edge_messages_invalid_total[1m]))",
+          "legendFormat": "invalid"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "msg/s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "id": 5
+    },
+    {
+      "type": "timeseries",
+      "title": "Edge E2E Latency (P50, P99)",
+      "description": "Device sampling (payload timestamp) to eop-server ACK at the ingestor, over 1-minute windows (US-405 AC3). Dashed line: the 500 ms NFR. Samples whose device clock is ahead are counted as clock skew, not latency.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(eop_edge_e2e_latency_seconds_bucket[1m])))",
+          "legendFormat": "P50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(eop_edge_e2e_latency_seconds_bucket[1m])))",
+          "legendFormat": "P99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "id": 6
+    },
+    {
+      "type": "table",
+      "title": "Edge Devices (broker connectivity)",
+      "description": "Every device the ingestor has heard from (US-405 AC7): connected while its last message is younger than 10 s, last seen time and age, samples dropped and waiting in its buffer at its last health report, thread restarts.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(time() - max by (node_id) (eop_edge_device_last_seen_timestamp_seconds)) < bool 10",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "expr": "max by (node_id) (eop_edge_device_last_seen_timestamp_seconds) * 1000",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "expr": "time() - max by (node_id) (eop_edge_device_last_seen_timestamp_seconds)",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "D",
+          "expr": "max by (node_id) (eop_edge_device_dropped)",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "E",
+          "expr": "max by (node_id) (eop_edge_device_buffered)",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "F",
+          "expr": "sum by (node_id) (eop_edge_device_thread_restarts)",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "node_id": "Device",
+              "Value #A": "Status",
+              "Value #B": "Last seen",
+              "Value #C": "Seconds since",
+              "Value #D": "Dropped",
+              "Value #E": "Buffered",
+              "Value #F": "Thread restarts"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Status"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "disconnected",
+                        "color": "red",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "connected",
+                        "color": "green",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Last seen"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Seconds since"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Device",
+            "desc": false
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "id": 7
+    },
+    {
+      "type": "timeseries",
+      "title": "Device Reconnections, Buffer Deliveries and Retries",
+      "description": "RECONNECTED events and the buffered samples they delivered (US-402 AC6), BOOT events, and the ingestor's retries towards a down eop-server (US-404 AC5), per 5 minutes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (node_id) (increase(eop_edge_device_reconnections_total[5m]))",
+          "legendFormat": "reconnections {{node_id}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (node_id) (increase(eop_edge_device_buffered_delivered_total[5m]))",
+          "legendFormat": "buffered delivered {{node_id}}"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (node_id) (increase(eop_edge_device_boots_total[5m]))",
+          "legendFormat": "boots {{node_id}}"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(increase(eop_edge_forward_retries_total[5m]))",
+          "legendFormat": "ingestor retries"
+        },
+        {
+          "refId": "E",
+          "expr": "sum(increase(eop_edge_clock_skew_total[5m]))",
+          "legendFormat": "clock skew"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "id": 8
+    },
+    {
+      "type": "text",
+      "title": "Per-message traces in SigNoz",
+      "description": "Where to see each message's E2E latency as a trace (US-405 AC1, AC2).",
+      "options": {
+        "mode": "markdown",
+        "content": "Every telemetry message is one trace in **SigNoz** (service `edge-ingestor`): `edge.message` starts at the device's `sampled_at`, `edge.ingest` at the MQTT receipt, and the eop-server span (`TELEMETRY`) is their child through `traceparent=`. The `edge.message` span carries `edge.sampled_at`, `edge.received_at`, `edge.delivered_at` and `edge.e2e_latency_ms`; filter by `edge.node_id`. SigNoz UI: http://localhost:8081 (docker-compose) or `kubectl port-forward svc/signoz 8081:8080`."
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "id": 9
+    }
+  ]
+}

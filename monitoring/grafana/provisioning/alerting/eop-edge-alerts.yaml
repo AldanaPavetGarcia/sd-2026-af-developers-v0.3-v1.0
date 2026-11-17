@@ -1,0 +1,52 @@
+apiVersion: 1
+
+# US-405 AC4: "An alert fires if E2E latency P99 exceeds 500 ms for more than 1 consecutive
+# minute." Native Grafana alerting, like eop-slo-alerts.yaml. No edge telemetry means no data,
+# which is not a latency alert (the device table shows silent devices).
+groups:
+  - orgId: 1
+    name: eop-edge-alerts
+    folder: EOP
+    interval: 30s
+    rules:
+      - uid: eop-edge-e2e-p99
+        title: "Edge E2E latency P99 above 500 ms"
+        condition: threshold
+        data:
+          - refId: query
+            queryType: ""
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: query
+              instant: true
+              # Same expression as the "E2E Latency P99" panel of the EOP Edge Telemetry dashboard.
+              expr: histogram_quantile(0.99, sum by (le) (rate(eop_edge_e2e_latency_seconds_bucket[1m])))
+          - refId: threshold
+            queryType: ""
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: "-100"
+            model:
+              refId: threshold
+              type: threshold
+              expression: query
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.5]
+        noDataState: OK
+        execErrState: Error
+        # Above 500 ms on every evaluation for more than one minute before firing.
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Edge E2E latency P99 above 500 ms for more than a minute."
+          description: >-
+            Check the EOP Edge Telemetry dashboard: the ingestor's broker connection and retries
+            (a slow or down eop-server), the device table (one device far behind, often a flushed
+            buffer after a reconnection) and the edge.message traces in SigNoz.
