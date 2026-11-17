@@ -15,6 +15,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/api-gateway ./cmd/
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/external-stub ./cmd/external-stub \
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/mttr-watcher ./cmd/mttr-watcher \
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/edge-ingestor ./cmd/edge-ingestor \
+ && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/eop-certgen ./cmd/eop-certgen \
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/edge-sim ./cmd/edge-sim \
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/slo-traffic ./cmd/slo-traffic
 
@@ -38,6 +39,8 @@ ENTRYPOINT ["/mttr-watcher"]
 # Edge ingestor (US-404, ADR-028): MQTT broker -> eop-server.
 FROM gcr.io/distroless/static-debian12:nonroot AS edge-ingestor
 COPY --from=builder /out/edge-ingestor /edge-ingestor
+# The broker's init container in production generates its TLS material with this (US-406 AC1).
+COPY --from=builder /out/eop-certgen /eop-certgen
 USER 65532:65532
 EXPOSE 9103
 ENTRYPOINT ["/edge-ingestor"]
