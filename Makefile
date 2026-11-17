@@ -84,6 +84,7 @@ gateway-coverage:
 gateway-image:
 	docker build -t api-gateway:local $(GO_DIR)
 	docker build --target external-stub -t external-stub:local $(GO_DIR)
+	docker build --target mttr-watcher -t mttr-watcher:local $(GO_DIR)
 
 ## Canary release of the api-gateway (US-304, ADR-011). The Ingress needs ingress-nginx
 ## (minikube addons enable ingress). Typical run, with make gateway-load-test in another terminal:

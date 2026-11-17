@@ -72,6 +72,11 @@ jobs:
             dockerfile: ./services/go/Dockerfile
             target: external-stub
             tag: external-stub:ci
+          - name: mttr-watcher
+            context: ./services/go
+            dockerfile: ./services/go/Dockerfile
+            target: mttr-watcher
+            tag: mttr-watcher:ci
 
     steps:
       - uses: actions/checkout@v4
