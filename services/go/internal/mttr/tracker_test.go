@@ -109,8 +109,43 @@ func TestTwoFailures(t *testing.T) {
 	if open := tr.Open(); !reflect.DeepEqual(open, []string{"a", "b"}) {
 		t.Fatalf("open = %v", open)
 	}
-	only(t, tr.OnPod(PodState{Name: "d", Ready: true}, ms(3000)), ReplicaReplacement, "a", 3*time.Second)
-	only(t, tr.OnPod(PodState{Name: "e", Ready: true}, ms(3100)), ReplicaReplacement, "b", 3090*time.Millisecond)
+	// The most recent failure gets the first replacement.
+	only(t, tr.OnPod(PodState{Name: "d", Ready: true}, ms(3000)), ReplicaReplacement, "b", 2990*time.Millisecond)
+	only(t, tr.OnPod(PodState{Name: "e", Ready: true}, ms(3100)), ReplicaReplacement, "a", 3100*time.Millisecond)
+}
+
+// A rollout removes an old Pod after its surge replacement is Ready: that failure gets no
+// replacement, must not take the next one, and is forgotten after failureExpiry.
+func TestARolloutRemovalDoesNotStealTheNextReplacement(t *testing.T) {
+	tr := steady()
+	tr.OnPod(PodState{Name: "s"}, ms(0))
+	tr.OnPod(PodState{Name: "s", Ready: true}, ms(500)) // surge Pod, Ready before the removal
+	tr.OnEndpoints(ready("a", "b", "s"), ms(500))
+	tr.OnPod(PodState{Name: "a", Deleting: true}, ms(1000)) // the rollout removes "a"
+	tr.OnEndpoints(ready("b", "s"), ms(1020))
+
+	// A real failure later, and its replacement.
+	tr.OnPod(PodState{Name: "b", Deleting: true}, ms(60_000))
+	tr.OnEndpoints(ready("s"), ms(60_040))
+	tr.OnPod(PodState{Name: "c"}, ms(60_050))
+	only(t, tr.OnPod(PodState{Name: "c", Ready: true}, ms(65_000)), ReplicaReplacement, "b", 5*time.Second)
+
+	if open := tr.Open(); !reflect.DeepEqual(open, []string{"a"}) {
+		t.Fatalf("open = %v", open)
+	}
+	tr.OnEndpoints(ready("s", "c"), t0.Add(failureExpiry+2*time.Second))
+	if open := tr.Open(); len(open) != 0 {
+		t.Fatalf("the rollout's removal should be forgotten: %v", open)
+	}
+}
+
+// A replacement created before the failure event arrives (not Ready yet) still counts.
+func TestAReplacementSeenBeforeTheFailure(t *testing.T) {
+	tr := steady()
+	tr.OnPod(PodState{Name: "c"}, ms(0))
+	tr.OnPod(PodState{Name: "a", Deleting: true}, ms(5))
+	tr.OnEndpoints(ready("b"), ms(40))
+	only(t, tr.OnPod(PodState{Name: "c", Ready: true}, ms(3005)), ReplicaReplacement, "a", 3*time.Second)
 }
 
 // Pods that were never seen, and Pods starting up, are not failures.

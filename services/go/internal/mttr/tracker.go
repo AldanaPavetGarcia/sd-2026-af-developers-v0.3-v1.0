@@ -36,10 +36,14 @@ type PodState struct {
 	Gone     bool // the Pod object was deleted
 }
 
+// A failure whose replacement never comes (a rollout removes old Pods after their replacements
+// are already Ready) is forgotten after this long.
+const failureExpiry = 5 * time.Minute
+
 type failure struct {
 	pod       string
 	at        time.Time
-	knownPods map[string]bool // Pods that existed at the failure: not replacements
+	readyPods map[string]bool // Pods already Ready at the failure: they do not replace it
 	restored  bool
 	replaced  bool
 }
@@ -70,11 +74,12 @@ func (t *Tracker) OnPod(p PodState, at time.Time) []Measurement {
 	var out []Measurement
 	failed := known && !prev.Deleting && (p.Deleting || p.Gone || (prev.Ready && !p.Ready))
 	if failed && t.open(p.Name) == nil {
-		f := &failure{pod: p.Name, at: at, knownPods: map[string]bool{}}
-		for name := range t.pods {
-			f.knownPods[name] = true
+		f := &failure{pod: p.Name, at: at, readyPods: map[string]bool{}}
+		for name, state := range t.pods {
+			if state.Ready && name != p.Name {
+				f.readyPods[name] = true
+			}
 		}
-		f.knownPods[p.Name] = true
 		t.failures = append(t.failures, f)
 		t.Failures++
 		// The Service may already have dropped the Pod before this event arrived.
@@ -84,7 +89,7 @@ func (t *Tracker) OnPod(p PodState, at time.Time) []Measurement {
 	if p.Ready && !p.Deleting && !p.Gone && (!known || !prev.Ready) {
 		out = append(out, t.replacedBy(p.Name, at)...)
 	}
-	t.forgetFinished()
+	t.forgetFinished(at)
 	return out
 }
 
@@ -93,7 +98,7 @@ func (t *Tracker) OnPod(p PodState, at time.Time) []Measurement {
 func (t *Tracker) OnEndpoints(routable map[string]bool, at time.Time) []Measurement {
 	t.routable = routable
 	out := t.checkRestored(at)
-	t.forgetFinished()
+	t.forgetFinished(at)
 	return out
 }
 
@@ -127,14 +132,17 @@ func (t *Tracker) othersRoutable(pod string) bool {
 	return false
 }
 
-// A Pod that becomes Ready replaces the oldest failure it can: a new Pod replaces any, the failed
-// Pod itself (restarted in place) only its own.
+// A Pod that becomes Ready replaces the most recent failure it can: a Pod that was not Ready at
+// the failure replaces it, the failed Pod itself (restarted in place) only its own. The most
+// recent one, because an older open failure is usually a rollout's, already replaced by a surge
+// Pod before it was removed.
 func (t *Tracker) replacedBy(pod string, at time.Time) []Measurement {
-	for _, f := range t.failures {
+	for i := len(t.failures) - 1; i >= 0; i-- {
+		f := t.failures[i]
 		if f.replaced {
 			continue
 		}
-		if f.pod == pod || !f.knownPods[pod] {
+		if f.pod == pod || !f.readyPods[pod] {
 			f.replaced = true
 			return []Measurement{{Kind: ReplicaReplacement, Pod: f.pod, Duration: nonNegative(at.Sub(f.at))}}
 		}
@@ -142,10 +150,10 @@ func (t *Tracker) replacedBy(pod string, at time.Time) []Measurement {
 	return nil
 }
 
-func (t *Tracker) forgetFinished() {
+func (t *Tracker) forgetFinished(now time.Time) {
 	kept := t.failures[:0]
 	for _, f := range t.failures {
-		if !f.restored || !f.replaced {
+		if (!f.restored || !f.replaced) && now.Sub(f.at) < failureExpiry {
 			kept = append(kept, f)
 		}
 	}
