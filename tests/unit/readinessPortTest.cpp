@@ -11,10 +11,23 @@
 
 namespace
 {
-    // One port per process: ctest runs these tests in parallel processes.
-    const int READY_PORT = 30000 + static_cast<int>(getpid() % 20000);
     constexpr int CHECK_MS = 20;
     constexpr int SETTLE_MS = 200;
+
+    // A port nobody uses right now, chosen by the kernel: ctest runs these tests in parallel
+    // processes, next to other tests' client sockets.
+    int freePort()
+    {
+        const int fd = socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in addr {};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        socklen_t len = sizeof(addr);
+        bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+        getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len);
+        close(fd);
+        return ntohs(addr.sin_port);
+    }
 
     bool canConnect(int port)
     {
@@ -37,55 +50,57 @@ namespace
 // The Kubernetes tcpSocket probe passes exactly while the predicate holds (ADR-027 §3).
 TEST(ReadinessPortTest, ListensOnlyWhileReady)
 {
+    const int readyPort = freePort();
     std::atomic<bool> ready {true};
-    ReadinessPort port(READY_PORT, [&ready]() { return ready.load(); }, CHECK_MS);
+    ReadinessPort port(readyPort, [&ready]() { return ready.load(); }, CHECK_MS);
 
-    EXPECT_FALSE(canConnect(READY_PORT)) << "nothing listens before start()";
+    EXPECT_FALSE(canConnect(readyPort)) << "nothing listens before start()";
     port.start();
     settle();
     EXPECT_TRUE(port.listening());
-    EXPECT_TRUE(canConnect(READY_PORT));
-    EXPECT_TRUE(canConnect(READY_PORT)) << "every probe is accepted";
+    EXPECT_TRUE(canConnect(readyPort));
+    EXPECT_TRUE(canConnect(readyPort)) << "every probe is accepted";
 
     ready = false;
     settle();
     EXPECT_FALSE(port.listening());
-    EXPECT_FALSE(canConnect(READY_PORT)) << "not ready: the probe fails";
+    EXPECT_FALSE(canConnect(readyPort)) << "not ready: the probe fails";
 
     ready = true;
     settle();
-    EXPECT_TRUE(canConnect(READY_PORT)) << "ready again";
+    EXPECT_TRUE(canConnect(readyPort)) << "ready again";
 
     port.stop();
     EXPECT_FALSE(port.listening());
-    EXPECT_FALSE(canConnect(READY_PORT));
+    EXPECT_FALSE(canConnect(readyPort));
     port.stop(); // idempotent
 }
 
 TEST(ReadinessPortTest, AStartAfterStartIsHarmless)
 {
-    ReadinessPort port(READY_PORT, []() { return true; }, CHECK_MS);
+    const int readyPort = freePort();
+    ReadinessPort port(readyPort, []() { return true; }, CHECK_MS);
     port.start();
     port.start();
     settle();
-    EXPECT_TRUE(canConnect(READY_PORT));
+    EXPECT_TRUE(canConnect(readyPort));
 }
 
 TEST(ReadinessPortTest, APortInUseIsRetriedNotFatal)
 {
     // Something else holds the port: the readiness port keeps trying and stays not listening.
+    // The kernel picks the blocker's port, so it cannot collide with another process.
     const int blocker = socket(AF_INET, SOCK_STREAM, 0);
-    // Earlier probes may have left the port in TIME_WAIT.
-    int reuse = 1;
-    setsockopt(blocker, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
     sockaddr_in addr {};
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(static_cast<uint16_t>(READY_PORT));
     addr.sin_addr.s_addr = INADDR_ANY;
     ASSERT_EQ(bind(blocker, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)), 0);
     ASSERT_EQ(listen(blocker, 1), 0);
+    socklen_t len = sizeof(addr);
+    ASSERT_EQ(getsockname(blocker, reinterpret_cast<sockaddr*>(&addr), &len), 0);
+    const int readyPort = ntohs(addr.sin_port);
 
-    ReadinessPort port(READY_PORT, []() { return true; }, CHECK_MS);
+    ReadinessPort port(readyPort, []() { return true; }, CHECK_MS);
     port.start();
     settle();
     EXPECT_FALSE(port.listening());
