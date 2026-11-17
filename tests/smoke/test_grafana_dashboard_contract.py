@@ -37,6 +37,10 @@ REQUIRED_TITLES = {
     "Gateway Error Rate by Version",
     "Gateway P99 Latency by Version",
     "Gateway Requests per Second by Version",
+    # US-407 AC4 / ADR-027: MTTR on Pod failure, with the replica replacement time next to it.
+    "MTTR on Pod Failure (service restoration)",
+    "Replica Replacement Time (pod failure to pod Ready)",
+    "MTTR P99 and Routable eop-server Replicas",
 }
 
 REQUIRED_QUERY_TOKENS = {
@@ -52,6 +56,9 @@ REQUIRED_QUERY_TOKENS = {
     "eop_gateway_http_requests_total",
     "eop_gateway_http_request_duration_seconds_bucket",
     "by (version, track)",
+    "eop_mttr_last_seconds",
+    "eop_mttr_seconds_bucket",
+    "eop_server_routable_replicas",
 }
 
 
