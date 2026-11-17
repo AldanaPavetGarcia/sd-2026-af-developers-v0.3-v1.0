@@ -21,6 +21,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 
@@ -84,6 +85,34 @@ def read_until(sock, marker):
     return data.decode(errors="replace")
 
 
+# The server marks a silent node OFFLINE after two heartbeat intervals (US-104, 2 x 5 s).
+HEARTBEAT_EVERY_S = 2
+
+
+def keep_alive(sock, stop):
+    """Sends HEARTBEAT on `sock` until `stop` is set, as a registered node does."""
+    while not stop.wait(HEARTBEAT_EVERY_S):
+        try:
+            sock.sendall(b"HEARTBEAT\n")
+        except OSError:
+            return
+
+
+def read_answer_line(sock):
+    """Reads lines until one that is not the WELCOME greeting, and returns everything read."""
+    text = ""
+    deadline = time.time() + TIMEOUT
+    while time.time() < deadline:
+        lines = [line for line in text.split("\n")[:-1] if line and not line.startswith("WELCOME")]
+        if lines:
+            return text
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        text += chunk.decode(errors="replace")
+    return text
+
+
 class Smoke:
     def __init__(self):
         self.failures = 0
@@ -102,7 +131,8 @@ class Smoke:
 
         sock = socket.create_connection(("127.0.0.1", port), timeout=TIMEOUT)
         sock.sendall(f"REGISTER node_id={node_id} bunker_name=Smoke ip_address=10.0.0.1 capacity=1\n".encode())
-        answer = read_until(sock, b"\n")
+        # The server greets first (WELCOME …): the answer is the next line, ACK or ERROR_*.
+        answer = read_answer_line(sock)
         self.check("2a. REGISTER answers ACK", "ACK" in answer and "ERROR" not in answer, answer)
         return sock  # kept open: the node stays ONLINE while the gateway looks it up
 
@@ -151,9 +181,14 @@ def main():
         gateway = f"http://127.0.0.1:{gw.local}"
         node_id = f"smoke-prod-{stamp}"
         session = smoke.server(server.local, node_id)
+        stop = threading.Event()
+        heartbeats = threading.Thread(target=keep_alive, args=(session, stop), daemon=True)
+        heartbeats.start()
         try:
             smoke.registered(gateway, node_id)
         finally:
+            stop.set()
+            heartbeats.join()
             session.close()
         smoke.analysis(gateway)
         smoke.edge(gateway, f"smoke-edge-{stamp}-")
