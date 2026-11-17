@@ -15,10 +15,14 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <sstream>
@@ -276,6 +280,22 @@ static void loadServerConfig(ServerContext& ctx)
         catch (...)
         {
             ctx.idleTimeoutSeconds = EOP_IDLE_TIMEOUT;
+        }
+    }
+
+    if (const char* env = std::getenv("EOP_EDGE_LIVENESS_TIMEOUT"))
+    {
+        try
+        {
+            ctx.edgeLivenessSeconds = std::stoi(env);
+        }
+        catch (...)
+        {
+            ctx.edgeLivenessSeconds = EOP_EDGE_LIVENESS_TIMEOUT;
+        }
+        if (ctx.edgeLivenessSeconds <= 0)
+        {
+            ctx.edgeLivenessSeconds = EOP_EDGE_LIVENESS_TIMEOUT;
         }
     }
 
@@ -1003,11 +1023,13 @@ static void workerLoop(ServerContext& ctx)
             opName = "LIST_NODES";
         else if (msg.message.rfind(getCmdStringFromCode(CMD_HEARTBEAT), 0) == 0)
             opName = "HEARTBEAT";
+        else if (msg.message.rfind(getCmdStringFromCode(CMD_TELEMETRY) + " ", 0) == 0)
+            opName = "TELEMETRY";
         else if (isAnalyzeGraphRequest(msg.message))
             opName = "ANALYZE_GRAPH";
 
-        bool shouldTrace =
-            (opName == "REGISTER" || opName == "QUERY_NODE" || opName == "LIST_NODES" || opName == "ANALYZE_GRAPH");
+        bool shouldTrace = (opName == "REGISTER" || opName == "QUERY_NODE" || opName == "LIST_NODES" ||
+                            opName == "ANALYZE_GRAPH" || opName == "TELEMETRY");
 
         opentelemetry::nostd::shared_ptr<opentelemetry::trace::Span> opSpan;
         std::unique_ptr<opentelemetry::trace::Scope> scope;
@@ -1335,10 +1357,30 @@ static std::string buildErrorHpcTimeout()
  */
 static std::string serializeRecord(const NodeRecord& rec)
 {
+    const bool edge = rec.source == NODE_SOURCE_EDGE;
+    NodeStatus status = rec.status;
+    if (edge)
+    {
+        // Edge nodes have no session: ONLINE while their last telemetry is recent (ADR-028).
+        const auto age = std::chrono::system_clock::now() - rec.lastSeen;
+        status = age < std::chrono::seconds(serverContext.edgeLivenessSeconds.load()) ? NodeStatus::ONLINE
+                                                                                      : NodeStatus::OFFLINE;
+    }
+
     std::ostringstream ss;
     ss << "node_id=" << rec.nodeId << " bunker_name=" << rec.bunkerName << " ip_address=" << rec.ipAddress
-       << " capacity=" << rec.capacity << " status=" << getNodeStatusString(rec.status)
+       << " capacity=" << rec.capacity << " status=" << getNodeStatusString(status)
        << " last_seen=" << getEpochSeconds(rec.lastSeen);
+    if (edge)
+    {
+        // Appended after the v0.1 keys, only for edge nodes: v0.1 lines stay byte-identical.
+        ss << " source=" << NODE_SOURCE_EDGE;
+        if (rec.sampledAtMs > 0)
+        {
+            ss << " temperature=" << std::fixed << std::setprecision(1) << rec.temperature
+               << " device_status=" << rec.deviceStatus << " sampled_at=" << rec.sampledAtMs;
+        }
+    }
     return ss.str();
 }
 
@@ -1427,6 +1469,180 @@ static void handleRegister(int clientSock, const std::string& line)
     }
 }
 // LCOV_EXCL_STOP
+
+namespace
+{
+    constexpr std::size_t kNameMaxLen = 63;
+    constexpr std::size_t kBootIdLen = 8;
+    constexpr double kMinTemperature = -50.0;
+    constexpr double kMaxTemperature = 150.0;
+    constexpr const char* kTelemetryKeys[] = {
+        "node_id", "bunker_name", "message_id", "boot_id", "temperature", "status", "sampled_at"};
+
+    bool allCharsIn(const std::string& text, const char* extra, bool upper)
+    {
+        for (const char c : text)
+        {
+            const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || (upper && c >= 'A' && c <= 'Z') ||
+                            std::strchr(extra, c) != nullptr;
+            if (!ok)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool parseUnsigned(const std::string& text, unsigned long long max, unsigned long long& out)
+    {
+        if (text.empty() || text.size() > 20 || !allCharsIn(text, "", false) ||
+            text.find_first_not_of("0123456789") != std::string::npos)
+        {
+            return false;
+        }
+        errno = 0;
+        out = std::strtoull(text.c_str(), nullptr, 10);
+        return errno == 0 && out <= max;
+    }
+} // namespace
+
+/**
+ * @brief Parses and validates a TELEMETRY line (docs/edge-telemetry-protocol-v1.0.md §2, §3).
+ *
+ * Keys come in the protocol's order, each once; an optional `traceparent=` may follow (ADR-026).
+ *
+ * @param line Raw request line.
+ * @param[out] telemetry The sample.
+ * @param[out] reason Why the line is rejected.
+ * @return true if valid.
+ */
+static bool parseTelemetry(const std::string& line, EdgeTelemetry& telemetry, std::string& reason)
+{
+    std::istringstream in(line);
+    std::string token;
+    in >> token; // TELEMETRY
+    std::string values[std::size(kTelemetryKeys)];
+    for (std::size_t i = 0; i < std::size(kTelemetryKeys); ++i)
+    {
+        const std::string prefix = std::string(kTelemetryKeys[i]) + "=";
+        if (!(in >> token) || token.rfind(prefix, 0) != 0)
+        {
+            reason = std::string("expected ") + kTelemetryKeys[i];
+            return false;
+        }
+        values[i] = token.substr(prefix.size());
+    }
+    if (in >> token && token.rfind("traceparent=", 0) != 0)
+    {
+        reason = "unexpected key after sampled_at";
+        return false;
+    }
+    if (in >> token)
+    {
+        reason = "unexpected key after traceparent";
+        return false;
+    }
+
+    const std::string& nodeId = values[0];
+    if (nodeId.empty() || nodeId.size() > kNameMaxLen || !allCharsIn(nodeId, "-", false))
+    {
+        reason = "invalid node_id";
+        return false;
+    }
+    if (isHpcEngineNodeId(nodeId))
+    {
+        reason = "reserved node_id";
+        return false;
+    }
+    if (values[1].empty() || values[1].size() > kNameMaxLen || !allCharsIn(values[1], "_.-", true))
+    {
+        reason = "invalid bunker_name";
+        return false;
+    }
+    unsigned long long messageId = 0;
+    if (!parseUnsigned(values[2], std::numeric_limits<std::uint32_t>::max(), messageId) || messageId == 0)
+    {
+        reason = "invalid message_id";
+        return false;
+    }
+    if (values[3].size() != kBootIdLen || values[3].find_first_not_of("0123456789abcdef") != std::string::npos)
+    {
+        reason = "invalid boot_id";
+        return false;
+    }
+    char* end = nullptr;
+    const double temperature = std::strtod(values[4].c_str(), &end);
+    if (values[4].empty() || end != values[4].c_str() + values[4].size() || !std::isfinite(temperature) ||
+        temperature < kMinTemperature || temperature > kMaxTemperature)
+    {
+        reason = "invalid temperature";
+        return false;
+    }
+    if (values[5] != "OK" && values[5] != "WARN" && values[5] != "ALERT")
+    {
+        reason = "invalid status";
+        return false;
+    }
+    unsigned long long sampledAt = 0;
+    if (!parseUnsigned(values[6], std::numeric_limits<std::int64_t>::max(), sampledAt) || sampledAt == 0)
+    {
+        reason = "invalid sampled_at";
+        return false;
+    }
+
+    telemetry.nodeId = nodeId;
+    telemetry.bunkerName = values[1];
+    telemetry.messageId = static_cast<std::uint32_t>(messageId);
+    telemetry.bootId = values[3];
+    telemetry.temperature = temperature;
+    telemetry.deviceStatus = values[5];
+    telemetry.sampledAtMs = static_cast<std::int64_t>(sampledAt);
+    telemetry.receivedAt = std::chrono::system_clock::now();
+    return true;
+}
+
+/**
+ * @brief Handle a TELEMETRY command from the edge ingestor (US-404 AC2, ADR-028 §1).
+ *
+ * Expected format: "TELEMETRY node_id=<id> bunker_name=<name> message_id=<n> boot_id=<hex8>
+ * temperature=<float> status=<OK|WARN|ALERT> sampled_at=<epoch ms> [traceparent=<W3C>]"
+ *
+ * @param clientSock Connected client socket.
+ * @param line Raw request line.
+ */
+static void handleTelemetry(int clientSock, const std::string& line)
+{
+    EdgeTelemetry telemetry;
+    std::string reason;
+    std::string answer;
+
+    if (!parseTelemetry(line, telemetry, reason))
+    {
+        answer = "ERROR_INVALID_REQUEST desc=" + reason + "\n";
+        g_logContext.result = "ERROR";
+        audit_log_write_fmt(WARNING_LOG, "Invalid TELEMETRY: %s", reason.c_str());
+        send(clientSock, answer.c_str(), answer.size(), 0);
+        return;
+    }
+    g_logContext.nodeId = telemetry.nodeId;
+
+    switch (serverContext.registry.upsertTelemetry(telemetry))
+    {
+        case TelemetryResult::STORED:
+        case TelemetryResult::OLDER_SAMPLE:
+            answer = getCmdStringFromCode(CMD_ACK) + " TELEMETRY node_id=" + telemetry.nodeId +
+                     " message_id=" + std::to_string(telemetry.messageId) + "\n";
+            g_logContext.result = "OK";
+            break;
+        case TelemetryResult::TCP_NODE:
+            answer = getCmdStringFromCode(CMD_ERROR_DUPLICATE) + " node_id=" + telemetry.nodeId +
+                     " desc=Node registered over TCP\n";
+            g_logContext.result = "ERROR";
+            break;
+        case TelemetryResult::UNAVAILABLE: replyRegistryUnavailable(clientSock, "TELEMETRY"); return;
+    }
+    send(clientSock, answer.c_str(), answer.size(), 0);
+}
 
 /**
  * @brief Handle a QUERY_NODE command (AC5, AC6).
@@ -1809,6 +2025,12 @@ void handleClientMessage(int clientSock, const std::string& clientIp, const std:
         audit_log_write_fmt(INFO_LOG, "Request received: 'LIST_NODES' from IP=%s", clientIp.c_str());
         updateSessionActivity(serverContext, clientSock);
         handleListNodes(clientSock);
+    }
+    else if (request.rfind(getCmdStringFromCode(CMD_TELEMETRY) + " ", 0) == 0)
+    {
+        // One line per device sample from the edge ingestor: logged only on errors.
+        updateSessionActivity(serverContext, clientSock);
+        handleTelemetry(clientSock, request);
     }
     else if (request.rfind(getCmdStringFromCode(CMD_HEARTBEAT), 0) == 0)
     {

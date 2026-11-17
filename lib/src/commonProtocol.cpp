@@ -60,6 +60,7 @@ std::string getCmdStringFromCode(SystemCommand code)
         case CMD_ANALYZE_GRAPH: cmdStr = "ANALYZE_GRAPH"; break;
         case CMD_ERROR_SERVICE_UNAVAILABLE: cmdStr = "ERROR_SERVICE_UNAVAILABLE"; break;
         case CMD_ERROR_HPC_TIMEOUT: cmdStr = "ERROR_HPC_TIMEOUT"; break;
+        case CMD_TELEMETRY: cmdStr = "TELEMETRY"; break;
         default: cmdStr = "UNKNOWN"; break;
     }
 

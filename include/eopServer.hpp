@@ -49,6 +49,10 @@
 #define EOP_METRICS_PORT 9100 ///< Default port for the Prometheus `/metrics` HTTP exposer (US-205 / ADR-009 support).
 #endif
 
+#ifndef EOP_EDGE_LIVENESS_TIMEOUT
+#define EOP_EDGE_LIVENESS_TIMEOUT 10 ///< Seconds an edge node stays ONLINE after its last telemetry (ADR-028).
+#endif
+
 #define EOP_BUFFER_SIZE       1024
 #define EOP_SMALL_BUFFER_SIZE 64
 
@@ -138,6 +142,7 @@ struct ServerContext
     std::atomic<int> maxClients;               ///< Maximum allowed simultaneous clients (EOP_MAX_CLIENTS).
     std::atomic<int> heartbeatIntervalSeconds; ///< Heartbeat interval configuration (EOP_HEARTBEAT_INTERVAL).
     std::atomic<int> idleTimeoutSeconds;       ///< Idle timeout configuration (EOP_IDLE_TIMEOUT).
+    std::atomic<int> edgeLivenessSeconds; ///< Edge node ONLINE while seen this recently (EOP_EDGE_LIVENESS_TIMEOUT).
 
     std::queue<ClientMessage> messageQueue; ///< Queue of client messages for the Thread Pool.
     std::mutex queueMutex;                  ///< Protects access to messageQueue.
@@ -150,6 +155,7 @@ struct ServerContext
         , maxClients(100)
         , heartbeatIntervalSeconds(5)
         , idleTimeoutSeconds(EOP_IDLE_TIMEOUT)
+        , edgeLivenessSeconds(EOP_EDGE_LIVENESS_TIMEOUT)
     {
     }
 
