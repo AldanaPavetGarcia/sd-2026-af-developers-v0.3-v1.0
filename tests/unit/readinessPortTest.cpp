@@ -11,7 +11,8 @@
 
 namespace
 {
-    constexpr int READY_PORT = 39927;
+    // One port per process: ctest runs these tests in parallel processes.
+    const int READY_PORT = 30000 + static_cast<int>(getpid() % 20000);
     constexpr int CHECK_MS = 20;
     constexpr int SETTLE_MS = 200;
 
