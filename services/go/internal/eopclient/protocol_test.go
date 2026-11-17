@@ -34,7 +34,7 @@ func TestParseNode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseNode: %v", err)
 	}
-	want := Node{NodeID: "alpha-01", BunkerName: "Zone-B", IPAddress: "10.0.0.6", Capacity: 10, Status: "ONLINE", LastSeen: time.Unix(1759700000, 0).UTC()}
+	want := Node{NodeID: "alpha-01", BunkerName: "Zone-B", IPAddress: "10.0.0.6", Capacity: 10, Status: "ONLINE", LastSeen: time.Unix(1759700000, 0).UTC(), Source: SourceTCP}
 	if node != want {
 		t.Fatalf("parseNode = %+v, want %+v", node, want)
 	}
