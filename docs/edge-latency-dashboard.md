@@ -83,6 +83,15 @@ when:
 * the run's P99 is not below 500 ms;
 * the loss-rate panel is not 0 %.
 
+Measured on a laptop (docker-compose, 2026-11-17), 5 devices × 300 s:
+
+```text
+published 1500, received 1500, forwarded 1500, invalid 0, duplicates 0
+rate real 4.990/s, panel 4.807/s (3.7 % apart)
+E2E P50 5 ms, P99 23 ms (limit 500 ms), loss 0 %, 5 of 5 devices in /v1/edge/status
+[edge-test] PASS
+```
+
 `make edge-load-tool-test` tests the comparison itself without the stack (CI).
 
 ## Validation
