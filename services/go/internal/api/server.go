@@ -31,6 +31,7 @@ type Options struct {
 	Analysis      AnalysisOptions
 	AI            ExternalService
 	Corporate     ExternalService
+	Edge          EdgeStatusReader
 	Logger        *slog.Logger
 	Metrics       *telemetry.Metrics
 	OpenAPIJSON   []byte
@@ -50,6 +51,7 @@ type Server struct {
 	analysisOpts  AnalysisOptions
 	ai            ExternalService
 	corp          ExternalService
+	edge          EdgeStatusReader
 	logger        *slog.Logger
 	metrics       *telemetry.Metrics
 	openAPI       []byte
@@ -70,6 +72,7 @@ func NewServer(opts Options) *Server {
 		analysisOpts:  opts.Analysis,
 		ai:            opts.AI,
 		corp:          opts.Corporate,
+		edge:          opts.Edge,
 		logger:        opts.Logger,
 		metrics:       opts.Metrics,
 		openAPI:       opts.OpenAPIJSON,
@@ -103,6 +106,7 @@ func (s *Server) router() *chi.Mux {
 		r.Get("/nodes/{node_id}/insights", s.insights)
 		r.Get("/nodes/{node_id}/corporate", s.corporate)
 		r.Get("/health", s.health)
+		r.Get("/edge/status", s.edgeStatus)
 		r.Get("/openapi.json", s.openAPISpec)
 		r.Post("/graph/analyze", s.analyze)
 		r.Get("/graph/jobs", s.listJobs)

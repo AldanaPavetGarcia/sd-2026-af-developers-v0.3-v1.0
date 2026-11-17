@@ -136,3 +136,11 @@ func (w *Window) Snapshot(now time.Time, state string, liveness time.Duration) S
 	sort.Slice(s.Devices, func(i, j int) bool { return s.Devices[i].NodeID < s.Devices[j].NodeID })
 	return s
 }
+
+// RedisStatus reads the snapshot for the gateway (api.EdgeStatusReader).
+type RedisStatus struct{ RDB redis.Cmdable }
+
+// EdgeStatus returns the stored snapshot; ok is false when the ingestor wrote none recently.
+func (r RedisStatus) EdgeStatus(ctx context.Context) (Snapshot, bool, error) {
+	return ReadSnapshot(ctx, r.RDB)
+}

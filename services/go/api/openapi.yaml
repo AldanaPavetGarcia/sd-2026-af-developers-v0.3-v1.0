@@ -26,6 +26,8 @@ tags:
       (US-303, ADR-012). When a service fails or its circuit is open, the gateway answers with
       the last good data marked `meta.stale: true`, or with `503 SERVICE_DEGRADED` and
       `Retry-After` when it has none. It never answers `500` because of an external service.
+  - name: edge
+    description: Edge devices of the bunkers, reached through the MQTT broker and the edge ingestor (US-404, ADR-028).
   - name: operations
     description: Health and API description.
 paths:
@@ -338,6 +340,33 @@ paths:
           $ref: "#/components/responses/InternalError"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /v1/edge/status:
+    get:
+      tags: [edge]
+      operationId: getEdgeStatus
+      summary: State of the edge ingestor and the messages of the last 60 seconds.
+      description: |
+        US-404 AC7. The edge ingestor publishes this snapshot every second; the gateway reads it
+        and never calls the ingestor. Without a snapshot from the last 5 seconds the ingestor is
+        down and `state` is `disconnected`, with zero counts.
+      responses:
+        "200":
+          description: The ingestor's latest snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                additionalProperties: false
+                properties:
+                  data:
+                    $ref: "#/components/schemas/EdgeStatus"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/openapi.json:
     get:
       tags: [operations]
@@ -406,6 +435,68 @@ components:
         last_seen_at:
           type: string
           format: date-time
+        source:
+          type: string
+          description: "`edge` for devices fed through the edge ingestor (ADR-028), `tcp` for nodes registered over the socket protocol."
+          enum: [tcp, edge]
+        telemetry:
+          $ref: "#/components/schemas/NodeTelemetry"
+    NodeTelemetry:
+      type: object
+      description: Newest sample of an edge node. Absent for `tcp` nodes.
+      required: [temperature, status, sampled_at]
+      additionalProperties: false
+      properties:
+        temperature:
+          type: number
+          description: Degrees Celsius.
+          example: 21.4
+        status:
+          type: string
+          enum: [OK, WARN, ALERT]
+        sampled_at:
+          type: string
+          format: date-time
+          description: When the device took the sample (its own clock).
+    EdgeStatus:
+      type: object
+      required: [state, window_seconds, received, forwarded, duplicates, invalid, devices]
+      additionalProperties: false
+      properties:
+        state:
+          type: string
+          enum: [connected, reconnecting, disconnected]
+          description: The ingestor's connection to the MQTT broker.
+        window_seconds:
+          type: integer
+          example: 60
+        received:
+          type: integer
+          description: Telemetry messages received from the broker in the window.
+        forwarded:
+          type: integer
+          description: Telemetry messages acknowledged by eop-server in the window.
+        duplicates:
+          type: integer
+          description: Messages already delivered, acknowledged to the broker and not forwarded (US-404 AC3).
+        invalid:
+          type: integer
+          description: Messages that broke the edge protocol or that eop-server rejected.
+        devices:
+          type: array
+          items:
+            type: object
+            required: [node_id, last_seen, connected]
+            additionalProperties: false
+            properties:
+              node_id:
+                type: string
+              last_seen:
+                type: string
+                format: date-time
+              connected:
+                type: boolean
+                description: Seen within the device liveness timeout (10 s).
     Health:
       type: object
       required: [status, checks]
