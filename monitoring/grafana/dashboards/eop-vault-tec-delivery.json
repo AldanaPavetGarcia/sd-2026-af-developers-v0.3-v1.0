@@ -1,0 +1,850 @@
+{
+  "uid": "eop-vault-tec-delivery",
+  "title": "Vault-Tec Delivery — EOP v1.0",
+  "tags": [
+    "eop",
+    "sla",
+    "delivery",
+    "v1.0"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "description": "US-407: the SLA of EOP v1.0 in one place — 30-day SLO and error budget, MTTR on Pod failure, canary by version and the edge path. The 30-day row reads the hourly recording rules; the live rows override the range to the last 15 minutes.",
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "SLO and error budget — 30 days, hourly (recording rules)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "eop-server Success Ratio (30 d)",
+      "description": "Successful eop-server commands over the last 30 days, from the hourly recording rules (k8s/prometheus-rules-configmap.yaml). SLO: 99.9 %.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(eop:requests_success:ratio30d) * 100",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 99.9
+              }
+            ]
+          },
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Error Budget Remaining (30 d)",
+      "description": "Share of the 30-day error budget (0.1 % of requests) still unspent; it must be above 0 at delivery (US-407 AC1).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(eop:error_budget_remaining:ratio30d) * 100",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.001
+              },
+              {
+                "color": "green",
+                "value": 25
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "API Gateway Success Ratio (30 d, no 5xx)",
+      "description": "Gateway requests without a 5xx over the last 30 days (ADR-010: 5xx are the errors that count).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "eop:gateway_success:ratio30d * 100",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 99.9
+              }
+            ]
+          },
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "eop-server Availability (30 d)",
+      "description": "Average of Prometheus' up for eop-server over 30 days (ADR-009, 99.9 %).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg(eop:up:avg30d{job=\"eop-server\"}) * 100",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 99.9
+              }
+            ]
+          },
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Hourly Success Ratio (30 days)",
+      "description": "One point per hour from the recording rules: eop-server commands and gateway requests without a 5xx.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(eop:requests_ok:increase1h) / clamp_min(sum(eop:requests:increase1h), 1) * 100",
+          "legendFormat": "eop-server"
+        },
+        {
+          "refId": "B",
+          "expr": "(1 - sum(eop:gateway_requests_5xx:increase1h) / clamp_min(sum(eop:gateway_requests:increase1h), 1)) * 100",
+          "legendFormat": "api-gateway"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "interval": "1h"
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Error Budget Remaining over 30 days",
+      "description": "The 30-day error budget left, evaluated every hour.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(eop:error_budget_remaining:ratio30d) * 100",
+          "legendFormat": "budget left (%)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "interval": "1h"
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Failover — MTTR on Pod failure (ADR-027)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "MTTR on Pod Failure (service restoration)",
+      "description": "Last measured time from an eop-server Pod failure until the Service routes only to the ready replica (mttr-watcher). Target < 200 ms.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "eop_mttr_last_seconds{kind=\"service_restoration\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.2
+              }
+            ]
+          },
+          "decimals": 3,
+          "noValue": "no failure yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 15
+      }
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "MTTR P99 (dashboard range)",
+      "description": "P99 of the service restoration over the selected range.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le) (increase(eop_mttr_seconds_bucket{kind=\"service_restoration\"}[$__range])))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.2
+              }
+            ]
+          },
+          "decimals": 3,
+          "noValue": "no failure yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 15
+      }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Replica Replacement Time (pod failure to pod Ready)",
+      "description": "The PRD's literal pod death to pod ready, shown next to the MTTR (ADR-025: Kubernetes cannot recreate a Pod in 200 ms).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "eop_mttr_last_seconds{kind=\"replica_replacement\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 2,
+          "noValue": "no failure yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 15
+      }
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Routable eop-server Replicas",
+      "description": "eop-server Pods the Service routes to now (2 in production).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "eop_server_routable_replicas",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "green",
+                "value": 2
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 15
+      }
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "Canary — API gateway by version (live, last 15 minutes)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "panels": []
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Gateway Requests per Second by Version",
+      "description": "Traffic split between stable and canary during the rollout (US-304).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (version, track) (rate(eop_gateway_http_requests_total[1m]))",
+          "legendFormat": "{{version}} ({{track}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 21
+      },
+      "timeFrom": "15m"
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Gateway Error Rate by Version",
+      "description": "5xx share per version: the canary is rolled back if it errs (US-304 AC5).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (version, track) (rate(eop_gateway_http_requests_total{status_class=\"5xx\"}[1m])) / clamp_min(sum by (version, track) (rate(eop_gateway_http_requests_total[1m])), 1e-9)",
+          "legendFormat": "{{version}} ({{track}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 21
+      },
+      "timeFrom": "15m"
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Gateway P99 Latency by Version",
+      "description": "P99 per version; the REST NFR is 300 ms.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le, version, track) (rate(eop_gateway_http_request_duration_seconds_bucket[1m])))",
+          "legendFormat": "{{version}} ({{track}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 21
+      },
+      "timeFrom": "15m"
+    },
+    {
+      "id": 17,
+      "type": "row",
+      "title": "Edge — devices to eop-server (live, last 15 minutes)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "panels": []
+    },
+    {
+      "id": 18,
+      "type": "stat",
+      "title": "Edge E2E Latency P99",
+      "description": "Device sampling to the eop-server ACK (US-405). NFR: < 500 ms.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(eop_edge_e2e_latency_seconds_bucket[1m])))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          },
+          "decimals": 3,
+          "noValue": "no edge traffic"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 29
+      },
+      "timeFrom": "15m"
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "Edge Devices Connected",
+      "description": "Devices with telemetry in the last 10 s.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count(time() - max by (node_id) (eop_edge_device_last_seen_timestamp_seconds) < 10) or vector(0)",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 29
+      }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Edge Messages per Second",
+      "description": "Received from the broker and forwarded to eop-server by the edge ingestor.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(eop_edge_messages_received_total[1m]))",
+          "legendFormat": "received"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(eop_edge_messages_forwarded_total[1m]))",
+          "legendFormat": "forwarded"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 29
+      },
+      "timeFrom": "15m"
+    },
+    {
+      "id": 21,
+      "type": "text",
+      "title": "Where to look next",
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Details: **EOP SLO Dashboard** (per-service SLO, circuit breakers), **EOP Edge Telemetry** (per-device table, loss rate), **EOP Request Logs** (Loki). One edge message end to end: SigNoz → Traces → service `edge-ingestor`, operation `edge.message`, then its `eop-server` child span. Demo steps: `docs/SLA-DEMO.md`."
+      }
+    }
+  ]
+}

@@ -12,6 +12,7 @@ configMapGenerator:
       - grafana/dashboards/eop-hpc-performance-dashboard.json
       - grafana/dashboards/eop-request-logs.json
       - grafana/dashboards/eop-slo-dashboard.json
+      - grafana/dashboards/eop-vault-tec-delivery.json
     options:
       labels:
         app: grafana
