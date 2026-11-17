@@ -29,6 +29,7 @@ type Metrics struct {
 	reconnections *prometheus.CounterVec
 	delivered     *prometheus.CounterVec
 	boots         *prometheus.CounterVec
+	lastSeen      *prometheus.GaugeVec
 }
 
 // NewMetrics registers the ingestor's metrics in reg.
@@ -64,9 +65,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Buffered samples devices reported delivered after reconnecting."}, device),
 		boots: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "eop_edge_device_boots_total",
 			Help: "BOOT events per device."}, device),
+		lastSeen: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "eop_edge_device_last_seen_timestamp_seconds",
+			Help: "Unix time of the last message received from each device, any topic (US-405 AC7)."}, device),
 	}
 	reg.MustRegister(m.Received, m.Forwarded, m.Duplicates, m.Invalid, m.Retries, m.Connected,
-		m.e2e, m.clockSkew, m.dropped, m.buffered, m.restarts, m.uptime, m.reconnections, m.delivered, m.boots)
+		m.e2e, m.clockSkew, m.dropped, m.buffered, m.restarts, m.uptime, m.reconnections, m.delivered, m.boots, m.lastSeen)
 	return m
 }
 
@@ -76,6 +79,10 @@ func (m *Metrics) latency(nodeID string, d time.Duration) {
 		return
 	}
 	m.e2e.WithLabelValues(nodeID).Observe(d.Seconds())
+}
+
+func (m *Metrics) seen(nodeID string, at time.Time) {
+	m.lastSeen.WithLabelValues(nodeID).Set(float64(at.UnixMilli()) / float64(time.Second/time.Millisecond))
 }
 
 func (m *Metrics) event(e edge.Event) {
