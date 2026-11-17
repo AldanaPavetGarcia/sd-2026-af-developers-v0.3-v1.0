@@ -4,6 +4,14 @@ All notable changes to the EOP Server Node Registry project will be documented i
 
 ## [Unreleased]
 
+### Added
+
+- **Shared node registry and eop-server failover (US-407 AC4, #71, ADR-027):** the registry is behind `INodeRegistry` (`include/nodeRegistry.hpp`) with the v0.1 in-memory backend (default) and a Redis backend (`include/redisNodeRegistry.hpp`, hiredis via vcpkg, RAII) selected by `EOP_REGISTRY_BACKEND=memory|redis`. In Redis each node is a hash with its owner replica, each replica holds a 3 s lease, and a node is ONLINE only while its owner's lease lives: the nodes of a dead replica read OFFLINE everywhere within 3 s and re-register on the other one; `REGISTER` is one Lua script, so `ERROR_DUPLICATE` holds across replicas. A replica rewrites its live nodes after Redis loses them, answers `ERROR_SERVICE_UNAVAILABLE desc=Node registry unavailable` when Redis is down, and its readiness port (`EOP_READY_PORT`) is open only while the registry answers and it is not shutting down; on SIGTERM it keeps serving for `EOP_SHUTDOWN_DRAIN_MS` after leaving the Service. In Kubernetes eop-server runs 2 replicas with a PodDisruptionBudget, and hpc-engine moves into its Pod as a sidecar registered as `hpc-engine-<pod>` (the `hpc-engine` Deployment is removed; a Prometheus job scrapes the sidecar). `mttr-watcher` (Go, `services/go/cmd/mttr-watcher`) measures service restoration and replica replacement from Pod and EndpointSlice events and exports `eop_mttr_*` for a new MTTR row in the SLO dashboard; `make k8s-mttr-test` deletes a Pod under a 20 ms probe and fails at 200 ms. Measured on minikube: 0 of 1,955 probe requests failed, service restoration 93 ms, replica replacement 3.4 s.
+
+### Fixed
+
+- **A command left without `\n` when a client closed could be answered to another client (#71):** the server queued it and closed the socket at once, so a new connection could get the same fd before the worker wrote the answer. The session now stays open, out of the poll set, until the worker has answered, which also makes a half-closed client (`printf 'LIST_NODES' | nc`) get its answer.
+
 ## [0.3.0] - date set when release/0.3.0 is cut
 
 Public API & Safe Delivery (Milestone 3): a versioned REST API in front of the EOP server, canary and blue-green delivery of that API, and logs centralized in Loki and correlated with traces.
