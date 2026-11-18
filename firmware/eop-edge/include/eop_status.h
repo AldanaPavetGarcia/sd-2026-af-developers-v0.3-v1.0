@@ -2,8 +2,8 @@
  * @file eop_status.h
  * @brief Device status shared by the threads and shown by the shell (US-401 AC8, US-402 AC3).
  * @details The MQTT thread writes the connection state and publication counters; the shell
- *          command `eop status` reads them together with the queue counters and the link state.
- *          On native_sim, `eop net down|up` flips the simulated link (eop_link.h).
+ *          command `eop status` (src/shell.c) reads them together with the queue counters, the
+ *          link state, the thread restarts and the LED pattern.
  */
 
 #ifndef EOP_STATUS_H
@@ -13,7 +13,6 @@
 
 #include <zephyr/kernel.h>
 
-#include "eop_link.h"
 #include "eop_queue.h"
 
 /** Broker connection state. */
@@ -96,12 +95,5 @@ void eop_status_snapshot(struct eop_status_board *board, struct eop_status_snaps
  * @return "disconnected", "connecting" or "connected".
  */
 const char *eop_conn_state_name(enum eop_conn_state state);
-
-/**
- * @brief Makes @p board and @p link the ones the `eop` shell commands use.
- * @param board Status board; must outlive the shell.
- * @param link Network link; must outlive the shell.
- */
-void eop_shell_attach(struct eop_status_board *board, struct eop_link *link);
 
 #endif /* EOP_STATUS_H */

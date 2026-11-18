@@ -8,7 +8,12 @@
  * out first, oldest first, because the queue is FIFO (AC2); once the newest of them is
  * acknowledged, RECONNECTED is published to …/events with how many were delivered (AC6). The
  * first connection since boot publishes BOOT instead. While connected, a health report goes to
- * …/health every CONFIG_EOP_HEALTH_PERIOD_MS, with the dropped count (AC8).
+ * …/health every CONFIG_EOP_HEALTH_PERIOD_MS, with the dropped count (AC8), and at once when a
+ * thread was restarted (US-403 AC2, AC7).
+ *
+ * The session is static, not on the thread's stack: when the watchdog restarts this thread
+ * (US-403) the new one closes the old socket and goes on with the same pending sample, flush and
+ * backoff, so a restart loses nothing.
  */
 
 #include <errno.h>
@@ -54,6 +59,15 @@ struct mqtt_session {
 	uint16_t packet_id;
 	uint16_t awaiting_id;
 	bool puback_seen;
+	bool started;     /* the thread ran before: this start is a watchdog restart */
+	bool socket_open; /* client.transport.tcp.sock must be closed on a restart */
+	struct eop_backoff backoff;
+	struct eop_flush flush;
+	struct eop_telemetry pending;
+	bool have_pending;
+	bool booted; /* BOOT was published */
+	int64_t next_health_ms;
+	uint32_t reported_restarts; /* thread restarts in the last health report */
 };
 
 static void evt_handler(struct mqtt_client *client, const struct mqtt_evt *evt)
@@ -107,6 +121,7 @@ static int wait_for(struct mqtt_session *s, const bool *flag, int32_t timeout_ms
 	while (!*flag) {
 		int64_t left = deadline - k_uptime_get();
 
+		eop_thread_alive(s->ctx, EOP_THREAD_MQTT);
 		if (left <= 0) {
 			return -ETIMEDOUT;
 		}
@@ -134,6 +149,7 @@ static int wait_for(struct mqtt_session *s, const bool *flag, int32_t timeout_ms
 static void drop_connection(struct mqtt_session *s)
 {
 	(void)mqtt_abort(&s->client);
+	s->socket_open = false;
 	s->connected = false;
 	eop_status_set_conn(s->ctx->status, EOP_CONN_DISCONNECTED);
 }
@@ -171,9 +187,11 @@ static int broker_connect(struct mqtt_session *s)
 	if (ret < 0) {
 		return ret;
 	}
+	s->socket_open = true;
 	ret = wait_for(s, &s->connack_seen, CONFIG_EOP_MQTT_CONNECT_TIMEOUT_MS);
 	if (ret < 0 || s->connack_result != 0) {
 		(void)mqtt_abort(client);
+		s->socket_open = false;
 		return ret < 0 ? ret : -ECONNREFUSED;
 	}
 	eop_status_set_conn(s->ctx->status, EOP_CONN_CONNECTED);
@@ -236,9 +254,8 @@ static int publish_health(struct mqtt_session *s)
 {
 	struct eop_health health = {
 		.uptime_s = (uint32_t)(k_uptime_get() / MS_PER_SECOND),
-		/* Thread restarts come with the watchdog (US-403). */
-		.restarts_sensor = 0,
-		.restarts_mqtt = 0,
+		.restarts_sensor = eop_wdt_restarts(s->ctx->wdt, EOP_THREAD_SENSOR),
+		.restarts_mqtt = eop_wdt_restarts(s->ctx->wdt, EOP_THREAD_MQTT),
 		.buffered = eop_queue_count(s->ctx->queue),
 		.dropped = eop_queue_dropped(s->ctx->queue),
 	};
@@ -283,55 +300,99 @@ static int build_topic(struct mqtt_session *s, char *topic, const char *suffix)
 /* After a connection: BOOT the first time, otherwise start counting the flush; RECONNECTED goes
  * out at once if nothing was buffered.
  */
-static int announce_connection(struct mqtt_session *s, struct eop_flush *flush, bool *booted,
-			       bool have_pending)
+static int announce_connection(struct mqtt_session *s)
 {
-	if (!*booted) {
+	if (!s->booted) {
 		int ret = publish_event(s, EOP_EVENT_BOOT, 0);
 
-		*booted = ret == 0;
+		s->booted = ret == 0;
 		return ret;
 	}
-	bool backlog = have_pending || eop_queue_count(s->ctx->queue) > 0;
+	bool backlog = s->have_pending || eop_queue_count(s->ctx->queue) > 0;
 
-	if (!eop_flush_start(flush, backlog, eop_queue_newest_id(s->ctx->queue))) {
+	if (!eop_flush_start(&s->flush, backlog, eop_queue_newest_id(s->ctx->queue))) {
 		return 0;
 	}
 	eop_status_reconnected(s->ctx->status, 0);
 	return publish_event(s, EOP_EVENT_RECONNECTED, 0);
 }
 
-void eop_mqtt_thread(void *ctx_ptr, void *unused2, void *unused3)
+/* Sleeps for the backoff delay in steps that keep the watchdog fed; a link that comes back cuts
+ * the wait short.
+ */
+static void backoff_wait(struct mqtt_session *s, uint32_t delay_s)
 {
-	static struct mqtt_session session;
-	struct mqtt_session *s = &session;
-	struct eop_backoff backoff;
-	struct eop_flush flush = {0};
-	struct eop_telemetry pending;
-	bool have_pending = false;
-	bool booted = false;
-	int64_t next_health_ms = 0;
+	int64_t deadline = k_uptime_get() + (int64_t)delay_s * MS_PER_SECOND;
 
-	ARG_UNUSED(unused2);
-	ARG_UNUSED(unused3);
+	for (;;) {
+		eop_thread_alive(s->ctx, EOP_THREAD_MQTT);
+		int64_t left = deadline - k_uptime_get();
 
+		if (left <= 0) {
+			return;
+		}
+		if (eop_link_wait_up(s->ctx->link, K_MSEC(MIN(left, CONFIG_EOP_WDT_CHECK_MS)))) {
+			LOG_INF("link up: reconnecting now");
+			return;
+		}
+	}
+}
+
+static uint32_t restarts_total(struct mqtt_session *s)
+{
+	return eop_wdt_restarts(s->ctx->wdt, EOP_THREAD_SENSOR) +
+	       eop_wdt_restarts(s->ctx->wdt, EOP_THREAD_MQTT);
+}
+
+/* First start: everything from scratch. Watchdog restart: drop the socket the aborted thread left
+ * and keep the rest.
+ */
+static int session_start(struct mqtt_session *s, struct eop_context *ctx)
+{
+	if (s->started) {
+		if (s->socket_open) {
+			(void)zsock_close(s->client.transport.tcp.sock);
+			s->socket_open = false;
+		}
+		s->connected = false;
+		eop_status_set_conn(ctx->status, EOP_CONN_DISCONNECTED);
+		LOG_WRN("restarted; %s, reconnecting",
+			s->have_pending ? "unacknowledged sample kept" : "nothing in flight");
+		return 0;
+	}
 	memset(s, 0, sizeof(*s));
-	s->ctx = ctx_ptr;
+	s->ctx = ctx;
 	if (build_topic(s, s->topic_telemetry, TOPIC_SUFFIX_TELEMETRY) < 0 ||
 	    build_topic(s, s->topic_events, TOPIC_SUFFIX_EVENTS) < 0 ||
 	    build_topic(s, s->topic_health, TOPIC_SUFFIX_HEALTH) < 0) {
 		LOG_ERR("topics do not fit in %zu bytes", (size_t)TOPIC_MAX_LEN);
+		return -ENOSPC;
+	}
+	eop_backoff_init(&s->backoff, CONFIG_EOP_BACKOFF_INITIAL_S, CONFIG_EOP_BACKOFF_MAX_S);
+	s->started = true;
+	return 0;
+}
+
+void eop_mqtt_thread(void *ctx_ptr, void *unused2, void *unused3)
+{
+	static struct mqtt_session session;
+	struct mqtt_session *s = &session;
+
+	ARG_UNUSED(unused2);
+	ARG_UNUSED(unused3);
+
+	if (session_start(s, ctx_ptr) < 0) {
 		return;
 	}
-	eop_backoff_init(&backoff, CONFIG_EOP_BACKOFF_INITIAL_S, CONFIG_EOP_BACKOFF_MAX_S);
 
 	for (;;) {
+		eop_fault_point(s->ctx, EOP_THREAD_MQTT);
 		if (!s->connected) {
 			bool link_up = eop_link_is_up(s->ctx->link);
 			int ret = link_up ? broker_connect(s) : -ENETDOWN;
 
 			if (ret < 0) {
-				uint32_t delay_s = eop_backoff_next(&backoff);
+				uint32_t delay_s = eop_backoff_next(&s->backoff);
 
 				eop_status_set_conn(s->ctx->status, EOP_CONN_DISCONNECTED);
 				eop_status_connect_failed(s->ctx->status);
@@ -345,23 +406,20 @@ void eop_mqtt_thread(void *ctx_ptr, void *unused2, void *unused3)
 						"%u s",
 						eop_queue_count(s->ctx->queue), delay_s);
 				}
-				/* A link that comes back cuts the wait short. */
-				if (eop_link_wait_up(s->ctx->link, K_SECONDS(delay_s))) {
-					LOG_INF("link up: reconnecting now");
-				}
+				backoff_wait(s, delay_s);
 				continue;
 			}
-			eop_backoff_reset(&backoff);
+			eop_backoff_reset(&s->backoff);
 			eop_link_clear(s->ctx->link);
 			LOG_INF("connected to %s:%u as %s, publishing to %s",
 				s->ctx->config->broker_host, s->ctx->config->broker_port,
 				s->ctx->config->node_id, s->topic_telemetry);
-			if (announce_connection(s, &flush, &booted, have_pending) < 0) {
+			if (announce_connection(s) < 0) {
 				LOG_WRN("connection event not acknowledged; reconnecting");
 				drop_connection(s);
 				continue;
 			}
-			next_health_ms = k_uptime_get();
+			s->next_health_ms = k_uptime_get();
 		}
 
 		if (!eop_link_is_up(s->ctx->link)) {
@@ -370,29 +428,30 @@ void eop_mqtt_thread(void *ctx_ptr, void *unused2, void *unused3)
 			continue;
 		}
 
-		if (!have_pending) {
-			have_pending = eop_queue_get(s->ctx->queue, &pending,
-						     K_MSEC(CONFIG_EOP_MQTT_POLL_MS)) == 0;
+		if (!s->have_pending) {
+			s->have_pending = eop_queue_get(s->ctx->queue, &s->pending,
+							K_MSEC(CONFIG_EOP_MQTT_POLL_MS)) == 0;
 		}
-		if (have_pending) {
-			int ret = publish_sample(s, &pending);
+		if (s->have_pending) {
+			int ret = publish_sample(s, &s->pending);
 
 			if (ret < 0) {
 				LOG_WRN("message %u not acknowledged (%d); reconnecting",
-					pending.message_id, ret);
+					s->pending.message_id, ret);
 				drop_connection(s);
 				continue;
 			}
-			have_pending = false;
-			if (eop_status_published(s->ctx->status, pending.sampled_at_ms)) {
+			s->have_pending = false;
+			if (eop_status_published(s->ctx->status, s->pending.sampled_at_ms)) {
 				LOG_INF("first sample acknowledged %lld ms after boot",
 					k_uptime_get());
 			}
-			if (eop_flush_delivered(&flush, pending.message_id)) {
+			if (eop_flush_delivered(&s->flush, s->pending.message_id)) {
 				LOG_INF("reconnected: %u buffered samples delivered",
-					flush.delivered);
-				eop_status_reconnected(s->ctx->status, flush.delivered);
-				if (publish_event(s, EOP_EVENT_RECONNECTED, flush.delivered) < 0) {
+					s->flush.delivered);
+				eop_status_reconnected(s->ctx->status, s->flush.delivered);
+				if (publish_event(s, EOP_EVENT_RECONNECTED, s->flush.delivered) <
+				    0) {
 					LOG_WRN("RECONNECTED not acknowledged; reconnecting");
 					drop_connection(s);
 					continue;
@@ -400,13 +459,17 @@ void eop_mqtt_thread(void *ctx_ptr, void *unused2, void *unused3)
 			}
 		}
 
-		if (k_uptime_get() >= next_health_ms) {
+		/* Periodic, and at once after a thread restart (US-403 AC7). */
+		uint32_t restarts = restarts_total(s);
+
+		if (k_uptime_get() >= s->next_health_ms || restarts != s->reported_restarts) {
 			if (publish_health(s) < 0) {
 				LOG_WRN("health report not acknowledged; reconnecting");
 				drop_connection(s);
 				continue;
 			}
-			next_health_ms += CONFIG_EOP_HEALTH_PERIOD_MS;
+			s->reported_restarts = restarts;
+			s->next_health_ms = k_uptime_get() + CONFIG_EOP_HEALTH_PERIOD_MS;
 		}
 
 		if (keep_alive(s) < 0) {

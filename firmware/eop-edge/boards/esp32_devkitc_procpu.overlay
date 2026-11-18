@@ -1,0 +1,20 @@
+/*
+ * Status LED of the EOP edge device (US-403 AC5, README "LED patterns"). The ESP32-DevKitC has
+ * no user LED: this one is wired to GPIO2 (the on-board LED of most other ESP32 boards). Change
+ * the pin here for another board or wiring.
+ */
+
+/ {
+	aliases {
+		led0 = &eop_status_led;
+	};
+
+	eop_leds {
+		compatible = "gpio-leds";
+
+		eop_status_led: eop_status_led {
+			gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+			label = "EOP status LED";
+		};
+	};
+};

@@ -17,25 +17,43 @@ static int16_t next_temperature(int16_t current)
 	return (int16_t)CLAMP(next, CONFIG_EOP_TEMP_MIN_DC, CONFIG_EOP_TEMP_MAX_DC);
 }
 
+/* Kept outside the thread's stack so that a watchdog restart (US-403) continues the message_id
+ * sequence and the temperature walk instead of starting over.
+ */
+struct sensor_state {
+	bool started;
+	struct eop_telemetry sample;
+};
+
 void eop_sensor_thread(void *ctx_ptr, void *unused2, void *unused3)
 {
+	static struct sensor_state state;
 	struct eop_context *ctx = ctx_ptr;
-	struct eop_telemetry sample = {
-		.message_id = 0,
-		.temperature_dc = CONFIG_EOP_TEMP_INITIAL_DC,
-	};
+	struct eop_telemetry *sample = &state.sample;
+	/* After a restart the period starts again from now: no burst of catch-up samples. */
 	int64_t next_tick = k_uptime_get();
 
 	ARG_UNUSED(unused2);
 	ARG_UNUSED(unused3);
 
+	if (!state.started) {
+		*sample = (struct eop_telemetry){
+			.message_id = 0,
+			.temperature_dc = CONFIG_EOP_TEMP_INITIAL_DC,
+		};
+		state.started = true;
+	} else {
+		LOG_WRN("restarted; next message_id is %u", sample->message_id + 1);
+	}
+
 	for (;;) {
-		sample.message_id++;
-		sample.sampled_at_ms = eop_platform_now_ms();
-		sample.temperature_dc = next_temperature(sample.temperature_dc);
-		sample.status = eop_status_for(sample.temperature_dc, CONFIG_EOP_TEMP_WARN_DC,
-					       CONFIG_EOP_TEMP_ALERT_DC);
-		if (eop_queue_put(ctx->queue, &sample)) {
+		eop_fault_point(ctx, EOP_THREAD_SENSOR);
+		sample->message_id++;
+		sample->sampled_at_ms = eop_platform_now_ms();
+		sample->temperature_dc = next_temperature(sample->temperature_dc);
+		sample->status = eop_status_for(sample->temperature_dc, CONFIG_EOP_TEMP_WARN_DC,
+						CONFIG_EOP_TEMP_ALERT_DC);
+		if (eop_queue_put(ctx->queue, sample)) {
 			LOG_WRN("buffer full: oldest sample discarded (%u since boot)",
 				eop_queue_dropped(ctx->queue));
 		}

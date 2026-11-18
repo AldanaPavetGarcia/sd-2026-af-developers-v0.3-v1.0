@@ -148,6 +148,45 @@ config EOP_MQTT_STACK_SIZE
 	int "MQTT thread stack (bytes)"
 	default 2048
 
+config EOP_SUPERVISOR_PRIORITY
+	int "Supervisor (watchdog) thread priority"
+	default 1
+	help
+	  Higher than the threads it watches, so a busy thread cannot starve it (ADR-014).
+
+config EOP_SUPERVISOR_STACK_SIZE
+	int "Supervisor thread stack (bytes)"
+	default 1024
+
+endmenu
+
+menu "EOP resilience (US-403)"
+
+config EOP_WDT_TIMEOUT_MS
+	int "Longest time a thread may go without checking in (ms)"
+	default 5000
+	help
+	  A sensor or MQTT thread silent for longer is restarted by the supervisor (US-403 AC1).
+	  Every blocking wait in those threads is shorter than this, or split in shorter steps.
+
+config EOP_WDT_CHECK_MS
+	int "Supervisor check period (ms)"
+	default 1000
+	help
+	  Period of the supervisor's k_timer: a hung thread is restarted between EOP_WDT_TIMEOUT_MS
+	  and EOP_WDT_TIMEOUT_MS + EOP_WDT_CHECK_MS after its last check-in.
+
+config EOP_LED_ERROR_HOLD_MS
+	int "How long the LED shows the thread-error pattern after a restart (ms)"
+	default 10000
+
+config EOP_FAULT_INJECT
+	bool "Fault injection shell commands (test builds only)"
+	help
+	  Adds `eop fault hang sensor|mqtt` (the thread stops checking in, so the watchdog restarts
+	  it) and `eop fault crash` (a fatal kernel error, so the device reboots), for the US-403
+	  tests (AC6). Enabled by fault_inject.conf; never in a device build.
+
 endmenu
 
 menu "EOP clock"
