@@ -7,13 +7,19 @@ permissions:
   contents: read
   pull-requests: write
 
+# A new push cancels the run still going for the same PR: with stacked PRs every rebase pushes
+# them all, and only the last run matters (the free plan has 2,000 Actions minutes a month).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 env:
   COVERAGE_THRESHOLD: "90"
 
 jobs:
   validate-branch-name:
     name: validate-branch-name
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.EOP_CI_RUNNER || 'ubuntu-latest' }}
 
     steps:
       - name: Validate branch name
@@ -39,8 +45,11 @@ jobs:
           exit 1
   docker-image-build:
     name: docker-image-build (${{ matrix.image.name }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.EOP_CI_RUNNER || 'ubuntu-latest' }}
     needs: validate-branch-name
+    # Only on the PR that reaches development: a stacked PR is checked again there, and the image
+    # builds are the most expensive jobs (pre-pr-check builds and measures them locally).
+    if: github.base_ref == 'development'
 
     strategy:
       matrix:
@@ -105,7 +114,7 @@ jobs:
 
   k8s-manifest-lint:
     name: k8s-manifest-lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.EOP_CI_RUNNER || 'ubuntu-latest' }}
     needs: validate-branch-name
 
     steps:
@@ -136,7 +145,7 @@ jobs:
   # -----------------------------------
   go-gateway:
     name: go-gateway
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.EOP_CI_RUNNER || 'ubuntu-latest' }}
     needs: validate-branch-name
 
     steps:
@@ -165,7 +174,7 @@ jobs:
   continuous-integration:
     # Pinned: on Ubuntu 26 (ubuntu-latest since 2026-10-19) libomp-dev no longer matches clang-18
     # and CMake cannot find OpenMP for the HPC engine.
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.EOP_CI_RUNNER || 'ubuntu-24.04' }}
     needs: validate-branch-name
 
     env:
@@ -765,7 +774,7 @@ jobs:
     name: thread-sanitizer
     # Pinned: on Ubuntu 26 (ubuntu-latest since 2026-10-19) libomp-dev no longer matches clang-18
     # and CMake cannot find OpenMP for the HPC engine.
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.EOP_CI_RUNNER || 'ubuntu-24.04' }}
     needs: validate-branch-name
 
     env:
