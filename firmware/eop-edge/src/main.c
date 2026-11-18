@@ -7,6 +7,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include "eop_link.h"
 #include "eop_platform.h"
 #include "eop_queue.h"
 #include "eop_status.h"
@@ -19,6 +20,7 @@ LOG_MODULE_REGISTER(eop_main, LOG_LEVEL_INF);
 static struct eop_device_config device_config;
 static struct eop_queue telemetry_queue;
 static struct eop_status_board status_board;
+static struct eop_link network_link;
 static struct eop_context context;
 static char
 	__aligned(QUEUE_ALIGN) queue_buffer[CONFIG_EOP_QUEUE_LEN * sizeof(struct eop_telemetry)];
@@ -44,11 +46,13 @@ int main(void)
 
 	eop_queue_init(&telemetry_queue, queue_buffer, CONFIG_EOP_QUEUE_LEN);
 	eop_status_init(&status_board, &telemetry_queue);
-	eop_shell_attach(&status_board);
+	eop_link_init(&network_link, true);
+	eop_shell_attach(&status_board, &network_link);
 	context = (struct eop_context){
 		.config = &device_config,
 		.queue = &telemetry_queue,
 		.status = &status_board,
+		.link = &network_link,
 	};
 
 	LOG_INF("node %s (%s), boot %s, broker %s:%u", device_config.node_id,

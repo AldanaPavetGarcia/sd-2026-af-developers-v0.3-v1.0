@@ -104,7 +104,18 @@ config EOP_MQTT_BUFFER_SIZE
 
 config EOP_PAYLOAD_MAX_LEN
 	int "Largest JSON payload (bytes)"
-	default 256
+	default 320
+	help
+	  Telemetry of a device whose node id and bunker name are both 63 characters long takes
+	  277 bytes; tests/unit checks that every payload fits in the default.
+
+config EOP_HEALTH_PERIOD_MS
+	int "Health report period (ms)"
+	default 10000
+	range 1000 600000
+	help
+	  How often the device publishes to <prefix>/<node_id>/health while connected: uptime,
+	  thread restarts, buffered and dropped samples (protocol §2.3, US-402 AC8).
 
 config EOP_BACKOFF_INITIAL_S
 	int "First reconnection delay (s)"

@@ -13,6 +13,8 @@ target_sources(app PRIVATE
   src/telemetry.c
   src/backoff.c
   src/queue.c
+  src/flush.c
+  src/link.c
   src/status.c
   src/platform.c
 )

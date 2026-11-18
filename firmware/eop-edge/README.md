@@ -1,7 +1,8 @@
 # EOP edge firmware (ZephyrOS)
 
-Firmware of the bunker edge device (US-401, ADR-013, ADR-014). It samples the bunker every
-second and publishes the telemetry over MQTT with QoS 1. The squad has no ESP32 board, so it runs
+Firmware of the bunker edge device (US-401, US-402, ADR-013, ADR-014). It samples the bunker every
+second and publishes the telemetry over MQTT with QoS 1, buffering up to 60 seconds of it while
+offline. The squad has no ESP32 board, so it runs
 on Zephyr's **`native_sim`** board: a Linux process that uses the host's sockets, so the MQTT
 traffic, the broker and everything downstream are real. See [§ Simulation limits](#simulation-limits).
 
@@ -11,8 +12,8 @@ firmware/eop-edge/
 ├── Kconfig  prj.conf      # every setting (identity, broker, periods, priorities, stacks)
 ├── boards/                # per-board settings (native_sim: offloaded sockets, larger stacks)
 ├── include/  src/         # threads, MQTT, payload, queue, backoff, status + shell, platform
-├── tests/unit/            # ztest (twister): backoff, payload, identity rules, queue
-├── tests/integration/     # against a real Mosquitto: US-401 AC2-AC6
+├── tests/unit/            # ztest (twister): backoff, payloads, identity rules, queue, flush, link
+├── tests/integration/     # against a real Mosquitto: US-401 AC2-AC6, US-402 AC1-AC4, AC6, AC8
 └── Dockerfile             # native_sim build in a 50 MB-max image
 ```
 
@@ -21,10 +22,38 @@ firmware/eop-edge/
 | Thread | Priority | Does |
 |---|---|---|
 | sensor | 5 | Every `CONFIG_EOP_SAMPLE_PERIOD_MS` (1 s) builds a sample — `message_id` +1, wall-clock timestamp, simulated temperature (bounded random walk), status from the temperature — and puts it in the queue. A full queue loses its **oldest** sample, counted as *dropped*. |
-| MQTT | 6 | Owns the broker connection. Takes samples in FIFO order, publishes each with QoS 1 and waits for its PUBACK before the next one. A sample without PUBACK stays pending and goes first after reconnecting. Reconnects with exponential backoff 1, 2, 4, 8, 16, 30 s. |
+| MQTT | 6 | Owns the broker connection. Takes samples in FIFO order, publishes each with QoS 1 and waits for its PUBACK before the next one. A sample without PUBACK stays pending and goes first after reconnecting. Reconnects with exponential backoff 1, 2, 4, 8, 16, 30 s. Publishes the events and the health report. |
 
-The queue (`k_msgq`, `CONFIG_EOP_QUEUE_LEN` = 60) is also the offline buffer: while the broker is
-unreachable the MQTT thread stops consuming and up to 60 seconds of samples wait in it.
+## Offline buffering (US-402)
+
+The queue (`k_msgq`, `CONFIG_EOP_QUEUE_LEN` = 60) is also the offline buffer. While the network or
+the broker is gone the MQTT thread stops consuming, and the sensor keeps sampling into it:
+
+* **Up to 60 samples (60 s) are kept.** After reconnecting they are delivered first, oldest first,
+  before any new sample, and their `message_id`s stay consecutive.
+* **When the buffer is full the oldest sample is discarded** to make room for the newest one: a
+  longer outage loses its beginning, not its end. Every discarded sample is counted: `dropped` in
+  `eop status` and in the health report (the metric of the Grafana edge panel, US-405).
+* **After each reconnection** the device publishes `RECONNECTED` on `…/events` with `delivered`,
+  the buffered samples sent; the first connection since boot publishes `BOOT` instead.
+* A sample whose PUBACK was lost may reach the broker twice (QoS 1 is at-least-once). The
+  ingestor drops the copy by `(node_id, boot_id, message_id)` (US-402 AC7, US-404).
+
+On `native_sim` the link is cut by hand, as the WiFi would be lost on the board:
+
+```text
+uart:~$ eop net down
+link down: buffering samples
+<wrn> eop_mqtt: link down: closing the broker connection, buffering samples
+<wrn> eop_mqtt: link down, 1 samples buffered, next attempt in 2 s
+uart:~$ eop net up
+link up: reconnecting now
+<inf> eop_mqtt: connected to 127.0.0.1:1883 as vault-7, publishing to eop/bunker/vault-7/telemetry
+<inf> eop_mqtt: reconnected: 7 buffered samples delivered
+```
+
+While the link is down the connection attempts keep their backoff (1, 2, 4 … 30 s); bringing it up
+wakes the MQTT thread at once, as the board's "network connected" event would.
 
 ## Payload
 
@@ -39,6 +68,15 @@ unreachable the MQTT thread stops consuming and up to 60 seconds of samples wait
 `message_id` restarts at 1 at every boot; `boot_id` (random per boot) tells boots apart, so the
 ingestor can deduplicate by `(node_id, boot_id, message_id)` (ADR-028).
 
+Also published, with QoS 1 (protocol §2.2, §2.3):
+
+| Topic | When | Payload |
+|---|---|---|
+| `eop/bunker/{node_id}/events` | first connection (`BOOT`), every reconnection (`RECONNECTED`) | `{"node_id":…,"boot_id":…,"timestamp":…,"event":"RECONNECTED","delivered":37}` |
+| `eop/bunker/{node_id}/health` | every `CONFIG_EOP_HEALTH_PERIOD_MS` (10 s) while connected | `{"node_id":…,"boot_id":…,"timestamp":…,"uptime_s":3600,"restarts":{"sensor":0,"mqtt":0},"buffered":0,"dropped":0}` |
+
+`restarts` stays at 0 until the watchdog arrives (US-403).
+
 ## Configuration
 
 Everything is a Kconfig option set in `prj.conf` (US-401 AC7); nothing is hardcoded in `src/`.
@@ -51,6 +89,7 @@ Everything is a Kconfig option set in `prj.conf` (US-401 AC7); nothing is hardco
 | `CONFIG_EOP_MQTT_TOPIC_PREFIX` | `eop/bunker` | Topics are `<prefix>/<node_id>/…` |
 | `CONFIG_EOP_SAMPLE_PERIOD_MS` | `1000` | Sampling period |
 | `CONFIG_EOP_QUEUE_LEN` | `60` | Queue / offline buffer, in samples |
+| `CONFIG_EOP_HEALTH_PERIOD_MS` | `10000` | Health report period |
 | `CONFIG_EOP_BACKOFF_INITIAL_S` / `_MAX_S` | `1` / `30` | Reconnection backoff |
 | `CONFIG_EOP_MQTT_KEEPALIVE_S` | `30` | MQTT keep-alive |
 | `CONFIG_EOP_SENSOR_PRIORITY` / `_MQTT_PRIORITY` | `5` / `6` | Thread priorities |
@@ -82,15 +121,24 @@ integration tests. The `native_sim` build uses the host compiler; no Zephyr SDK 
 The device shell is on the process's stdin/stdout (`make firmware-run`, or
 `docker attach eop-edge`):
 
+| Command | Does |
+|---|---|
+| `eop status` | Link and connection state, counters (below) |
+| `eop net down` / `eop net up` | `native_sim` only: cut and restore the simulated network link |
+
 ```text
 uart:~$ eop status
-connection:     connected
-last published: 2026-10-23T22:38:53.786Z
-messages sent:  2
-buffered:       0
+link:           down
+connection:     disconnected
+last published: 2026-10-26T00:36:58.561Z
+messages sent:  5
+buffered:       6
 dropped:        0 (oldest samples discarded when the buffer is full)
-connect failures: 0
+connect failures: 3
+reconnections:  0 (last one delivered 0 buffered samples)
 ```
+
+`connect failures` counts every attempt made while offline, link down included.
 
 ## What the tests check
 
@@ -105,19 +153,31 @@ connect failures: 0
 | AC7 | broker host, port and topic prefix from `prj.conf` | `prj.conf`, `Kconfig` |
 | AC8 | `eop status` shell command | manual (above) |
 
+| US-402 | Check | Where |
+|---|---|---|
+| AC1 | samples kept while offline, 60 of them | `tests/unit` (queue), `tests/integration` |
+| AC2 | after reconnecting the buffer goes first, FIFO | `tests/integration` |
+| AC3 | full buffer discards the oldest; README (above) and `eop status` say so | `tests/unit`, `tests/integration` (75 s offline) |
+| AC4 | 30 s offline → every sample arrives, no gaps, no duplicates | `tests/integration` (automated, with `eop net down/up`) |
+| AC5 | reconnection backoff 1, 2, 4, 8 … 30 s | US-401 AC5 tests |
+| AC6 | `RECONNECTED` with the number delivered | `tests/unit` (flush), `tests/integration` |
+| AC7 | `message_id` +1 per sample within a boot | US-401 AC1 test; dedup itself is US-404 |
+| AC8 | `dropped` in the health report | `tests/unit`, `tests/integration`; the panel is US-405 |
+
 ## Simulation limits
 
 What `native_sim` does not prove, and what would close the gap on a board (ADR-014):
 
 | On an ESP32 | Here | Not proven |
 |---|---|---|
-| WiFi association, link loss | The host network; broker loss is tested, link loss comes with US-402 | WiFi driver events and timing |
+| WiFi association, link loss and rejoin (`CONFIG_ESP32_WIFI_STA_RECONNECT`) | The host network; link loss is the shell's `eop net down/up` | WiFi driver events and timing; on the board a lost link is seen when the socket fails, and the reconnection waits for the next backoff attempt (up to 30 s) instead of being woken early |
 | Boot ROM + WiFi before the first publish | Process start → first PUBACK | Real boot time |
-| 520 KB of SRAM | Host memory | Measured on the ESP32 build: 141.7 KB of DRAM, 62 KB of IRAM ([ESP32 build](#esp32-build)) |
+| 520 KB of SRAM | Host memory | Measured on the ESP32 build: 139 KB of DRAM, 62 KB of IRAM ([ESP32 build](#esp32-build)) |
 | Wall clock from SNTP (`src/platform_sntp.c`) | Host clock (`src/platform_native_sim.c`) | SNTP on the device |
 | Hardware RNG for `boot_id` | Host clock mixed with the test entropy source (`WARNING: Using a test - not safe - entropy source` at boot is expected) | — |
 
-Thread scheduling, the queue, backoff and the whole MQTT exchange are the real Zephyr code paths.
+Thread scheduling, the queue and buffering, backoff and the whole MQTT exchange are the real
+Zephyr code paths.
 
 ## ESP32 build
 
@@ -143,14 +203,14 @@ make firmware-build FIRMWARE_BOARD=esp32_devkitc/esp32/procpu ZEPHYR_TOOLCHAIN=z
 west flash -d build/firmware-esp32
 ```
 
-Built on 2026-10-25 without a board (no overlay, so the device would stop at boot asking for
+Built on 2026-10-26 without a board (no overlay, so the device would stop at boot asking for
 the network name), the image fits with room to spare in the ESP32's memory:
 
 | Region | Used | Size | |
 |---|---|---|---|
-| DRAM (dram0 + dram1) | 141.7 KB | 288 KB | 49 % |
+| DRAM (dram0 + dram1) | 139 KB | 288 KB | 48 % |
 | IRAM | 62 KB | 224 KB | 28 % |
-| Flash | 574 KB | 4 MB | 14 % |
+| Flash | 575 KB | 4 MB | 14 % |
 
 It has not been flashed or run: there is no board. It is not built in CI either (the SDK and the
 HAL would add several minutes to every firmware run); build it by hand when the firmware changes

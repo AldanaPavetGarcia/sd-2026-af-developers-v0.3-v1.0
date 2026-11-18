@@ -12,6 +12,11 @@
 #define SECONDS_PER_MIN   60
 #define TENTHS_PER_DEGREE 10
 
+static const char *const EVENT_NAMES[] = {
+	[EOP_EVENT_BOOT] = "BOOT",
+	[EOP_EVENT_RECONNECTED] = "RECONNECTED",
+};
+
 static const char *const STATUS_NAMES[] = {
 	[EOP_STATUS_OK] = "OK",
 	[EOP_STATUS_WARN] = "WARN",
@@ -123,6 +128,15 @@ int eop_format_timestamp(int64_t epoch_ms, char *buf, size_t len)
 	return written == EOP_TIMESTAMP_LEN ? written : -ENOSPC;
 }
 
+/* snprintf result to the encoders' return convention. */
+static int written_or_nospc(int written, size_t len)
+{
+	if (written < 0 || (size_t)written >= len) {
+		return -ENOSPC;
+	}
+	return written;
+}
+
 int eop_telemetry_encode(const struct eop_telemetry *sample, const struct eop_device_config *config,
 			 char *buf, size_t len)
 {
@@ -146,8 +160,54 @@ int eop_telemetry_encode(const struct eop_telemetry *sample, const struct eop_de
 			       abs_dc % TENTHS_PER_DEGREE, eop_status_name(sample->status),
 			       (unsigned int)sample->message_id, config->boot_id);
 
-	if (written < 0 || (size_t)written >= len) {
-		return -ENOSPC;
+	return written_or_nospc(written, len);
+}
+
+int eop_event_encode(enum eop_event event, uint32_t delivered, int64_t now_ms,
+		     const struct eop_device_config *config, char *buf, size_t len)
+{
+	char timestamp[EOP_TIMESTAMP_LEN + 1];
+	int ret = eop_format_timestamp(now_ms, timestamp, sizeof(timestamp));
+
+	if (ret < 0) {
+		return ret;
 	}
-	return written;
+	if ((unsigned int)event >= ARRAY_SIZE(EVENT_NAMES)) {
+		return -EINVAL;
+	}
+
+	/* Only RECONNECTED carries a count. */
+	char tail[sizeof(",\"delivered\":4294967295}")] = "}";
+
+	if (event == EOP_EVENT_RECONNECTED) {
+		(void)snprintf(tail, sizeof(tail), ",\"delivered\":%u}", (unsigned int)delivered);
+	}
+	int written =
+		snprintf(buf, len,
+			 "{\"node_id\":\"%s\",\"boot_id\":\"%s\",\"timestamp\":\"%s\","
+			 "\"event\":\"%s\"%s",
+			 config->node_id, config->boot_id, timestamp, EVENT_NAMES[event], tail);
+
+	return written_or_nospc(written, len);
+}
+
+int eop_health_encode(const struct eop_health *health, int64_t now_ms,
+		      const struct eop_device_config *config, char *buf, size_t len)
+{
+	char timestamp[EOP_TIMESTAMP_LEN + 1];
+	int ret = eop_format_timestamp(now_ms, timestamp, sizeof(timestamp));
+
+	if (ret < 0) {
+		return ret;
+	}
+
+	int written = snprintf(
+		buf, len,
+		"{\"node_id\":\"%s\",\"boot_id\":\"%s\",\"timestamp\":\"%s\",\"uptime_s\":%u,"
+		"\"restarts\":{\"sensor\":%u,\"mqtt\":%u},\"buffered\":%u,\"dropped\":%u}",
+		config->node_id, config->boot_id, timestamp, (unsigned int)health->uptime_s,
+		(unsigned int)health->restarts_sensor, (unsigned int)health->restarts_mqtt,
+		(unsigned int)health->buffered, (unsigned int)health->dropped);
+
+	return written_or_nospc(written, len);
 }

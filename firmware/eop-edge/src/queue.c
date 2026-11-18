@@ -6,6 +6,7 @@ void eop_queue_init(struct eop_queue *queue, char *buffer, uint32_t max_samples)
 {
 	k_msgq_init(&queue->msgq, buffer, sizeof(struct eop_telemetry), max_samples);
 	atomic_set(&queue->dropped, 0);
+	atomic_set(&queue->newest_id, 0);
 }
 
 bool eop_queue_put(struct eop_queue *queue, const struct eop_telemetry *sample)
@@ -22,6 +23,7 @@ bool eop_queue_put(struct eop_queue *queue, const struct eop_telemetry *sample)
 			dropped = true;
 		}
 	}
+	atomic_set(&queue->newest_id, (atomic_val_t)sample->message_id);
 	return dropped;
 }
 
@@ -38,6 +40,11 @@ uint32_t eop_queue_count(struct eop_queue *queue)
 uint32_t eop_queue_dropped(struct eop_queue *queue)
 {
 	return (uint32_t)atomic_get(&queue->dropped);
+}
+
+uint32_t eop_queue_newest_id(struct eop_queue *queue)
+{
+	return (uint32_t)atomic_get(&queue->newest_id);
 }
 
 BUILD_ASSERT(sizeof(struct eop_telemetry) % QUEUE_ALIGN == 0,

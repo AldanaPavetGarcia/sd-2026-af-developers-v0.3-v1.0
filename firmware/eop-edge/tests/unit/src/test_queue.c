@@ -74,3 +74,20 @@ ZTEST(queue, test_get_waits_for_a_sample)
 	zassert_equal(eop_queue_get(&queue, &out, K_MSEC(50)), -EAGAIN);
 	zassert_true(k_uptime_get() - start >= 50, "returned before the timeout");
 }
+
+/* The newest id marks the end of a flush after reconnecting (US-402 AC6), dropped or not. */
+ZTEST(queue, test_remembers_the_newest_id)
+{
+	struct eop_telemetry out;
+
+	zassert_equal(eop_queue_newest_id(&queue), 0);
+	for (uint32_t id = 1; id <= CAPACITY + 5; id++) {
+		struct eop_telemetry in = sample(id);
+
+		(void)eop_queue_put(&queue, &in);
+		zassert_equal(eop_queue_newest_id(&queue), id);
+	}
+	while (eop_queue_get(&queue, &out, K_NO_WAIT) == 0) {
+	}
+	zassert_equal(eop_queue_newest_id(&queue), CAPACITY + 5, "still known once consumed");
+}

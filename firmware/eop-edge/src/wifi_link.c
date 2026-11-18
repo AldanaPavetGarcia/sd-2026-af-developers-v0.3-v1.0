@@ -1,8 +1,9 @@
 /*
  * WiFi bring-up of the hardware build (ESP32): joins the network named in prj.conf and waits for
  * an IPv4 address, so SNTP and MQTT have a route. Not built for native_sim, where the host
- * network is always there (ADR-014). Losing the link later is US-402's concern: the MQTT thread
- * sees its socket fail and reconnects with backoff.
+ * network is always there (ADR-014). If the link is lost later, the driver rejoins on its own
+ * (CONFIG_ESP32_WIFI_STA_RECONNECT) while the MQTT thread sees its socket fail, buffers and
+ * reconnects with backoff (US-402).
  */
 
 #include <errno.h>

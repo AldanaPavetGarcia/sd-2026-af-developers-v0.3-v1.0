@@ -1,8 +1,9 @@
 /**
  * @file eop_telemetry.h
  * @brief Telemetry samples, device identity and their JSON encoding (US-401 AC1, AC4).
- * @details The payload is the contract of docs/edge-telemetry-protocol-v1.0.md §2.1. Temperatures
- *          are kept in tenths of a degree so that encoding needs no floating point printf.
+ * @details The payloads are the contract of docs/edge-telemetry-protocol-v1.0.md §2.1 (telemetry),
+ *          §2.2 (events) and §2.3 (health). Temperatures are kept in tenths of a degree so that
+ *          encoding needs no floating point printf.
  */
 
 #ifndef EOP_TELEMETRY_H
@@ -99,5 +100,45 @@ int eop_format_timestamp(int64_t epoch_ms, char *buf, size_t len);
  */
 int eop_telemetry_encode(const struct eop_telemetry *sample, const struct eop_device_config *config,
 			 char *buf, size_t len);
+
+/** Device events (protocol §2.2). */
+enum eop_event {
+	EOP_EVENT_BOOT,        /**< First broker connection since boot. */
+	EOP_EVENT_RECONNECTED, /**< Connection restored; carries the buffered samples delivered. */
+};
+
+/** Health report (protocol §2.3); every counter is since boot. */
+struct eop_health {
+	uint32_t uptime_s;        /**< Seconds since boot. */
+	uint32_t restarts_sensor; /**< Restarts of the sensor thread (US-403). */
+	uint32_t restarts_mqtt;   /**< Restarts of the MQTT thread (US-403). */
+	uint32_t buffered;        /**< Samples waiting in the buffer. */
+	uint32_t dropped; /**< Samples discarded because the buffer was full (US-402 AC8). */
+};
+
+/**
+ * @brief Encodes an event as the JSON of the protocol (§2.2).
+ * @param event Event.
+ * @param delivered Buffered samples delivered; only sent with RECONNECTED.
+ * @param now_ms Wall clock of the event, milliseconds since the Unix epoch.
+ * @param config Identity of the device.
+ * @param buf Output buffer.
+ * @param len Size of @p buf.
+ * @return Length of the payload, or -ENOSPC / -EINVAL as eop_telemetry_encode().
+ */
+int eop_event_encode(enum eop_event event, uint32_t delivered, int64_t now_ms,
+		     const struct eop_device_config *config, char *buf, size_t len);
+
+/**
+ * @brief Encodes a health report as the JSON of the protocol (§2.3).
+ * @param health Report.
+ * @param now_ms Wall clock of the report, milliseconds since the Unix epoch.
+ * @param config Identity of the device.
+ * @param buf Output buffer.
+ * @param len Size of @p buf.
+ * @return Length of the payload, or -ENOSPC / -EINVAL as eop_telemetry_encode().
+ */
+int eop_health_encode(const struct eop_health *health, int64_t now_ms,
+		      const struct eop_device_config *config, char *buf, size_t len);
 
 #endif /* EOP_TELEMETRY_H */
