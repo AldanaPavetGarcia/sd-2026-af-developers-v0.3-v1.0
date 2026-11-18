@@ -4,6 +4,10 @@ All notable changes to the EOP Server Node Registry project will be documented i
 
 ## [Unreleased]
 
+## [1.0.0] - date set when release/1.0.0 is cut
+
+Edge Integration & Product Delivery (Milestone 4): ZephyrOS bunker devices publish telemetry over MQTT, buffer it while offline and recover from hung threads; an edge ingestor brings it into the EOP server exactly once; two server replicas share the node registry so a Pod crash costs under 200 ms of service; and EOP v1.0 deploys with one command and demonstrates its SLA live. Known limitations: [`docs/release-1.0.0-known-limitations.md`](docs/release-1.0.0-known-limitations.md). The firmware entries (US-401..US-403, #68–#70) and the v1.0 ADRs (#66) arrive through their own stack (#77–#80) and join this section when both stacks are merged.
+
 ### Added
 
 - **SLA demonstration (US-407, #75):** the Grafana dashboard **Vault-Tec Delivery — EOP v1.0** puts the SLA in one place: a 30-day row from the hourly recording rules (eop-server and API gateway success ratios, error budget left, availability, hourly series), the failover row (MTTR on Pod failure, its P99, replica replacement time, routable replicas), the canary row (requests, error rate and P99 by version) and the edge row (E2E P99, devices, messages per second); thresholds are the SLO targets of `config/production.env`, checked by `make vault-tec-dashboard-test`. `make demo-script` (`scripts/demo.sh`) runs the live demo step by step: an eop-server Pod deleted under a 20 ms probe, the gateway canary at 10 → 50 → 100 % under client load, one simulated device's samples to `/v1/nodes` and SigNoz, and `make smoke-test-prod`; it stops at the first failure and always leaves the canary at weight 0. `make sla-export` writes the evidence of the period (dashboard JSON, every panel's data as CSV, headline numbers, screenshot or how to take it) and fails if the error budget is spent. Rehearsal checklist, script for each step and fallbacks in `docs/SLA-DEMO.md`.
