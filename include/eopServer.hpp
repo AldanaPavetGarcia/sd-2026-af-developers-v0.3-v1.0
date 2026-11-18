@@ -34,6 +34,7 @@
 #include "../lib/include/commonProtocol.hpp"
 #include "../lib/include/eventAuditLogger.hpp"
 #include "../lib/include/systemTimeValidator.hpp"
+#include "nodeRegistry.hpp"
 
 // ---------------------------------------------------------------------------
 // Port / timeout defaults (keep in one place so tests can override them)
@@ -52,151 +53,12 @@
 #define EOP_SMALL_BUFFER_SIZE 64
 
 /**
- * @brief Represents the current liveness state of a registered node.
+ * @brief Whether a node_id belongs to an HPC engine (ADR-022): `hpc-engine` or `hpc-engine-*`.
+ * @param nodeId node_id to check.
+ * @return true for engine node_ids; their sessions are reserved for ANALYZE_GRAPH dispatch and
+ *         their nodes stay in the replica's local registry (ADR-027 §3).
  */
-enum class NodeStatus
-{
-    ONLINE,
-    OFFLINE
-};
-
-/**
- * @brief Result of attempting to register or reconnect a node.
- */
-enum class RegisterNodeResult
-{
-    NEW_NODE,
-    RECONNECTED_NODE,
-    DUPLICATE_ONLINE_NODE
-};
-
-/**
- * @brief Metadata for a single registered bunker node.
- *
- * Populated from a REGISTER message (AC1).
- * Persisted in memory for the lifetime of the server process (AC4).
- */
-struct NodeRecord
-{
-    std::string nodeId;                             ///< Unique string identifier sent by the client.
-    std::string bunkerName;                         ///< Human-readable bunker name.
-    std::string ipAddress;                          ///< IP address reported by the client.
-    int capacity;                                   ///< Capacity value reported by the client.
-    NodeStatus status;                              ///< Current node liveness state.
-    std::chrono::system_clock::time_point lastSeen; ///< Last known activity timestamp.
-    std::string sessionId;                          ///< Session currently associated with the node.
-
-    NodeRecord()
-        : capacity(0)
-        , status(NodeStatus::OFFLINE)
-        , lastSeen(std::chrono::system_clock::now())
-    {
-    }
-};
-
-/**
- * @brief Thread-safe, in-memory registry of all registered nodes.
- *
- * The registry survives client disconnections (AC4).
- */
-struct NodeRegistry
-{
-    mutable std::mutex registryMutex;
-    std::unordered_map<std::string, NodeRecord> nodesMap;
-
-    NodeRegistry() {}
-    ~NodeRegistry() {}
-
-    /**
-     * @brief Attempt to register a new node.
-     * @return true on success, false when node_id already exists (AC3).
-     */
-    bool registerNode(const NodeRecord& record)
-    {
-        std::lock_guard<std::mutex> lock(registryMutex);
-        if (nodesMap.count(record.nodeId) > 0)
-        {
-            return false; // duplicate
-        }
-        nodesMap.emplace(record.nodeId, record);
-        return true;
-    }
-
-    /**
-     * @brief Registers a node or reactivates it if it already exists in OFFLINE state.
-     *
-     * Reconnection is allowed when the node_id matches an existing OFFLINE node and
-     * bunkerName/capacity are unchanged. ipAddress is deliberately NOT part of that
-     * check — per ADR-018's Server Logic rule ("the session.id and IP address are
-     * updated"), a reconnecting node's IP is expected to change (e.g. a Kubernetes
-     * Pod restart always gets a fresh IP) and is refreshed on the record, not
-     * compared against the previous one.
-     *
-     * @param record Candidate node record.
-     * @return NEW_NODE if inserted for the first time,
-     *         RECONNECTED_NODE if an existing OFFLINE node was reactivated,
-     *         DUPLICATE_ONLINE_NODE if the node already exists and must be rejected.
-     */
-    RegisterNodeResult registerOrReconnectNode(const NodeRecord& record)
-    {
-        std::lock_guard<std::mutex> lock(registryMutex);
-        auto it = nodesMap.find(record.nodeId);
-
-        if (it == nodesMap.end())
-        {
-            nodesMap.emplace(record.nodeId, record);
-            return RegisterNodeResult::NEW_NODE;
-        }
-
-        const bool sameMetadata =
-            (it->second.bunkerName == record.bunkerName) && (it->second.capacity == record.capacity);
-
-        if (it->second.status == NodeStatus::OFFLINE && sameMetadata)
-        {
-            it->second.status = NodeStatus::ONLINE;
-            it->second.lastSeen = record.lastSeen;
-            it->second.ipAddress = record.ipAddress; // ADR-018: updated, not matched
-            return RegisterNodeResult::RECONNECTED_NODE;
-        }
-
-        return RegisterNodeResult::DUPLICATE_ONLINE_NODE;
-    }
-
-    /**
-     * @brief Look up a node by its node_id.
-     * @param queryId   The unique id to search for.
-     * @param[out] out  Filled with the record when found.
-     * @return true if found, false otherwise.
-     */
-    bool queryNode(const std::string& queryId, NodeRecord& out) const
-    {
-        std::lock_guard<std::mutex> lock(registryMutex);
-        auto it = nodesMap.find(queryId);
-        if (it == nodesMap.end())
-        {
-            // LCOV_EXCL_START
-            return false;
-            // LCOV_EXCL_STOP
-        }
-        out = it->second;
-        return true;
-    }
-
-    /**
-     * @brief Return all registered nodes (AC7).
-     */
-    std::vector<NodeRecord> listNodes() const
-    {
-        std::lock_guard<std::mutex> lock(registryMutex);
-        std::vector<NodeRecord> result;
-        result.reserve(nodesMap.size());
-        for (const auto& kv : nodesMap)
-        {
-            result.push_back(kv.second);
-        }
-        return result;
-    }
-};
+bool isHpcEngineNodeId(const std::string& nodeId);
 
 /**
  * @brief Represents an active TCP session handled by the server.
@@ -212,6 +74,7 @@ struct SessionContext
     bool registered;                                    ///< True if the client has completed REGISTER successfully.
     bool active;                                        ///< True while the session is considered alive.
     bool reservedForDispatch;                           ///< True when the session is reserved for server-side dispatch.
+    bool draining; ///< Peer closed with a last command pending: kept open until it is answered.
 
     /**
      * @brief Bytes received from this client that do not yet form a complete `\n`-terminated message.
@@ -235,6 +98,7 @@ struct SessionContext
         , registered(false)
         , active(true)
         , reservedForDispatch(false)
+        , draining(false)
     {
     }
 };
@@ -251,6 +115,9 @@ struct ClientMessage
     int clientFd;
     std::string clientIp;
     std::string message;
+    /// The peer already closed: the worker closes the session after answering this message, so
+    /// the fd cannot be reused by a new client before the answer is written.
+    bool closeAfter = false;
 };
 
 /**
@@ -266,7 +133,7 @@ struct ServerContext
 
     std::mutex hpcDispatchMutex; ///< Serializes ANALYZE_GRAPH dispatches to the HPC Engine.
 
-    NodeRegistry registry; ///< In-memory node registry (AC4).
+    ReplicaNodeRegistry registry; ///< Node registry: in memory, or shared in Redis (ADR-027).
 
     std::atomic<int> maxClients;               ///< Maximum allowed simultaneous clients (EOP_MAX_CLIENTS).
     std::atomic<int> heartbeatIntervalSeconds; ///< Heartbeat interval configuration (EOP_HEARTBEAT_INTERVAL).
@@ -279,6 +146,7 @@ struct ServerContext
     ServerContext()
         : activeConnections(0)
         , running(true)
+        , registry(isHpcEngineNodeId)
         , maxClients(100)
         , heartbeatIntervalSeconds(5)
         , idleTimeoutSeconds(EOP_IDLE_TIMEOUT)

@@ -50,12 +50,16 @@ target_include_directories(exodus_lib
 
 find_package(opentelemetry-cpp CONFIG REQUIRED)
 find_package(prometheus-cpp CONFIG REQUIRED)
+find_package(hiredis CONFIG REQUIRED)
 
 # =============================================================================
 # Ejecutable principal
 # =============================================================================
 add_executable(eop_server
   src/app/eopServer.cpp
+  src/app/nodeRegistry.cpp
+  src/app/redisNodeRegistry.cpp
+  src/app/readinessPort.cpp
   lib/src/eventAuditLogger.cpp
   lib/src/systemTimeValidator.cpp
   lib/src/commonProtocol.cpp
@@ -71,6 +75,7 @@ target_link_libraries(eop_server PRIVATE
   opentelemetry-cpp::otlp_http_exporter
   prometheus-cpp::core
   prometheus-cpp::pull
+  hiredis::hiredis
 )
 
 # =============================================================================
@@ -111,8 +116,14 @@ if(EXODUS_BUILD_TESTS)
     tests/unit/testClientDisconnect.cpp
     tests/unit/testMetrics.cpp
     tests/unit/traceContextTest.cpp
+    tests/unit/nodeRegistryTest.cpp
+    tests/unit/redisNodeRegistryTest.cpp
+    tests/unit/readinessPortTest.cpp
     src/app/eop_client.c
     src/app/eopServer.cpp
+    src/app/nodeRegistry.cpp
+    src/app/redisNodeRegistry.cpp
+    src/app/readinessPort.cpp
     lib/src/eventAuditLogger.cpp
     lib/src/systemTimeValidator.cpp
     lib/src/commonProtocol.cpp
@@ -132,6 +143,7 @@ if(EXODUS_BUILD_TESTS)
     opentelemetry-cpp::otlp_http_exporter
     prometheus-cpp::core
     prometheus-cpp::pull
+    hiredis::hiredis
   )
 
   if(EXODUS_ENABLE_COVERAGE)

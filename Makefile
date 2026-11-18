@@ -1,4 +1,4 @@
-.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-mttr-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -22,6 +22,8 @@ k8s-apply:
 		--dry-run=client -o yaml | kubectl label --local -f - app=loki -o yaml | kubectl apply -f -
 	kubectl create configmap otel-log-agent-config --from-file=monitoring/otel-log-agent/config.yaml \
 		--dry-run=client -o yaml | kubectl label --local -f - app=otel-log-agent -o yaml | kubectl apply -f -
+	# hpc-engine became a sidecar of eop-server (ADR-027 §3): drop the Deployment of v0.2-v0.3.
+	kubectl delete deployment hpc-engine --ignore-not-found
 	kubectl apply -f k8s/
 	kubectl apply -f k8s/redis/
 	kubectl apply -f k8s/external-stubs/
@@ -41,7 +43,6 @@ k8s-apply:
 	kubectl rollout status deployment/ai-service --timeout=180s
 	kubectl rollout status deployment/corporate-service --timeout=180s
 	kubectl rollout status deployment/api-gateway-stable --timeout=180s
-	kubectl rollout status deployment/hpc-engine --timeout=180s
 	kubectl rollout status deployment/prometheus --timeout=180s
 	kubectl rollout status deployment/grafana --timeout=180s
 	# SigNoz stack (US-203 AC5 / US-206 AC5): zookeeper-1 and clickhouse first, since everything
@@ -83,6 +84,7 @@ gateway-coverage:
 gateway-image:
 	docker build -t api-gateway:local $(GO_DIR)
 	docker build --target external-stub -t external-stub:local $(GO_DIR)
+	docker build --target mttr-watcher -t mttr-watcher:local $(GO_DIR)
 
 ## Canary release of the api-gateway (US-304, ADR-011). The Ingress needs ingress-nginx
 ## (minikube addons enable ingress). Typical run, with make gateway-load-test in another terminal:
@@ -173,9 +175,14 @@ k8s-hpc-batch-demo:
 	kubectl wait --for=condition=complete job/hpc-engine-batch-demo --timeout=60s
 	kubectl logs job/hpc-engine-batch-demo
 
-## Self-healing check for hpc-engine (Deployment equivalent of US-109/k8s-recovery-test)
+## Self-healing check for the hpc-engine sidecar: its Pod is replaced and the new engine registers
 k8s-hpc-recovery-test:
 	./tests/k8s/hpc-engine-recovery-cycle.sh
+
+## US-407 AC4 / ADR-027: deletes an eop-server Pod under a 20 ms probe; fails at an MTTR of 200 ms
+## or more (needs make k8s-apply and the eop-server, hpc-engine and mttr-watcher images).
+k8s-mttr-test:
+	./tests/k8s/mttr-cycle.sh
 
 ## AC7: rollout restart of eop-server under continuous client load, zero failed operations
 k8s-rollout-restart-test:

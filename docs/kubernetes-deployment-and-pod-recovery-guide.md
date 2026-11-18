@@ -103,9 +103,9 @@ They include:
 
 ```text
 k8s/configmap.yaml                      # shared eop-global-config ConfigMap (eop-server + hpc-engine)
-k8s/deployment.yaml                      # eop-server Deployment
+k8s/deployment.yaml                      # eop-server Deployment: 2 replicas, hpc-engine sidecar, PDB (ADR-027)
 k8s/service.yaml                         # eop-server Service (hpc-engine has no Service — see §6)
-k8s/hpc-engine-deployment.yaml           # hpc-engine Deployment (persistent mode)
+k8s/mttr-watcher.yaml                    # MTTR measurement from Kubernetes events — see §10b
 k8s/prometheus-configmap.yaml            # Prometheus scrape config — see §6c
 k8s/prometheus-deployment.yaml           # Prometheus Deployment
 k8s/prometheus-service.yaml              # Prometheus Service (fixed name/port, see §6c)
@@ -135,18 +135,19 @@ Or use the Makefile target:
 make k8s-apply
 ```
 
-The target waits for all four Deployment rollouts:
+The target deletes the `hpc-engine` Deployment of v0.2–v0.3 if it is still there (the engine is
+now a sidecar, ADR-027 §3) and waits for every rollout, for example:
 
 ```bash
-kubectl rollout status deployment/eop-server --timeout=60s
-kubectl rollout status deployment/hpc-engine --timeout=60s
-kubectl rollout status deployment/prometheus --timeout=60s
-kubectl rollout status deployment/grafana --timeout=60s
+kubectl rollout status deployment/eop-server --timeout=180s
+kubectl rollout status deployment/prometheus --timeout=180s
+kubectl rollout status deployment/grafana --timeout=180s
 ```
 
-`eop-global-config` sets `EOP_SERVER_HOST=eop-server` and pins `--server-port` to
-`$(EOP_PORT)` (`9026`) in `hpc-engine-deployment.yaml`'s `args:` — hpc-engine's CLI default
-of `9090` does not match the real Service port and must never be relied on.
+The `hpc-engine` sidecar connects to its own server over `127.0.0.1` and pins `--server-port` to
+`$(EOP_PORT)` (`9026`) in `deployment.yaml`'s `args:` — hpc-engine's CLI default of `9090` does not
+match the real port and must never be relied on. It registers as `hpc-engine-<pod>` (ADR-022's
+multi-instance form), so the two replicas' engines never collide.
 
 ---
 
@@ -201,7 +202,9 @@ The EOP server Deployment must define:
 
 - `restartPolicy: Always`;
 - a TCP liveness probe on the EOP server port;
-- a TCP readiness probe on the EOP server port.
+- a TCP startup probe on the EOP server port;
+- a TCP readiness probe on `EOP_READY_PORT` (`9027`, container port `ready`), open only while the
+  node registry answers and the replica is not draining for shutdown (ADR-027 §3).
 
 The expected liveness probe configuration is:
 
@@ -214,9 +217,18 @@ livenessProbe:
   failureThreshold: 3
 ```
 
-The readiness probe also uses a TCP check against the server port. The Pod must not be marked Ready until the server is ready to accept TCP connections.
+Readiness is checked every second with `failureThreshold: 1`: a replica that loses Redis, or that
+received SIGTERM, leaves the Service within a second. On SIGTERM the server closes `EOP_READY_PORT`
+first and keeps serving for `EOP_SHUTDOWN_DRAIN_MS` (3 s), so no client is refused while the Service
+stops routing to it (§10b).
 
 ### 6a. hpc-engine Probes
+
+Since v1.0 hpc-engine is a sidecar container of every eop-server Pod (ADR-027 §3) and has **only
+the liveness probe** below. It has no readiness probe on purpose: a Pod is Ready only when all its
+containers are, and an engine that is still registering must not take the replica out of the
+Service for every other command. The readiness check below is the one of the v0.2–v0.3 Deployment,
+kept as reference; the heartbeat file is still written.
 
 hpc-engine never binds or listens (it is a pure outbound client to eop-server), so its
 probes cannot use `tcpSocket` checks and instead use `exec`:
@@ -273,8 +285,9 @@ hpc-engine has two distinct resilience tiers, and it is important not to confuse
   which re-runs Tier 1 from scratch. In other words: Kubernetes *is* the Tier 2 recovery
   mechanism, by design.
 
-This is why `hpc-engine-deployment.yaml` does not need an `initContainer` wait-for-eop-server
-workaround — the retry loop inside `hpc_engine` itself absorbs the startup race.
+This is why the hpc-engine sidecar does not need an `initContainer` wait-for-eop-server
+workaround — the retry loop inside `hpc_engine` itself absorbs the startup race against the server
+container of its own Pod.
 
 ### 6c. Metrics Endpoints (Prometheus)
 
@@ -284,7 +297,7 @@ main protocol traffic:
 | Workload | Metrics port | env var | Container port name |
 |---|---|---|---|
 | eop-server | `9100` | `EOP_METRICS_PORT` | `metrics` (`k8s/deployment.yaml`, `k8s/service.yaml`) |
-| hpc-engine | `9101` | `EOP_HPC_METRICS_PORT` | `metrics` (`k8s/hpc-engine-deployment.yaml`) |
+| hpc-engine | `9101` | `EOP_HPC_METRICS_PORT` | `hpc-metrics` (sidecar in `k8s/deployment.yaml`; scraped by the `hpc-engine-sidecar` job) |
 
 Both env vars are set in `k8s/configmap.yaml` (`eop-global-config`). Prometheus scrapes each
 workload with a **different mechanism**, on purpose — `k8s/prometheus-configmap.yaml` has two
@@ -371,12 +384,12 @@ make k8s-hpc-recovery-test
 
 This target executes `./tests/k8s/hpc-engine-recovery-cycle.sh`, which:
 
-1. applies Kubernetes manifests and waits for the hpc-engine Deployment rollout;
-2. waits for an hpc-engine Pod to become Ready and confirms its logs show
-   `HPC Engine registered as node_id=...`;
+1. applies Kubernetes manifests and waits for the eop-server Deployment rollout;
+2. waits for the eop-server Pods to become Ready and confirms the newest one's `hpc-engine`
+   container logs show `HPC Engine registered as node_id=...`;
 3. deletes that Pod;
-4. waits for the Deployment to create a replacement Pod and reach Ready;
-5. confirms the replacement Pod's logs also show a successful registration.
+4. waits for the Deployment to be complete again (both replicas Ready);
+5. confirms the replacement Pod's engine also registered.
 
 Unlike the eop-server cycle, there is no active client traffic to observe disconnecting —
 hpc-engine carries no client traffic of its own, so the success criterion is simply that the
@@ -462,9 +475,14 @@ The default value is 8 seconds.
 
 ## 10. Registry State After Restart
 
-EOP v0.1 stores the node registry in memory.
+In Kubernetes (since v1.0) the node registry is shared by both replicas in Redis
+(`EOP_REGISTRY_BACKEND=redis`, ADR-027): a Pod replacement no longer empties it. A node whose
+session was on the failed replica reads `OFFLINE` everywhere within one lease (3 s) and is taken
+over when it registers again on the other replica. docker-compose and local runs keep the v0.1
+in-memory registry (`EOP_REGISTRY_BACKEND=memory`, the default), where the following applies.
 
-Therefore, after a container restart or Pod replacement, the registry starts empty. The expected behavior is not state persistence.
+With the in-memory registry, a container restart or Pod replacement starts with an empty registry.
+The expected behavior is not state persistence.
 
 The expected recovery behavior is:
 
@@ -474,6 +492,44 @@ The expected recovery behavior is:
 4. the node is registered successfully without manual server intervention.
 
 This behavior is validated by the recovery script through repeated `REGISTER` smoke checks before and after restart events.
+
+---
+
+## 10b. Failover and MTTR (US-407 AC4, ADR-027)
+
+Two eop-server replicas run behind the Service. When one Pod fails, the Service stops routing to it
+and the other replica keeps serving with the same registry. **MTTR** is the time until that happens
+(service restoration); the time until a replacement Pod is Ready (~2–3 s, ADR-025) is shown next to
+it as *replica replacement*.
+
+`mttr-watcher` (`k8s/mttr-watcher.yaml`, `services/go/cmd/mttr-watcher`) watches the eop-server Pods
+and the Service's EndpointSlices with a namespaced, read-only Role, stamps each event on arrival and
+exports `eop_mttr_seconds{kind}`, `eop_mttr_last_seconds{kind}`, `eop_mttr_pod_failures_total` and
+`eop_server_routable_replicas`; the SLO dashboard shows them in its MTTR row.
+
+Run the check with:
+
+```bash
+make gateway-image          # builds mttr-watcher:local too
+make k8s-apply
+make k8s-mttr-test
+```
+
+`./tests/k8s/mttr-cycle.sh` starts a probe Job that sends `LIST_NODES` through the Service every
+20 ms from inside the cluster, deletes one eop-server Pod, and fails if the probe saw an outage of
+200 ms or more or if mttr-watcher's service restoration for that Pod is 200 ms or more:
+
+Measured on minikube (single node, 2026-11-17), deleting one of the two replicas:
+
+```text
+[mttr] probe: 1955 requests, 0 failed, longest outage 0.0 ms
+[mttr] mttr-watcher: service restoration 93.3 ms, replica replacement 3.42 s
+[mttr] PASS: MTTR below 200 ms
+```
+
+No client request failed: the deleted replica left the Service while it was still draining. A
+replica that crashes without a SIGTERM is detected later (kubelet and readiness), and requests
+routed to it before that fail; the probe would show that outage.
 
 ---
 
@@ -540,24 +596,19 @@ Run the register smoke helper directly through an existing port-forward:
 EOP_HOST=127.0.0.1 EOP_PORT=9026 ./tests/smoke/eop-register-smoke.sh
 ```
 
-hpc-engine equivalents — inspect Pods:
+hpc-engine sidecar — check the heartbeat/registration signal directly:
 
 ```bash
-kubectl get pods -l app=hpc-engine
+POD="$(kubectl get pods -l app=eop-server -o jsonpath='{.items[0].metadata.name}')"
+kubectl exec "$POD" -c hpc-engine -- sh -c 'cat /tmp/hpc-engine-heartbeat; echo'
+kubectl logs "$POD" -c hpc-engine | grep 'HPC Engine registered'
 ```
 
-Inspect the Deployment:
+Failover — the nodes in Redis and the replicas' leases:
 
 ```bash
-kubectl describe deployment hpc-engine
-```
-
-Check the heartbeat/registration signal directly (mirrors the readiness probe in §6a):
-
-```bash
-POD="$(kubectl get pods -l app=hpc-engine -o jsonpath='{.items[0].metadata.name}')"
-kubectl exec "$POD" -- sh -c 'cat /tmp/hpc-engine-heartbeat; echo'
-kubectl logs "$POD" | grep 'HPC Engine registered'
+kubectl exec deploy/redis -- redis-cli --scan --pattern 'eop:*'
+kubectl logs deploy/mttr-watcher | grep 'failure measured'
 ```
 
 ---

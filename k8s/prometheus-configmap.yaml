@@ -18,8 +18,7 @@ data:
 
     scrape_configs:
       # Discovers ANY pod in this namespace carrying prometheus.io/scrape: "true" — eop-server
-      # (k8s/deployment.yaml) and hpc-engine (k8s/hpc-engine-deployment.yaml) both opt in this
-      # way, neither needs its own dedicated scrape_config. Requires the RBAC in
+      # (k8s/deployment.yaml) opts in this way; its hpc-engine sidecar has its own job below. Requires the RBAC in
       # prometheus-rbac.yaml (list/watch on pods).
       #
       # own_namespace: true scopes discovery to whatever namespace Prometheus itself runs in
@@ -57,3 +56,23 @@ data:
           - source_labels: [__meta_kubernetes_pod_label_app]
             action: replace
             target_label: job
+
+      # hpc-engine runs as a sidecar of every eop-server Pod (ADR-027 §3), so its Pod's
+      # prometheus.io annotations point at eop-server's port. The engine is found instead by its
+      # container port name, one target per Pod, and keeps job="hpc-engine" for the HPC panel
+      # (US-206) and the SLO dashboard.
+      - job_name: hpc-engine-sidecar
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              own_namespace: true
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            action: keep
+            regex: hpc-metrics
+          - action: replace
+            target_label: job
+            replacement: hpc-engine
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: pod

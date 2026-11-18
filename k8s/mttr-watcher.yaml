@@ -1,0 +1,95 @@
+# mttr-watcher (ADR-027 §4): measures how long eop-server is out of service when one of its Pods
+# fails, from the Kubernetes API (Pods and the Service's EndpointSlices), and exports eop_mttr_*
+# for the Grafana MTTR panel. It only lists and watches; it sends nothing to eop-server.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mttr-watcher
+  labels:
+    app: mttr-watcher
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mttr-watcher
+  labels:
+    app: mttr-watcher
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mttr-watcher
+  labels:
+    app: mttr-watcher
+subjects:
+  - kind: ServiceAccount
+    name: mttr-watcher
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mttr-watcher
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mttr-watcher
+  labels:
+    app: mttr-watcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mttr-watcher
+  template:
+    metadata:
+      labels:
+        app: mttr-watcher
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "9102"
+    spec:
+      serviceAccountName: mttr-watcher
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mttr-watcher
+          image: mttr-watcher:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: EOP_MTTR_POD_SELECTOR
+              value: "app=eop-server"
+            - name: EOP_MTTR_SERVICE
+              value: "eop-server"
+          ports:
+            - name: metrics
+              containerPort: 9102
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"

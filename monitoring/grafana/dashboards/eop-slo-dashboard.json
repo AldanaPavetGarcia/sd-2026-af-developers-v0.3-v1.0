@@ -468,6 +468,153 @@
         "x": 16,
         "y": 24
       }
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "MTTR on Pod Failure (service restoration)",
+      "description": "ADR-027 \u00a74, US-407 AC4: time from the failure of an eop-server Pod (deleted, crashed or no longer ready) until the Service routes only to the other, ready replica, measured by mttr-watcher from Kubernetes events. Target < 200 ms (red at or above). The PRD's literal 'pod death to pod ready' is the panel next to it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "eop_mttr_last_seconds{kind=\"service_restoration\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.2
+              }
+            ]
+          },
+          "noValue": "no failure yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 31
+      }
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Replica Replacement Time (pod failure to pod Ready)",
+      "description": "Time from the same Pod failure until a replacement Pod (or the restarted one) is Ready. This is the PRD's wording, shown next to the MTTR and labelled as what it is: Kubernetes cannot recreate a Pod in 200 ms (ADR-025), which is why a second replica takes the traffic.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "eop_mttr_last_seconds{kind=\"replica_replacement\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "no failure yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 31
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "MTTR P99 and Routable eop-server Replicas",
+      "description": "P99 of the service restoration time over the dashboard range (ADR-027 \u00a74), the eop-server Pods the Service routes to, and the Pod failures counted by mttr-watcher.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le) (increase(eop_mttr_seconds_bucket{kind=\"service_restoration\"}[$__range])))",
+          "legendFormat": "MTTR P99 (s)"
+        },
+        {
+          "refId": "B",
+          "expr": "eop_server_routable_replicas",
+          "legendFormat": "routable replicas"
+        },
+        {
+          "refId": "C",
+          "expr": "increase(eop_mttr_pod_failures_total[5m])",
+          "legendFormat": "pod failures (5m)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 31
+      }
     }
   ]
 }
