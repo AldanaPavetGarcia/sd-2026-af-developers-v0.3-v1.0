@@ -1,0 +1,15 @@
+# Prometheus TSDB on a PersistentVolume (#67, US-407 AC1/AC2): the 30-day SLO data must survive
+# Prometheus restarts and in-place upgrades of the stack. 10 Gi holds the 35-day retention with
+# room to spare (retention.size in prometheus-deployment.yaml stops below it).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  labels:
+    app: prometheus
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

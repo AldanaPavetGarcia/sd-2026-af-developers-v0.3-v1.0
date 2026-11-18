@@ -72,6 +72,11 @@ jobs:
             dockerfile: ./services/go/Dockerfile
             target: external-stub
             tag: external-stub:ci
+          - name: slo-traffic
+            context: ./services/go
+            dockerfile: ./services/go/Dockerfile
+            target: slo-traffic
+            tag: slo-traffic:ci
 
     steps:
       - uses: actions/checkout@v4

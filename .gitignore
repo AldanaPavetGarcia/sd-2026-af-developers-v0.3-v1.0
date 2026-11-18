@@ -70,3 +70,4 @@ logs/
 
 # Python bytecode (benchmark_report.py y sus tests)
 __pycache__/
+slo-run-export/

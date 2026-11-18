@@ -4,6 +4,10 @@ All notable changes to the EOP Server Node Registry project will be documented i
 
 ## [Unreleased]
 
+### Added
+
+- **30-day SLO run (#67, US-407 AC1/AC2, `docs/slo-30-day-run.md`):** Prometheus keeps its TSDB on a 10 Gi PersistentVolumeClaim (`k8s/prometheus-pvc.yaml`) with 35-day retention capped at 8 GB, `Recreate` rollouts and the admin API for the end-of-run snapshot, so the data survives restarts and in-place upgrades to v1.0. Hourly recording rules (`k8s/prometheus-rules-configmap.yaml`) give the 30-day success ratio, error budget left against the 99.9 % SLO, gateway success ratio and availability. `slo-traffic` (Go, `services/go/cmd/slo-traffic`, `k8s/slo-run/`) keeps 3 bunker nodes registered with heartbeats and reads the node state through the gateway every second plus a small graph analysis every 5 minutes (~110,000 requests a day), exporting `eop_traffic_*` and logging only failures and a summary every 10 minutes. `make slo-run-start`, `make slo-run-status` (days collected, traffic flowing, 30-day figures) and `make slo-run-export` (TSDB snapshot and hourly SLO series).
+
 ## [0.3.0] - date set when release/0.3.0 is cut
 
 Public API & Safe Delivery (Milestone 3): a versioned REST API in front of the EOP server, canary and blue-green delivery of that API, and logs centralized in Loki and correlated with traces.

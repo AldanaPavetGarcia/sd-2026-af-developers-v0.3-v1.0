@@ -19,6 +19,10 @@ from pathlib import Path
 
 COMPOSE_CONFIG_PATH = Path("monitoring/prometheus/prometheus.yml")
 K8S_CONFIGMAP_PATH = Path("k8s/prometheus-configmap.yaml")
+# 30-day SLO run (#67): persistent TSDB, 35-day retention and the hourly recording rules.
+K8S_DEPLOYMENT_PATH = Path("k8s/prometheus-deployment.yaml")
+K8S_PVC_PATH = Path("k8s/prometheus-pvc.yaml")
+K8S_RULES_PATH = Path("k8s/prometheus-rules-configmap.yaml")
 
 COMPOSE_REQUIRED_TOKENS = [
     "scrape_configs:",
@@ -33,6 +37,30 @@ K8S_REQUIRED_TOKENS = [
     "prometheus_io_scrape",
     "prometheus_io_path",
     "prometheus_io_port",
+    "rule_files:",
+    "/etc/prometheus/rules/*.yml",
+]
+
+K8S_DEPLOYMENT_REQUIRED_TOKENS = [
+    "--storage.tsdb.path=/prometheus",
+    "--storage.tsdb.retention.time=35d",
+    "--storage.tsdb.retention.size=",
+    "claimName: prometheus-data",
+    "name: eop-prometheus-rules",
+    "mountPath: /etc/prometheus/rules",
+    "type: Recreate",
+]
+
+K8S_PVC_REQUIRED_TOKENS = ["kind: PersistentVolumeClaim", "name: prometheus-data", "ReadWriteOnce"]
+
+K8S_RULES_REQUIRED_TOKENS = [
+    "name: eop-prometheus-rules",
+    "interval: 1h",
+    "record: eop:requests:increase1h",
+    "record: eop:requests_ok:increase1h",
+    "record: eop:error_budget_remaining:ratio30d",
+    "record: eop:gateway_success:ratio30d",
+    "record: eop:up:avg30d",
 ]
 
 
@@ -62,6 +90,16 @@ def main() -> None:
 
     k8s_config = read_required_file(K8S_CONFIGMAP_PATH)
     validate_tokens(k8s_config, K8S_REQUIRED_TOKENS, "Kubernetes Prometheus ConfigMap")
+
+    for path, tokens in (
+        (K8S_DEPLOYMENT_PATH, K8S_DEPLOYMENT_REQUIRED_TOKENS),
+        (K8S_PVC_PATH, K8S_PVC_REQUIRED_TOKENS),
+        (K8S_RULES_PATH, K8S_RULES_REQUIRED_TOKENS),
+    ):
+        text = read_required_file(path)
+        for token in tokens:
+            if token not in text:
+                fail(f"{path} is missing required token: {token}")
 
     print(
         "[prometheus-test] contract passed: "
