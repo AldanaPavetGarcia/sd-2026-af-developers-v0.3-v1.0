@@ -113,7 +113,9 @@ jobs:
           kubeconform -strict -summary -kubernetes-version 1.30.0 $(find k8s -name '*.yaml')
 
   continuous-integration:
-    runs-on: ubuntu-latest
+    # Pinned: on Ubuntu 26 (ubuntu-latest since 2026-10-19) libomp-dev no longer matches clang-18
+    # and CMake cannot find OpenMP for the HPC engine.
+    runs-on: ubuntu-24.04
     needs: validate-branch-name
 
     env:
@@ -683,7 +685,9 @@ jobs:
 
   thread-sanitizer:
     name: thread-sanitizer
-    runs-on: ubuntu-latest
+    # Pinned: on Ubuntu 26 (ubuntu-latest since 2026-10-19) libomp-dev no longer matches clang-18
+    # and CMake cannot find OpenMP for the HPC engine.
+    runs-on: ubuntu-24.04
     needs: validate-branch-name
 
     env:
