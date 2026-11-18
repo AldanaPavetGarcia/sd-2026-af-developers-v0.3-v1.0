@@ -1,0 +1,19 @@
+# ClickHouse for production (US-406, pending from v0.3): traces and logs on a
+# PersistentVolumeClaim instead of emptyDir (volume 2, "data"), and memory sized for its
+# background merges. At 768Mi the merges of the SigNoz tables hit the limit and ClickHouse
+# stopped accepting spans; ClickHouse caps itself at 90 % of the container limit.
+- op: replace
+  path: /spec/template/spec/volumes/2
+  value:
+    name: data
+    persistentVolumeClaim:
+      claimName: clickhouse-data
+- op: replace
+  path: /spec/template/spec/containers/0/resources
+  value:
+    requests:
+      cpu: "250m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"

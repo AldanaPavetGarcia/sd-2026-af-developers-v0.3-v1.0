@@ -1,0 +1,75 @@
+# EOP v1.0 as a product (US-406, ADR-029): the complete stack with one command,
+#
+#   kubectl apply -k deploy/production        (make k8s-prod-apply)
+#
+# and no manual step after it. Prerequisites (not steps): an nginx Ingress controller and a
+# default StorageClass (minikube: `minikube addons enable ingress`; `standard` is the default).
+# Every production value lives in config/production.env. Dependencies converge inside the
+# cluster: init containers wait for ClickHouse, services retry Redis, the broker and eop-server,
+# the SigNoz schema Job is idempotent, and readiness probes gate traffic.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  # eop-server (2 replicas + hpc-engine sidecar, ADR-027), mttr-watcher, edge-ingestor,
+  # Prometheus, Grafana, OTel collector and the SigNoz stack.
+  - ../../k8s
+  - ../../k8s/redis
+  - ../../k8s/mosquitto
+  - ../../k8s/external-stubs
+  - ../../k8s/loki
+  - ../../k8s/otel-log-agent
+  # The API gateway in the canary layout (ADR-011 §4), so canary and blue-green procedures work
+  # on the product as in development.
+  - ../../k8s/api-gateway/overlays/canary
+  # eop-global-config from config/production.env; dashboards, ClickHouse, Loki and log-agent
+  # configuration from monitoring/.
+  - ../../config
+  - ../../monitoring
+  - storage.yaml
+
+patches:
+  - path: prometheus-retention.yaml
+    target:
+      kind: Deployment
+      name: prometheus
+  - path: loki-retention.yaml
+    target:
+      kind: Deployment
+      name: loki
+  - path: zookeeper-storage.yaml
+    target:
+      kind: Deployment
+      name: zookeeper-1
+  - path: clickhouse-storage.yaml
+    target:
+      kind: Deployment
+      name: clickhouse
+  - path: mosquitto-certs.yaml
+    target:
+      kind: StatefulSet
+      name: mosquitto
+
+# The images of a release, in one place (ADR-029 §6). Locally built images are tagged `local`
+# (make gateway-image and the Dockerfiles); a registry release replaces newName/newTag here.
+images:
+  - name: eop-server
+    newTag: local
+  - name: hpc-engine
+    newTag: local
+  - name: api-gateway
+    newTag: local
+  - name: external-stub
+    newTag: local
+  - name: edge-ingestor
+    newTag: local
+  - name: mttr-watcher
+    newTag: local
+  - name: edge-sim
+    newTag: local
+
+# The in-cluster simulated bunkers are for demos and the dashboards (US-405): off in the product,
+# where real devices publish (`kubectl scale deployment/edge-sim --replicas=1` for a demo).
+replicas:
+  - name: edge-sim
+    count: 0

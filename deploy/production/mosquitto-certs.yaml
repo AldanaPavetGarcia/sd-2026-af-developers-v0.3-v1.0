@@ -1,0 +1,66 @@
+# TLS of the device listener with no manual step (US-406 AC1). An init container (eop-certgen, in
+# the edge-ingestor image) leaves ca.crt, tls.crt and tls.key on the broker's volume:
+#   - from the mosquitto-tls Secret when the operator provides one (real certificates);
+#   - otherwise generated once and kept on the volume, so devices trust the same CA across
+#     restarts. Give the devices that CA:  kubectl exec mosquitto-0 -- cat /mosquitto/certs/ca.crt
+# Volume 1 ("certs", the required Secret of the development path) becomes the optional Secret, and
+# the broker reads /mosquitto/certs from the volume's certs/ directory.
+- op: replace
+  path: /spec/template/spec/volumes/1
+  value:
+    name: provided-certs
+    secret:
+      secretName: mosquitto-tls
+      optional: true
+- op: replace
+  path: /spec/template/spec/containers/0/volumeMounts/1
+  value:
+    name: data
+    mountPath: /mosquitto/certs
+    subPath: certs
+    readOnly: true
+- op: add
+  path: /spec/template/spec/initContainers
+  value:
+    - name: certs
+      image: edge-ingestor
+      imagePullPolicy: IfNotPresent
+      command: ["/eop-certgen"]
+      args:
+        - -dir=/mosquitto/data/certs
+        - -provided=/provided
+        - -hosts=mosquitto,mosquitto.$(POD_NAMESPACE).svc,mosquitto.$(POD_NAMESPACE).svc.cluster.local,localhost,127.0.0.1,$(EOP_EDGE_BROKER_PUBLIC_HOSTS)
+        - -days=$(EOP_EDGE_CERT_DAYS)
+      env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: EOP_EDGE_BROKER_PUBLIC_HOSTS
+          valueFrom:
+            configMapKeyRef:
+              name: eop-global-config
+              key: EOP_EDGE_BROKER_PUBLIC_HOSTS
+        - name: EOP_EDGE_CERT_DAYS
+          valueFrom:
+            configMapKeyRef:
+              name: eop-global-config
+              key: EOP_EDGE_CERT_DAYS
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
+        limits:
+          cpu: "200m"
+          memory: "64Mi"
+      volumeMounts:
+        - name: data
+          mountPath: /mosquitto/data
+        - name: provided-certs
+          mountPath: /provided
+          readOnly: true

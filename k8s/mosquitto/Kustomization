@@ -1,0 +1,6 @@
+# MQTT broker of the edge devices (ADR-013). A base of deploy/production;
+# named "Kustomization" so `kubectl apply -f k8s/mosquitto/` (make k8s-apply) never reads it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - mosquitto.yaml

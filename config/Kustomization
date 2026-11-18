@@ -1,0 +1,12 @@
+# The production configuration file as the eop-global-config ConfigMap (ADR-029). Used by
+# deploy/production; named "Kustomization" so nothing else mistakes it for a manifest.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+configMapGenerator:
+  - name: eop-global-config
+    envs:
+      - production.env
+    options:
+      disableNameSuffixHash: true
+      labels:
+        app: eop-server

@@ -1,0 +1,18 @@
+# ZooKeeper's data on a PersistentVolumeClaim (US-406, pending from v0.3): ClickHouse's
+# replicated tables keep their metadata across a ZooKeeper restart. The image (Bitnami-based,
+# UID 1001) keeps its data in /bitnami/zookeeper.
+- op: add
+  path: /spec/template/spec/securityContext
+  value:
+    fsGroup: 1001
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts
+  value:
+    - name: data
+      mountPath: /bitnami/zookeeper
+- op: add
+  path: /spec/template/spec/volumes
+  value:
+    - name: data
+      persistentVolumeClaim:
+        claimName: zookeeper-data

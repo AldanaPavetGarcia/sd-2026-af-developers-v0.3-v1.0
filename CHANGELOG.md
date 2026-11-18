@@ -6,6 +6,8 @@ All notable changes to the EOP Server Node Registry project will be documented i
 
 ### Added
 
+- **EOP v1.0 as a deployable product (US-406, #74, ADR-029):** `kubectl apply -k deploy/production` (`make k8s-prod-apply`) deploys the complete stack with no step after it: eop-server (2 replicas, engine sidecar, Redis registry), Redis, the API gateway in the canary layout, external stubs, Mosquitto and the edge ingestor, mttr-watcher, Prometheus (35-day PVC), Grafana with every dashboard and alert, Loki and its agent, the OTel collector and SigNoz (ZooKeeper and ClickHouse on PVCs, ClickHouse memory raised to 2 GiB for its merges). Every production value — ports, retention, SLO and alert thresholds — is in `config/production.env`, turned into the `eop-global-config` ConfigMap; Prometheus and Loki take their retention from it. The broker's TLS material is prepared in the cluster by an init container (`eop-certgen`): the operator's `mosquitto-tls` Secret when present, otherwise a CA generated once and kept on the broker's volume. The existing directories are Kustomize bases (`Kustomization` files, invisible to `make k8s-apply`), and the dashboards, ClickHouse, Loki and log-agent ConfigMaps are generated declaratively from `monitoring/`. `make k8s-ready-time` (AC4, clean cluster, < 3 min), `make smoke-test-prod` (AC8: server, registration, graph analysis, edge ingestion, gateway health) and `make production-config-test` (CI) check it. README "Deploy EOP v1.0", RUNBOOK (scaling, rollback, SLO dashboard, failover, edge), ADR index linked from the README, and this CHANGELOG by release with `[0.1.0]`.
+- **30-day SLO run (#67, US-407 AC1/AC2, `docs/slo-30-day-run.md`):** Prometheus keeps its TSDB on a 10 Gi PersistentVolumeClaim (`k8s/prometheus-pvc.yaml`) with 35-day retention capped at 8 GB, `Recreate` rollouts and the admin API for the end-of-run snapshot, so the data survives restarts and in-place upgrades to v1.0. Hourly recording rules (`k8s/prometheus-rules-configmap.yaml`) give the 30-day success ratio, error budget left against the 99.9 % SLO, gateway success ratio and availability. `slo-traffic` (Go, `services/go/cmd/slo-traffic`, `k8s/slo-run/`) keeps 3 bunker nodes registered with heartbeats and reads the node state through the gateway every second plus a small graph analysis every 5 minutes (~110,000 requests a day), exporting `eop_traffic_*` and logging only failures and a summary every 10 minutes. `make slo-run-start`, `make slo-run-status` (days collected, traffic flowing, 30-day figures) and `make slo-run-export` (TSDB snapshot and hourly SLO series).
 - **Edge telemetry dashboard and latency alert (US-405, #73):** the Grafana dashboard **EOP Edge Telemetry** (`eop-edge`) shows the ingestor's broker connection, E2E latency P50/P99 (device sampling → eop-server ACK) against the 500 ms NFR, messages per second (received, forwarded, duplicates, invalid), the message loss rate from device buffer overflows, and a per-device table (connected / disconnected, last seen, dropped, buffered, thread restarts) from the new `eop_edge_device_last_seen_timestamp_seconds`. The alert `eop-edge-e2e-p99` fires when P99 stays above 500 ms for more than 1 minute; dashboard and alert are provisioned in docker-compose and Kubernetes and checked by `make edge-dashboard-test` (also: every queried metric is one the ingestor exports). The `edge.message` span now carries `edge.sampled_at`, `edge.received_at`, `edge.delivered_at` and `edge.e2e_latency_ms`. `make edge-test` runs 5 minutes of edge-sim against docker-compose and checks, from Prometheus with the dashboard's own expressions, that every published message was forwarded, the panel rate matches the real one, P99 < 500 ms and nothing was lost. Measured on docker-compose: 1,500 of 1,500 messages forwarded, E2E P99 23 ms, 0 % loss.
 - **Edge telemetry reaches eop-server (US-404, #72, ADR-028):** eop-server accepts `TELEMETRY node_id=… bunker_name=… message_id=… boot_id=… temperature=… status=… sampled_at=… [traceparent=…]` (validated key by key, `ERROR_INVALID_REQUEST desc=<reason>` otherwise) and keeps each device as an edge node (`source=edge`, in memory or in the shared Redis registry), ONLINE while its last telemetry is younger than `EOP_EDGE_LIVENESS_TIMEOUT` (10 s); the newest sample by `sampled_at` is the one shown, so a flushed buffer does not hide newer data, and a `node_id` registered over TCP answers `ERROR_DUPLICATE`. `LIST_NODES`/`QUERY_NODE` append `source=edge temperature=… device_status=… sampled_at=…` to edge nodes only; v0.1 lines are unchanged. The Go **edge-ingestor** subscribes to `eop/bunker/+/telemetry` with QoS 1 and a persistent session, acknowledges a message to the broker only after the server's ACK, deduplicates by `(node_id, boot_id, message_id)` in Redis for 5 minutes, retries a down server with logged backoff, reconnects to the broker, traces each message (`edge.message` → `edge.ingest` → server) and exports `eop_edge_*` metrics including the end-to-end latency per device. **edge-sim** publishes the firmware's payload for N devices. The gateway adds `GET /v1/edge/status` and a `telemetry` object on edge nodes in `/v1/nodes`. Mosquitto (persistent sessions, TLS device listener with locally generated certificates) and the ingestor run in docker-compose and Kubernetes. `make edge-integration-test` (US-404 AC8): 10 simulated messages reach `/v1/nodes`, and none is lost while the server is down.
 - **Shared node registry and eop-server failover (US-407 AC4, #71, ADR-027):** the registry is behind `INodeRegistry` (`include/nodeRegistry.hpp`) with the v0.1 in-memory backend (default) and a Redis backend (`include/redisNodeRegistry.hpp`, hiredis via vcpkg, RAII) selected by `EOP_REGISTRY_BACKEND=memory|redis`. In Redis each node is a hash with its owner replica, each replica holds a 3 s lease, and a node is ONLINE only while its owner's lease lives: the nodes of a dead replica read OFFLINE everywhere within 3 s and re-register on the other one; `REGISTER` is one Lua script, so `ERROR_DUPLICATE` holds across replicas. A replica rewrites its live nodes after Redis loses them, answers `ERROR_SERVICE_UNAVAILABLE desc=Node registry unavailable` when Redis is down, and its readiness port (`EOP_READY_PORT`) is open only while the registry answers and it is not shutting down; on SIGTERM it keeps serving for `EOP_SHUTDOWN_DRAIN_MS` after leaving the Service. In Kubernetes eop-server runs 2 replicas with a PodDisruptionBudget, and hpc-engine moves into its Pod as a sidecar registered as `hpc-engine-<pod>` (the `hpc-engine` Deployment is removed; a Prometheus job scrapes the sidecar). `mttr-watcher` (Go, `services/go/cmd/mttr-watcher`) measures service restoration and replica replacement from Pod and EndpointSlice events and exports `eop_mttr_*` for a new MTTR row in the SLO dashboard; `make k8s-mttr-test` deletes a Pod under a 20 ms probe and fails at 200 ms. Measured on minikube: 0 of 1,955 probe requests failed, service restoration 93 ms, replica replacement 3.4 s.
@@ -35,7 +37,10 @@ Public API & Safe Delivery (Milestone 3): a versioned REST API in front of the E
 ### Fixed
 - **API gateway connection pool could reuse a desynchronized connection (#52):** a connection went back to the pool after any `ERROR_*` answer, so if the server ever sent an extra line — as servers built before the #55 framing fix do for long requests — the next command on that connection read the stale line (seen on minikube as the readiness probe failing with `Unknown command`). Only the expected `ERROR_NOT_FOUND` keeps a connection; `ANALYZE_GRAPH` never reuses one. Cancelling a request now also interrupts a blocked read.
 
-## v0.2 close-out - 2026-09-09
+## [0.2.0] - 2026-09-09
+
+HPC Processing Engine (Milestone 2), final changes (the close-out); the earlier part of the release is `[0.2.0-dev]` below.
+
 
 Brought over from `ICOMP-UNC/sd-2026-af-developers`, where v0.2 is tracked and released; issue numbers in this section refer to that repository.
 
@@ -85,6 +90,8 @@ Brought over from `ICOMP-UNC/sd-2026-af-developers`, where v0.2 is tracked and r
 
 ## [0.2.0-dev] - 2026-08-08
 
+First part of the 0.2.0 release (Milestone 2).
+
 ### Added
 - **HPC Engine persistent daemon mode:** `hpc-engine` now supports a socket-connected mode — triggered by passing `--server-host`/`--server-port`/`--node-id` — that registers with the EOP server as a peer and keeps servicing `ANALYZE_GRAPH` requests indefinitely, with bounded connect/register retry-backoff and a heartbeat file for external liveness checks. Without those flags it falls back to its original one-shot batch mode (stdin/stdout), so both `hpc-engine` (#13/#14) tests and callers are unaffected.
 - **HPC Engine Docker image:** dedicated multi-stage `hpc-engine/Dockerfile`; the runtime stage installs `libgomp` (OpenMP runtime) and has no `EXPOSE`, since the engine is an outbound-only TCP client — it never binds or listens.
@@ -118,3 +125,38 @@ Brought over from `ICOMP-UNC/sd-2026-af-developers`, where v0.2 is tracked and r
   - Added socket connection bounds checking (`ASSERT_GE(sock, 0)`) in test files to resolve unvalidated `-1` descriptor assertions flagged by UNIX library analyzers.
 - **Code Styling Constraints:** Formatted the entire core codebase (`.cpp`, `.hpp`, `.h`) automatically conforming flawlessly to `clang-format-18` style guides.
 - **EOF Protocol Warnings:** Fixed ending empty-line parsing problems inside `commonProtocol.hpp`.
+
+## [0.1.0] - 2026-06-03
+
+Core Communication Layer (Milestone 1). Brought over from `ICOMP-UNC/sd-2026-af-developers` (`release/0.1.0`), where v0.1 was released; ADR numbers in this section are the course repository's original ones (see `docs/adr/README.md` for the current numbering).
+
+### Added
+- **Core Server & Connection Handshake:** Implemented the sockets communication engine, environment-based configuration, and connection session handshake.
+- **Modular Architecture:** Structured the EOP server code using specialized libraries for config loading, protocol parsing, and event auditing.
+- **Concurrency Model (Thread Pool):** Refactored the server's thread pool to a message-based asynchronous queue processing model to handle concurrent client registrations.
+- **Graceful Shutdown (SIGTERM):** Implemented signal handler for SIGTERM to gracefully stop accepting connections, wait for active sessions to finish within a timeout, and shut down OTel tracing.
+- **Client SDK (`libeop`):** Developed the client library with a public API via opaque handlers, thread-safety, non-blocking connection logic, memory leak safety, and a `connect_basic` example.
+- **Distributed Tracing (OpenTelemetry):** Integrated `opentelemetry-cpp` to trace core server operations (`REGISTER`, `QUERY_NODE`, `LIST_NODES`) and propagate trace contexts.
+- **Observability Stack (SigNoz):** Configured a unified `signoz-standalone` stack with ClickHouse, OTel Collector, and SigNoz UI dashboard in `docker-compose.yml`.
+- **Structured JSON Logging:** Upgraded server logging to output JSON records correlated with OpenTelemetry trace contexts.
+- **Dockerization:** Configured a multi-stage Docker build pipeline utilizing `vcpkg` manifest mode caching to generate minimal runtime container images.
+- **Kubernetes Deployment:** Added Kubernetes manifests (`deployment.yaml`, `service.yaml`, `configmap.yaml`) supporting liveness/readiness TCP probes, pod restart policies, and environment config.
+- **Kubernetes Pod Recovery Test:** Implemented automated validation scripts (`pod-recovery-cycle.sh` / `deploy-local-smoke.sh`) verifying service restoration after pod failures.
+- **Architecture Decision Records (ADRs):** Documented architecture decisions formally in ADR001 through ADR010.
+- **Welcome Message (ACK):** Added greeting/ACK string response (`ACK Server v1.0 | TIME <timestamp> | SESSION_ID <node_id>`) upon successful node registration.
+
+### Changed
+- **Server Event Loop Optimization:** Refactored the core connection loop to utilize `poll()` multiplexing and reduced heartbeat logs verbosity.
+- **Direct Node Registration:** Replaced the legacy two-step session process. The initialization of a session directly relies on parsing a `REGISTER` command.
+- **Node ID Decoupling:** Re-adapted connection limit verification (`MAX_CLIENTS=10`) against a global active connections tracker instead of bounding numerical ranges from `node_id`.
+- **Test Scaling Adjustments:** Scaled down stress testing constraints in latency benchmarks and connection tests to optimize execution speed within CI pipelines.
+- **Documentation Restructuring:** Reorganized system architecture guides, runbooks, and benchmarking instructions in `README.md`.
+
+### Removed
+- **Legacy REQ_SESSION System:** Extracted and eliminated the legacy `isLegacySession` logic, `REQ_SESSION` command parsing, and numeric `activeSessions` indexing structures.
+
+### Fixed
+- **ThreadSanitizer Data Races:** Resolved data races in time-formatting functions, the `isTerminationSignalReceived` flag, and concurrent unit test assertions.
+- **OTel-to-SigNoz Integration Pipelines:** Resolved ClickHouse schema initialization mismatch and connectivity problems in smoke integration tests.
+- **Client SDK Connection & Formatting:** Updated default connection ports and formatted client codebase to ensure consistent brace styling and compliance with project style guides.
+- **Static Analysis & Linting Warnings (`clang-tidy`):** Fixed warnings in `timed_watchdog_controller.c` and UNIX library socket assertions.

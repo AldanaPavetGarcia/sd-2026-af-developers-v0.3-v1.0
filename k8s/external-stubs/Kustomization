@@ -1,0 +1,6 @@
+# Stand-ins for the external AI and corporate services (ADR-012). A base of deploy/production;
+# named "Kustomization" so `kubectl apply -f k8s/external-stubs/` (make k8s-apply) never reads it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - external-stubs.yaml

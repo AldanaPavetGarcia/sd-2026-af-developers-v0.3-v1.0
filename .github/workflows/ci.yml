@@ -87,6 +87,11 @@ jobs:
             dockerfile: ./services/go/Dockerfile
             target: edge-sim
             tag: edge-sim:ci
+          - name: slo-traffic
+            context: ./services/go
+            dockerfile: ./services/go/Dockerfile
+            target: slo-traffic
+            tag: slo-traffic:ci
 
     steps:
       - uses: actions/checkout@v4
@@ -150,7 +155,8 @@ jobs:
           # kustomization.yaml files are build instructions, not cluster resources: they are
           # skipped here and every Kustomize directory is validated by its rendered output.
           kubeconform -strict -summary -kubernetes-version 1.30.0 $(find k8s -name '*.yaml' ! -name kustomization.yaml)
-          for dir in $(find k8s -name kustomization.yaml -exec dirname {} \;); do
+          # deploy/production (US-406, ADR-029) is the product: the whole stack in one render.
+          for dir in $(find k8s -name kustomization.yaml -exec dirname {} \;) deploy/production; do
             echo "kustomize build $dir"
             kubectl kustomize "$dir" | kubeconform -strict -summary -kubernetes-version 1.30.0 -
           done
@@ -450,6 +456,7 @@ jobs:
           make slo-dashboard-test
           make hpc-dashboard-test
           make edge-dashboard-test
+          make production-config-test
           make edge-load-tool-test
           make loki-test
 

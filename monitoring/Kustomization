@@ -1,0 +1,40 @@
+# ConfigMaps generated from monitoring/ for deploy/production (ADR-029): the same ones
+# `make k8s-apply` creates imperatively, so these files stay the single source of truth.
+# Named "Kustomization" (no extension) so it is never taken for a manifest.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: eop-grafana-dashboards
+    files:
+      - grafana/dashboards/eop-edge-dashboard.json
+      - grafana/dashboards/eop-hpc-performance-dashboard.json
+      - grafana/dashboards/eop-request-logs.json
+      - grafana/dashboards/eop-slo-dashboard.json
+    options:
+      labels:
+        app: grafana
+  - name: eop-clickhouse-config
+    files:
+      - signoz-common/clickhouse/cluster.ha.xml
+      - signoz-common/clickhouse/cluster.xml
+      - signoz-common/clickhouse/config.xml
+      - signoz-common/clickhouse/custom-function.xml
+      - signoz-common/clickhouse/storage.xml
+      - signoz-common/clickhouse/users.xml
+    options:
+      labels:
+        app: clickhouse
+  - name: loki-config
+    files:
+      - loki/config.yaml
+    options:
+      labels:
+        app: loki
+  - name: otel-log-agent-config
+    files:
+      - otel-log-agent/config.yaml
+    options:
+      labels:
+        app: otel-log-agent

@@ -1,0 +1,33 @@
+# Base of deploy/production (ADR-029): every top-level manifest except configmap.yaml, whose
+# values the overlay generates from config/production.env. The development path (`make
+# k8s-apply`) applies these files directly; this file is named "Kustomization" (no extension) so
+# `kubectl apply -f k8s/` never reads it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - edge-ingestor.yaml
+  - grafana-deployment.yaml
+  - grafana-provisioning-configmap.yaml
+  - grafana-service.yaml
+  - mttr-watcher.yaml
+  - otel-collector-configmap.yaml
+  - otel-collector-deployment.yaml
+  - otel-collector-service.yaml
+  - prometheus-configmap.yaml
+  - prometheus-deployment.yaml
+  - prometheus-pvc.yaml
+  - prometheus-rbac.yaml
+  - prometheus-rules-configmap.yaml
+  - prometheus-service.yaml
+  - service.yaml
+  - signoz-clickhouse-deployment.yaml
+  - signoz-clickhouse-service.yaml
+  - signoz-deployment.yaml
+  - signoz-migrator-job.yaml
+  - signoz-otel-collector-configmap.yaml
+  - signoz-otel-collector-deployment.yaml
+  - signoz-otel-collector-service.yaml
+  - signoz-service.yaml
+  - signoz-zookeeper-deployment.yaml
+  - signoz-zookeeper-service.yaml

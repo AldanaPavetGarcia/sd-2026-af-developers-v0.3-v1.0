@@ -1,4 +1,4 @@
-.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-mttr-test edge-certs edge-integration-test k8s-rollout-restart-test observability-test slo-dashboard-test edge-dashboard-test edge-test edge-load-tool-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-prod-apply k8s-ready-time smoke-test-prod k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-mttr-test edge-certs edge-integration-test k8s-rollout-restart-test slo-run-start slo-run-status slo-run-export observability-test slo-dashboard-test edge-dashboard-test production-config-test edge-test edge-load-tool-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
 
 deploy-local:
 	docker compose up --build -d
@@ -61,6 +61,22 @@ k8s-apply:
 	kubectl rollout status deployment/signoz --timeout=180s
 	kubectl rollout status deployment/otel-collector --timeout=180s
 
+## EOP v1.0 as a product (US-406, ADR-029): the complete stack from deploy/production, with every
+## production value in config/production.env. Needs the images (make gateway-image, eop-server,
+## hpc-engine) in the cluster; prerequisites in the README ("Deploy v1.0").
+k8s-prod-apply:
+	kubectl apply -k deploy/production
+	./tests/k8s/wait-ready.sh
+
+## US-406 AC4: apply on a clean cluster and fail if the stack is not Ready within 3 minutes.
+k8s-ready-time:
+	./tests/k8s/ready-time.sh
+
+## US-406 AC8: server, registration, graph analysis, edge ingestion and gateway health on the
+## deployed stack (current kubectl context).
+smoke-test-prod:
+	python3 tests/k8s/smoke_test_prod.py
+
 ## API gateway (US-301, ADR-010). Go module under services/go.
 GO_DIR := services/go
 GATEWAY_COVERAGE_MIN := 90
@@ -92,6 +108,7 @@ gateway-image:
 	docker build --target mttr-watcher -t mttr-watcher:local $(GO_DIR)
 	docker build --target edge-ingestor -t edge-ingestor:local $(GO_DIR)
 	docker build --target edge-sim -t edge-sim:local $(GO_DIR)
+	docker build --target slo-traffic -t slo-traffic:local $(GO_DIR)
 
 ## Canary release of the api-gateway (US-304, ADR-011). The Ingress needs ingress-nginx
 ## (minikube addons enable ingress). Typical run, with make gateway-load-test in another terminal:
@@ -200,6 +217,20 @@ edge-integration-test:
 k8s-mttr-test:
 	./tests/k8s/mttr-cycle.sh
 
+## 30-day SLO run (#67, docs/slo-30-day-run.md): the stack with the persistent Prometheus, plus the
+## steady synthetic traffic of k8s/slo-run/ (needs the images of make gateway-image).
+slo-run-start: k8s-apply
+	kubectl apply -f k8s/slo-run/
+	kubectl rollout status deployment/slo-traffic --timeout=120s
+
+## Days collected, traffic flowing, 30-day SLO figures; exits 1 if the run is not collecting.
+slo-run-status:
+	./tests/k8s/slo-run-status.sh
+
+## End of the run: TSDB snapshot (tar.gz) and hourly SLO series (JSON) into slo-run-export/.
+slo-run-export:
+	./tests/k8s/slo-run-export.sh
+
 ## AC7: rollout restart of eop-server under continuous client load, zero failed operations
 k8s-rollout-restart-test:
 	./tests/k8s/rollout-restart-under-load.sh
@@ -227,6 +258,10 @@ edge-load-tool-test:
 ## US-405: edge dashboard, its P99 alert and their provisioning (static, no Grafana needed).
 edge-dashboard-test:
 	python3 tests/smoke/test_edge_dashboard_contract.py
+
+## US-406 AC1/AC3: config/production.env, the Kustomization listings and the deploy/production render.
+production-config-test:
+	python3 tests/smoke/test_production_config_contract.py
 
 hpc-dashboard-test:
 	python3 tests/smoke/test_hpc_dashboard_contract.py
