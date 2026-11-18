@@ -68,3 +68,6 @@ logs/
 
 # Python bytecode (benchmark_report.py y sus tests)
 __pycache__/
+
+# Site-specific firmware settings (WiFi credentials): never committed.
+firmware/eop-edge/*.local.conf

@@ -1,4 +1,4 @@
-.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan
+.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan firmware-setup firmware-build firmware-test firmware-integration-test firmware-run firmware-image
 
 deploy-local:
 	docker compose up --build -d
@@ -99,3 +99,38 @@ tsan:
 	cmake --build build-tsan --parallel
 	TSAN_OPTIONS="halt_on_error=1:second_deadlock_stack=1:ignore_noninstrumented_modules=1" \
 		ctest --test-dir build-tsan --output-on-failure --parallel 2
+
+## Edge firmware (US-401..US-403, ADR-014), built for native_sim. make firmware-setup creates
+## the Zephyr workspace pinned in firmware/eop-edge/west.yml, outside the repository
+## (EOP_ZEPHYR_WS, default ~/.cache/eop-zephyr-ws); the other targets use it.
+EOP_ZEPHYR_WS ?= $(HOME)/.cache/eop-zephyr-ws
+FIRMWARE_BUILD ?= build/firmware
+FIRMWARE_BOARD ?= native_sim/native/64
+BROKER_HOST ?= 127.0.0.1
+## native_sim uses the host compiler; the ESP32 build needs ZEPHYR_TOOLCHAIN=zephyr and the
+## Zephyr SDK (firmware/eop-edge/README.md, "ESP32 build").
+ZEPHYR_TOOLCHAIN ?= host
+ZEPHYR_ENV = . $(EOP_ZEPHYR_WS)/.venv/bin/activate && \
+	ZEPHYR_BASE=$(EOP_ZEPHYR_WS)/zephyr ZEPHYR_TOOLCHAIN_VARIANT=$(ZEPHYR_TOOLCHAIN)
+
+firmware-setup:
+	./scripts/zephyr-setup.sh
+
+firmware-build:
+	$(ZEPHYR_ENV) west build -b $(FIRMWARE_BOARD) -d $(FIRMWARE_BUILD) firmware/eop-edge
+
+## Unit tests (ztest) of backoff, payload encoding, identity rules and the queue.
+firmware-test:
+	$(ZEPHYR_ENV) $(EOP_ZEPHYR_WS)/zephyr/scripts/twister -p $(FIRMWARE_BOARD) \
+		-T firmware/eop-edge/tests -O build/firmware-twister --inline-logs
+
+## US-401 AC2-AC6 against a real Mosquitto in Docker.
+firmware-integration-test: firmware-build
+	python3 firmware/eop-edge/tests/integration/test_publish.py $(FIRMWARE_BUILD)/zephyr/zephyr.exe
+
+## One simulated device on this terminal (shell: eop status). FIRMWARE_ARGS="--node-id=vault-7"
+firmware-run: firmware-build
+	$(FIRMWARE_BUILD)/zephyr/zephyr.exe --broker-host=$(BROKER_HOST) $(FIRMWARE_ARGS)
+
+firmware-image:
+	docker build -f firmware/eop-edge/Dockerfile -t eop-edge:local .

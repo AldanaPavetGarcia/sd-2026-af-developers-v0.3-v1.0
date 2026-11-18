@@ -1,0 +1,184 @@
+# EOP edge firmware configuration (ADR-014). Every value the firmware needs comes from here and
+# is set in prj.conf or a board .conf file: nothing is hardcoded in the sources (US-401 AC7).
+
+mainmenu "EOP edge firmware"
+
+menu "EOP edge device"
+
+config EOP_NODE_ID
+	string "Node id"
+	default "vault-101"
+	help
+	  Identity of the bunker in EOP: [a-z0-9-]{1,63}, not starting with hpc-engine. It is the
+	  MQTT client id and a segment of every topic. On native_sim, --node-id overrides it.
+
+config EOP_BUNKER_NAME
+	string "Bunker name"
+	default "Vault-101"
+	help
+	  Readable name shown in /v1/nodes: [A-Za-z0-9_.-]{1,63}. On native_sim, --bunker-name
+	  overrides it.
+
+config EOP_SAMPLE_PERIOD_MS
+	int "Sampling period (ms)"
+	default 1000
+	range 100 60000
+
+config EOP_QUEUE_LEN
+	int "Telemetry queue length (samples)"
+	default 60
+	range 1 600
+	help
+	  Samples held between the sensor and the MQTT thread. It is also the offline buffer:
+	  60 samples at one per second are 60 seconds without the broker (US-402 AC1).
+
+config EOP_TEMP_INITIAL_DC
+	int "Initial simulated temperature (tenths of a degree C)"
+	default 210
+
+config EOP_TEMP_MIN_DC
+	int "Lowest simulated temperature (tenths of a degree C)"
+	default 150
+
+config EOP_TEMP_MAX_DC
+	int "Highest simulated temperature (tenths of a degree C)"
+	default 400
+
+config EOP_TEMP_STEP_DC
+	int "Largest change between two samples (tenths of a degree C)"
+	default 4
+
+config EOP_TEMP_WARN_DC
+	int "Temperature from which the status is WARN (tenths of a degree C)"
+	default 300
+
+config EOP_TEMP_ALERT_DC
+	int "Temperature from which the status is ALERT (tenths of a degree C)"
+	default 350
+
+endmenu
+
+menu "EOP MQTT"
+
+config EOP_MQTT_BROKER_HOST
+	string "Broker host name or address"
+	default "mosquitto"
+	help
+	  On native_sim, --broker-host overrides it.
+
+config EOP_MQTT_BROKER_PORT
+	int "Broker port"
+	default 1883
+	range 1 65535
+	help
+	  On native_sim, --broker-port overrides it.
+
+config EOP_MQTT_TOPIC_PREFIX
+	string "Topic prefix"
+	default "eop/bunker"
+	help
+	  Topics are <prefix>/<node_id>/telemetry, /events and /health.
+
+config EOP_MQTT_KEEPALIVE_S
+	int "MQTT keep-alive (s)"
+	default 30
+
+config EOP_MQTT_CONNECT_TIMEOUT_MS
+	int "Time to wait for CONNACK (ms)"
+	default 5000
+
+config EOP_MQTT_ACK_TIMEOUT_MS
+	int "Time to wait for a PUBACK before reconnecting (ms)"
+	default 5000
+
+config EOP_MQTT_POLL_MS
+	int "Socket poll interval of the MQTT thread (ms)"
+	default 100
+	help
+	  How long the MQTT thread waits for broker input before checking the queue again. Bounds
+	  the extra latency a sample can wait in the queue.
+
+config EOP_MQTT_BUFFER_SIZE
+	int "MQTT rx/tx buffer size (bytes)"
+	default 512
+
+config EOP_PAYLOAD_MAX_LEN
+	int "Largest JSON payload (bytes)"
+	default 256
+
+config EOP_BACKOFF_INITIAL_S
+	int "First reconnection delay (s)"
+	default 1
+
+config EOP_BACKOFF_MAX_S
+	int "Largest reconnection delay (s)"
+	default 30
+	help
+	  Delays double from EOP_BACKOFF_INITIAL_S up to this value: 1, 2, 4, 8, 16, 30 s
+	  (US-401 AC5).
+
+endmenu
+
+menu "EOP threads"
+
+config EOP_SENSOR_PRIORITY
+	int "Sensor thread priority"
+	default 5
+
+config EOP_MQTT_PRIORITY
+	int "MQTT thread priority"
+	default 6
+
+config EOP_SENSOR_STACK_SIZE
+	int "Sensor thread stack (bytes)"
+	default 512
+
+config EOP_MQTT_STACK_SIZE
+	int "MQTT thread stack (bytes)"
+	default 2048
+
+endmenu
+
+menu "EOP clock"
+
+config EOP_CLOCK_SNTP
+	def_bool !BOARD_NATIVE_SIM
+	select SNTP
+	help
+	  Telemetry timestamps come from the wall clock. On real hardware it is set with SNTP at
+	  boot (src/platform_sntp.c); on native_sim it is taken from the host
+	  (src/platform_native_sim.c).
+
+config EOP_SNTP_SERVER
+	string "SNTP server"
+	default "pool.ntp.org"
+	depends on EOP_CLOCK_SNTP
+
+config EOP_SNTP_TIMEOUT_MS
+	int "SNTP query timeout (ms)"
+	default 3000
+	depends on EOP_CLOCK_SNTP
+
+endmenu
+
+menu "EOP WiFi (hardware build)"
+	depends on WIFI
+
+config EOP_WIFI_SSID
+	string "WiFi network"
+	default ""
+	help
+	  Set it in an untracked overlay (see README, "ESP32 build"), never in prj.conf: it is
+	  site configuration, and the password next to it is a credential.
+
+config EOP_WIFI_PSK
+	string "WiFi password (empty for an open network)"
+	default ""
+
+config EOP_WIFI_TIMEOUT_MS
+	int "Time to join the network and get an address (ms)"
+	default 30000
+
+endmenu
+
+source "Kconfig.zephyr"
