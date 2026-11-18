@@ -3,7 +3,8 @@
 
 The load tool is the evidence for US-304 AC4/AC6 and US-305 AC4, so it is tested for the two
 mistakes that would make that evidence wrong: passing while clients got errors, and declaring a
-rollback finished while the canary still answers.
+rollback finished while the canary still answers. Its latency report is the client-side evidence
+for the v0.3 NFR (REST API P99 < 300 ms), so a slow backend must fail --max-p99.
 """
 
 import os
@@ -22,6 +23,7 @@ class Backend(BaseHTTPRequestHandler):
 
     track = "stable"
     fail_every = 0
+    delay = 0
     served = 0
     lock = threading.Lock()
 
@@ -30,6 +32,7 @@ class Backend(BaseHTTPRequestHandler):
             Backend.served += 1
             failing = Backend.fail_every and Backend.served % Backend.fail_every == 0
             track = Backend.track
+        time.sleep(Backend.delay)
         status = 503 if failing else 200
         self.send_response(status)
         self.send_header("X-EOP-Version", "0.3.1" if track == "canary" else "0.3.0")
@@ -44,7 +47,7 @@ class Backend(BaseHTTPRequestHandler):
 
 class GatewayLoadTest(unittest.TestCase):
     def setUp(self):
-        Backend.track, Backend.fail_every, Backend.served = "stable", 0, 0
+        Backend.track, Backend.fail_every, Backend.delay, Backend.served = "stable", 0, 0, 0
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Backend)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -61,6 +64,23 @@ class GatewayLoadTest(unittest.TestCase):
         out = self.run_tool("--duration", "1", "--report-every", "0.5", "--concurrency", "2")
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.assertIn("0.3.0 (stable)", out.stdout)
+        self.assertIn("OK: no 5xx and no connection errors", out.stdout)
+
+    def test_latency_is_reported_per_path_and_meets_the_limit(self):
+        out = self.run_tool("--duration", "1", "--concurrency", "2", "--paths", "/v1/health,/v1/nodes",
+                            "--max-p99", "300")
+        self.assertEqual(out.returncode, 0, out.stdout)
+        self.assertIn("latency /v1/health: n=", out.stdout)
+        self.assertIn("latency /v1/nodes: n=", out.stdout)
+        self.assertIn("OK: p99 of every path under 300 ms", out.stdout)
+
+    def test_a_p99_over_the_limit_fails_the_run(self):
+        Backend.delay = 0.05
+        out = self.run_tool("--duration", "1", "--concurrency", "2", "--max-p99", "20")
+        self.assertEqual(out.returncode, 1, out.stdout)
+        self.assertIn("p99", out.stdout)
+        self.assertIn("> 20 ms", out.stdout)
+        # Slow is not an error: the 5xx check still passes on its own.
         self.assertIn("OK: no 5xx and no connection errors", out.stdout)
 
     def test_any_5xx_fails_the_run(self):

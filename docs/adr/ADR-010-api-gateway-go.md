@@ -136,6 +136,11 @@ on an error rate threshold, so both indicators have to be defined before they ar
   count either.
 * **Error budget:** the availability objective uses the same 30-day window and the same budget
   thresholds as the server SLO (ADR-009), on its own panel of the SLO dashboard.
+* **Measured at the v0.3 release (#57):** `make gateway-p99-test` checks the same objective from
+  the client side, through the Ingress, for 60 s. On minikube, 8 clients on `/v1/health`,
+  `/v1/nodes` and `/v1/openapi.json` (8,487 requests, no errors) saw P99 of 58.3, 48.5 and 43.8 ms;
+  the gateway histogram gave 36.9 ms over the same 5 minutes. The gap between the two is the
+  Ingress hop, which the client measurement includes and the SLI does not.
 
 ## Alternatives Considered
 

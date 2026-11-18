@@ -8,7 +8,9 @@ Two modes:
                    process gets SIGINT/SIGTERM. Prints the split per version and track every
                    --report-every seconds and a summary at the end. Exits 1 if any request got a
                    5xx or a connection error: this is the "no client errors during the rollout"
-                   check of US-304 AC6 and US-305 AC4.
+                   check of US-304 AC6 and US-305 AC4. The summary also gives the client-side
+                   latency (P50/P95/P99) per path; with --max-p99 MS the run fails if the P99 of
+                   any path exceeds MS (the v0.3 NFR: REST API P99 < 300 ms, ADR-010 §6).
 
   --until-absent T Sends requests one after another until --settle consecutive responses come
                    from a track other than T, then prints how long that took. make
@@ -20,6 +22,7 @@ The target defaults to the minikube Ingress: http://$(minikube ip) with Host: ap
 import argparse
 import collections
 import http.client
+import math
 import os
 import signal
 import subprocess
@@ -53,16 +56,20 @@ class Client:
         self.https = parsed.scheme == "https"
         self.host = host
         self.conn = None
+        self.elapsed = None
 
     def get(self, path):
         """Returns (status, track, version), or (None, None, error) on a connection error."""
+        self.elapsed = None
         try:
             if self.conn is None:
                 factory = http.client.HTTPSConnection if self.https else http.client.HTTPConnection
                 self.conn = factory(self.netloc, timeout=REQUEST_TIMEOUT_SECONDS)
+            started = time.perf_counter()
             self.conn.request("GET", path, headers={"Host": self.host})
             resp = self.conn.getresponse()
             resp.read()
+            self.elapsed = time.perf_counter() - started
             if resp.getheader("Connection", "").lower() == "close":
                 self.close()
             return resp.status, resp.getheader("X-EOP-Track", "-"), resp.getheader("X-EOP-Version", "-")
@@ -82,9 +89,12 @@ class Tally:
         self.total = collections.Counter()
         self.window = collections.Counter()
         self.errors = []
+        self.latencies = collections.defaultdict(list)
 
-    def record(self, status, track, version, path):
+    def record(self, status, track, version, path, elapsed=None):
         with self.lock:
+            if elapsed is not None:
+                self.latencies[path].append(elapsed)
             if status is None:
                 key = "connection-error"
                 self.errors.append(f"{path}: {version}")
@@ -110,6 +120,23 @@ def describe(counter):
     return f"{count} requests | " + " | ".join(parts)
 
 
+def percentile(samples, q):
+    """Nearest-rank percentile of a sorted list."""
+    return samples[max(0, math.ceil(q / 100 * len(samples)) - 1)]
+
+
+def latency_report(latencies, max_p99_ms):
+    """Prints P50/P95/P99 per path; returns the paths whose P99 exceeds max_p99_ms."""
+    over = []
+    for path, samples in sorted(latencies.items()):
+        samples = sorted(samples)
+        p50, p95, p99 = (1000 * percentile(samples, q) for q in (50, 95, 99))
+        print(f"latency {path}: n={len(samples)} p50={p50:.1f} ms p95={p95:.1f} ms p99={p99:.1f} ms")
+        if max_p99_ms and p99 > max_p99_ms:
+            over.append(f"{path} p99 {p99:.1f} ms > {max_p99_ms:g} ms")
+    return over
+
+
 def run_load(args):
     paths = [p for p in args.paths.split(",") if p]
     tally = Tally()
@@ -124,7 +151,7 @@ def run_load(args):
             path = paths[n % len(paths)]
             n += 1
             status, track, version = client.get(path)
-            tally.record(status, track, version, path)
+            tally.record(status, track, version, path, client.elapsed)
             if args.interval:
                 stop.wait(args.interval)
         client.close()
@@ -143,13 +170,18 @@ def run_load(args):
         thread.join(REQUEST_TIMEOUT_SECONDS + 1)
 
     print(f"summary: {describe(tally.total)}")
+    over = latency_report(tally.latencies, args.max_p99)
     if tally.errors:
         print(f"FAIL: {len(tally.errors)} client errors, first ones:")
         for line in tally.errors[:10]:
             print(f"  {line}")
-        return 1
-    print("OK: no 5xx and no connection errors")
-    return 0
+    else:
+        print("OK: no 5xx and no connection errors")
+    for line in over:
+        print(f"FAIL: {line}")
+    if args.max_p99 and not over:
+        print(f"OK: p99 of every path under {args.max_p99:g} ms")
+    return 1 if tally.errors or over else 0
 
 
 def run_until_absent(args):
@@ -184,6 +216,7 @@ def main():
     parser.add_argument("--interval", type=float, default=0.05, help="pause between requests of one client, s")
     parser.add_argument("--duration", type=float, default=0, help="seconds to run; 0 runs until Ctrl-C")
     parser.add_argument("--report-every", type=float, default=5)
+    parser.add_argument("--max-p99", type=float, default=0, help="fail if any path's P99 exceeds this, ms")
     parser.add_argument("--until-absent", metavar="TRACK", help="wait until TRACK stops answering")
     parser.add_argument("--settle", type=int, default=40, help="consecutive responses that confirm it")
     parser.add_argument("--probe-interval", type=float, default=0.05)
