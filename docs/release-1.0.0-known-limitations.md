@@ -16,6 +16,7 @@ what would close each point. Written for the course staff; nothing here is hidde
 | 7 | **One edge-ingestor replica** | Messages are processed in order by one replica (ADR-028 §2); throughput is far above v1.0's device count. | MQTT shared subscriptions plus an in-flight marker, if many more devices are added. |
 | 8 | **Overlay path and dev overlay (ADR-029)** | The overlay is `deploy/production` (Kustomize rejects an overlay inside its own base); the 7 GB `dev` overlay is not done — `make k8s-apply` stays the development path. | Update ADR-029's path; add the dev overlay if needed. |
 | 9 | **Alert thresholds in two places** | `config/production.env` and the Grafana alert files hold the same numbers; Kustomize cannot inject into a file blob. A contract test keeps them equal. | — (guarded by `make production-config-test`). |
+| 10 | **CI minutes (free plan)** | On 2026-11-18 the 2,000 monthly Actions minutes ran out and GitHub stopped starting jobs in #81–#87 (not a test failure); the C++ jobs had passed. The workflows now cancel superseded runs, build images only on the PR into `development`, and can move to a self-hosted runner with a repository variable. | Register the runner on the 14-core machine ([ci-self-hosted-runner.md](ci-self-hosted-runner.md)) or wait for the monthly reset, then re-run the jobs. |
 
 ## 2. Release procedure
 
