@@ -91,7 +91,7 @@ func (p *Processor) Handle(ctx context.Context, m Message) Outcome {
 		if err != nil {
 			return p.invalid(ctx, m, nodeID, err)
 		}
-		p.Window.Seen(nodeID, m.ReceivedAt)
+		p.seen(nodeID, m.ReceivedAt)
 		p.Metrics.event(event)
 		return Recorded
 	case edge.KindHealth:
@@ -99,11 +99,17 @@ func (p *Processor) Handle(ctx context.Context, m Message) Outcome {
 		if err != nil {
 			return p.invalid(ctx, m, nodeID, err)
 		}
-		p.Window.Seen(nodeID, m.ReceivedAt)
+		p.seen(nodeID, m.ReceivedAt)
 		p.Metrics.health(health)
 		return Recorded
 	}
 	return p.invalid(ctx, m, nodeID, fmt.Errorf("%w: topic kind %q", edge.ErrInvalid, kind))
+}
+
+// seen records that a device is alive: the status snapshot and the dashboard's device table.
+func (p *Processor) seen(nodeID string, at time.Time) {
+	p.Window.Seen(nodeID, at)
+	p.Metrics.seen(nodeID, at)
 }
 
 func (p *Processor) invalid(ctx context.Context, m Message, nodeID string, err error) Outcome {
@@ -120,7 +126,7 @@ func (p *Processor) telemetry(ctx context.Context, m Message, nodeID string) Out
 	if err != nil {
 		return p.invalid(ctx, m, nodeID, err)
 	}
-	p.Window.Seen(nodeID, m.ReceivedAt)
+	p.seen(nodeID, m.ReceivedAt)
 
 	key := DedupKey(t.NodeID, t.BootID, t.MessageID)
 	seen, err := p.Dedup.Seen(ctx, key)
@@ -162,6 +168,12 @@ func (p *Processor) telemetry(ctx context.Context, m Message, nodeID string) Out
 		return p.invalid(ctx, m, nodeID, err)
 	}
 	delivered := p.Now()
+	// US-405 AC1: the three timestamps of the message, readable on the trace in SigNoz.
+	msgSpan.SetAttributes(
+		attribute.String("edge.sampled_at", sampledAt.UTC().Format(time.RFC3339Nano)),
+		attribute.String("edge.received_at", m.ReceivedAt.UTC().Format(time.RFC3339Nano)),
+		attribute.String("edge.delivered_at", delivered.UTC().Format(time.RFC3339Nano)),
+		attribute.Float64("edge.e2e_latency_ms", float64(delivered.Sub(sampledAt).Microseconds())/1000))
 	end(nil)
 
 	// Only now: marking before the ACK would turn a crash in between into a lost message.

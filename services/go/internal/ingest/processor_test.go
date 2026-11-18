@@ -129,6 +129,25 @@ func TestForwardsTelemetryAndMarksItAfterTheAck(t *testing.T) {
 	if ended[0].Parent().SpanID() != ended[1].SpanContext().SpanID() {
 		t.Fatal("edge.ingest must be a child of edge.message")
 	}
+	// US-405 AC1: the three timestamps and the latency on the message's trace.
+	attrs := map[string]string{}
+	for _, kv := range ended[1].Attributes() {
+		attrs[string(kv.Key)] = kv.Value.String()
+	}
+	want := map[string]string{
+		"edge.sampled_at":     "2026-11-02T14:03:07.12Z",
+		"edge.received_at":    "2026-11-02T14:03:07.14Z",
+		"edge.delivered_at":   "2026-11-02T14:03:07.2Z",
+		"edge.e2e_latency_ms": "80",
+	}
+	for key, value := range want {
+		if attrs[key] != value {
+			t.Fatalf("%s = %q, want %q (all: %v)", key, attrs[key], value, attrs)
+		}
+	}
+	if got := testutil.ToFloat64(r.p.Metrics.lastSeen.WithLabelValues("vault-101")); got != float64(sampled.Add(20*time.Millisecond).UnixMilli())/1000 {
+		t.Fatalf("last seen %v", got)
+	}
 	snap := r.p.Window.Snapshot(sampled.Add(time.Second), edge.StateConnected, 10*time.Second)
 	if snap.Received != 1 || snap.Forwarded != 1 || len(snap.Devices) != 1 {
 		t.Fatalf("window %+v", snap)
@@ -259,6 +278,9 @@ func TestEventsAndHealthFeedMetrics(t *testing.T) {
 	}
 	if len(r.fwd.samples) != 0 {
 		t.Fatal("events and health are not forwarded")
+	}
+	if testutil.ToFloat64(m.lastSeen.WithLabelValues("vault-101")) == 0 {
+		t.Fatal("events and health also mark the device as seen")
 	}
 }
 

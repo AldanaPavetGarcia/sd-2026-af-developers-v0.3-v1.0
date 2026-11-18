@@ -449,6 +449,8 @@ jobs:
         run: |
           make slo-dashboard-test
           make hpc-dashboard-test
+          make edge-dashboard-test
+          make edge-load-tool-test
           make loki-test
 
       # Canary and blue-green layouts as rendered by Kustomize (selectors, Services, Ingress), the
