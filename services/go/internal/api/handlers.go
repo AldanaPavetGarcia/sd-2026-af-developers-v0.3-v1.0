@@ -21,17 +21,42 @@ type node struct {
 	IPAddress  string `json:"ip_address"`
 	Capacity   int    `json:"capacity"`
 	LastSeenAt string `json:"last_seen_at"`
+	// Source is "edge" for devices fed through the edge ingestor (ADR-028), "tcp" otherwise.
+	Source    string         `json:"source"`
+	Telemetry *nodeTelemetry `json:"telemetry,omitempty"`
 }
 
+// nodeTelemetry is the newest device sample of an edge node (US-404 AC8).
+type nodeTelemetry struct {
+	Temperature float64 `json:"temperature"`
+	Status      string  `json:"status"`
+	SampledAt   string  `json:"sampled_at"`
+}
+
+// sampledAtLayout keeps the device's millisecond precision.
+const sampledAtLayout = "2006-01-02T15:04:05.000Z07:00"
+
 func toNode(n eopclient.Node) node {
-	return node{
+	out := node{
 		NodeID:     n.NodeID,
 		BunkerName: n.BunkerName,
 		Status:     n.Status,
 		IPAddress:  n.IPAddress,
 		Capacity:   n.Capacity,
 		LastSeenAt: n.LastSeen.UTC().Format(time.RFC3339),
+		Source:     n.Source,
 	}
+	if out.Source == "" {
+		out.Source = eopclient.SourceTCP
+	}
+	if n.Telemetry != nil {
+		out.Telemetry = &nodeTelemetry{
+			Temperature: n.Telemetry.Temperature,
+			Status:      n.Telemetry.DeviceStatus,
+			SampledAt:   n.Telemetry.SampledAt.UTC().Format(sampledAtLayout),
+		}
+	}
+	return out
 }
 
 func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {

@@ -35,7 +35,25 @@ type Node struct {
 	Capacity   int
 	Status     string
 	LastSeen   time.Time
+	// Source is "edge" for nodes fed by TELEMETRY (ADR-028) and "tcp" otherwise; v0.1 records
+	// carry no source key and read as "tcp".
+	Source string
+	// Telemetry is the newest sample of an edge node; nil for TCP nodes.
+	Telemetry *EdgeTelemetry
 }
+
+// EdgeTelemetry is the device state an edge node carries (protocol §3, edge keys).
+type EdgeTelemetry struct {
+	Temperature  float64
+	DeviceStatus string
+	SampledAt    time.Time
+}
+
+// Node sources.
+const (
+	SourceTCP  = "tcp"
+	SourceEdge = "edge"
+)
 
 // ErrNotFound is returned when the server does not know the requested node.
 var ErrNotFound = errors.New("eopclient: node not found")
@@ -132,13 +150,46 @@ func parseNode(line string) (Node, error) {
 	if err != nil {
 		return Node{}, &MalformedResponseError{Line: line, Reason: "last_seen is not epoch seconds"}
 	}
-	return Node{
+	node := Node{
 		NodeID:     values["node_id"],
 		BunkerName: values["bunker_name"],
 		IPAddress:  values["ip_address"],
 		Capacity:   capacity,
 		Status:     values["status"],
 		LastSeen:   time.Unix(lastSeen, 0).UTC(),
+		Source:     SourceTCP,
+	}
+	if values["source"] == SourceEdge {
+		telemetry, err := parseEdgeKeys(line, values)
+		if err != nil {
+			return Node{}, err
+		}
+		node.Source = SourceEdge
+		node.Telemetry = telemetry
+	}
+	return node, nil
+}
+
+// parseEdgeKeys reads the keys an edge node adds after the v0.1 ones:
+// "source=edge temperature=21.4 device_status=OK sampled_at=<epoch ms>".
+func parseEdgeKeys(line string, values map[string]string) (*EdgeTelemetry, error) {
+	for _, key := range []string{"temperature", "device_status", "sampled_at"} {
+		if _, ok := values[key]; !ok {
+			return nil, &MalformedResponseError{Line: line, Reason: "edge node without " + key}
+		}
+	}
+	temperature, err := strconv.ParseFloat(values["temperature"], 64)
+	if err != nil {
+		return nil, &MalformedResponseError{Line: line, Reason: "temperature is not a number"}
+	}
+	sampledAt, err := strconv.ParseInt(values["sampled_at"], 10, 64)
+	if err != nil {
+		return nil, &MalformedResponseError{Line: line, Reason: "sampled_at is not epoch milliseconds"}
+	}
+	return &EdgeTelemetry{
+		Temperature:  temperature,
+		DeviceStatus: values["device_status"],
+		SampledAt:    time.UnixMilli(sampledAt).UTC(),
 	}, nil
 }
 

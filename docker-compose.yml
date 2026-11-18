@@ -272,6 +272,56 @@ services:
       timeout: 3s
       retries: 12
 
+  # US-404 (#72): MQTT broker of the edge devices (ADR-013). Same service as the firmware's
+  # (#68); devices and the simulator publish on 1883.
+  mosquitto:
+    <<: *common
+    image: eclipse-mosquitto:2.0.18
+    container_name: mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - eop-mosquitto-data:/mosquitto/data
+
+  # US-404 (#72): MQTT -> eop-server TELEMETRY, deduplicated in Redis (ADR-028). Metrics on 9103.
+  edge-ingestor:
+    <<: *common
+    build:
+      context: services/go
+      dockerfile: Dockerfile
+      target: edge-ingestor
+    image: edge-ingestor:local
+    container_name: eop-edge-ingestor
+    environment:
+      EOP_MQTT_BROKER: "tcp://mosquitto:1883"
+      EOP_SERVER_ADDR: "eop-server:9026"
+      EOP_REDIS_ADDR: "redis:6379"
+      OTEL_SERVICE_NAME: "edge-ingestor"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://otel-collector:4318/v1/traces"
+    ports:
+      - "9103:9103"
+    depends_on:
+      - mosquitto
+      - redis
+      - eop-server
+
+  # Simulated bunkers with the firmware's payloads: docker compose --profile edge-sim up -d edge-sim
+  edge-sim:
+    <<: *common
+    profiles: ["edge-sim"]
+    build:
+      context: services/go
+      dockerfile: Dockerfile
+      target: edge-sim
+    image: edge-sim:local
+    container_name: eop-edge-sim
+    environment:
+      EOP_MQTT_BROKER: "tcp://mosquitto:1883"
+      EOP_SIM_DEVICES: "5"
+    depends_on:
+      - mosquitto
+
   # US-205 (#43): Prometheus + Grafana, scraping eop-server's /metrics (#42) and provisioning
   # the dashboards already versioned under monitoring/grafana/ (#38, #39). Not chained to
   # eop-server via depends_on — Prometheus tolerates a target being down at scrape time, no
@@ -320,6 +370,7 @@ services:
       start_period: 10s
 
 volumes:
+  eop-mosquitto-data:
   eop-signoz-clickhouse:
   eop-signoz-clickhouse-user-scripts:
   eop-signoz-sqlite:

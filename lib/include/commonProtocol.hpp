@@ -45,6 +45,7 @@ extern "C"
         CMD_ANALYZE_GRAPH,
         CMD_ERROR_SERVICE_UNAVAILABLE,
         CMD_ERROR_HPC_TIMEOUT,
+        CMD_TELEMETRY,
     };
 
     /**

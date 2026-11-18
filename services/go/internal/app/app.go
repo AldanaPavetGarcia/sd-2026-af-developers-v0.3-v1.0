@@ -15,6 +15,7 @@ import (
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/api"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/breaker"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/config"
+	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/edge"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/eopclient"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/external"
 	"github.com/AldanaPavetGarcia/sd-2026-af-developers-v0.3-v1.0/services/go/internal/jobs"
@@ -71,6 +72,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger, listeners 
 	apiServer := &http.Server{
 		Handler: api.NewServer(api.Options{
 			Store: client, Analyzer: client, JobRunner: runner, JobStore: jobStore, AI: ai, Corporate: corporate,
+			Edge: edge.RedisStatus{RDB: rdb},
 			Analysis: api.AnalysisOptions{
 				MaxBodyBytes: cfg.Analysis.MaxBodyBytes, AsyncMinNodes: cfg.Analysis.AsyncMinNodes, SyncTimeout: cfg.Analysis.SyncTimeout,
 			},

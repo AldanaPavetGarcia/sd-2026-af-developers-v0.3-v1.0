@@ -907,3 +907,95 @@ TEST_F(EopServerTest, UnterminatedCommandsBeforeCloseNeverReachAnotherClient)
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// TELEMETRY from the edge ingestor (US-404 AC2, ADR-028 §1)
+// ---------------------------------------------------------------------------
+namespace
+{
+    std::string telemetryLine(const std::string& nodeId,
+                              const std::string& extra = "",
+                              const std::string& temperature = "21.4",
+                              const std::string& sampledAt = "1793628187120")
+    {
+        return "TELEMETRY node_id=" + nodeId +
+               " bunker_name=Vault-101 message_id=3 boot_id=9f3c27a1 temperature=" + temperature +
+               " status=OK sampled_at=" + sampledAt + extra;
+    }
+} // namespace
+
+TEST_F(EopServerTest, TelemetryIsAcknowledgedAndShownAsAnEdgeNode)
+{
+    EXPECT_EQ(sendAndReceive(telemetryLine("vault-it-7")), "ACK TELEMETRY node_id=vault-it-7 message_id=3\n");
+
+    const std::string query = sendAndReceive("QUERY_NODE node_id=vault-it-7");
+    EXPECT_NE(query.find("node_id=vault-it-7 bunker_name=Vault-101 ip_address=0.0.0.0 capacity=0 status=ONLINE"),
+              std::string::npos)
+        << query;
+    EXPECT_NE(query.find(" source=edge temperature=21.4 device_status=OK sampled_at=1793628187120\n"),
+              std::string::npos)
+        << query;
+
+    const std::string list = sendAndReceive("LIST_NODES");
+    EXPECT_NE(list.find("source=edge"), std::string::npos) << list;
+}
+
+TEST_F(EopServerTest, TelemetryWithTraceContextIsAccepted)
+{
+    const std::string traced =
+        telemetryLine("vault-it-8", " traceparent=00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+    EXPECT_EQ(sendAndReceive(traced), "ACK TELEMETRY node_id=vault-it-8 message_id=3\n");
+}
+
+TEST_F(EopServerTest, InvalidTelemetryIsRejectedWithItsReason)
+{
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"TELEMETRY node_id=vault-it-9 bunker_name=Vault-101", "expected message_id"},
+        {telemetryLine("Vault-It-9"), "invalid node_id"},
+        {telemetryLine("hpc-engine-x"), "reserved node_id"},
+        {"TELEMETRY node_id=vault-it-9 bunker_name=Vault 101 message_id=3", "expected message_id"},
+        {telemetryLine("vault-it-9", "", "151.0"), "invalid temperature"},
+        {telemetryLine("vault-it-9", "", "hot"), "invalid temperature"},
+        {telemetryLine("vault-it-9", "", "21.4", "0"), "invalid sampled_at"},
+        {telemetryLine("vault-it-9", " extra=1"), "unexpected key after sampled_at"},
+        {telemetryLine("vault-it-9", " traceparent=00-x extra=1"), "unexpected key after traceparent"},
+        {"TELEMETRY node_id=vault-it-9 bunker_name=Vault-101 message_id=0 boot_id=9f3c27a1 temperature=1 status=OK "
+         "sampled_at=1",
+         "invalid message_id"},
+        {"TELEMETRY node_id=vault-it-9 bunker_name=Vault-101 message_id=1 boot_id=9F3C27A1 temperature=1 status=OK "
+         "sampled_at=1",
+         "invalid boot_id"},
+        {"TELEMETRY node_id=vault-it-9 bunker_name=Vault-101 message_id=1 boot_id=9f3c27a1 temperature=1 status=HOT "
+         "sampled_at=1",
+         "invalid status"},
+    };
+    for (const auto& [line, reason] : cases)
+    {
+        EXPECT_EQ(sendAndReceive(line), "ERROR_INVALID_REQUEST desc=" + reason + "\n") << line;
+    }
+    EXPECT_NE(sendAndReceive("QUERY_NODE node_id=vault-it-9").find("ERROR_NOT_FOUND"), std::string::npos)
+        << "nothing was stored";
+}
+
+TEST_F(EopServerTest, TelemetryForATcpNodeIsADuplicate)
+{
+    sendAndReceive("REGISTER node_id=tcp-it-1 bunker_name=Tcp ip_address=10.0.0.5 capacity=5");
+    EXPECT_EQ(sendAndReceive(telemetryLine("tcp-it-1")),
+              "ERROR_DUPLICATE node_id=tcp-it-1 desc=Node registered over TCP\n");
+    const std::string query = sendAndReceive("QUERY_NODE node_id=tcp-it-1");
+    EXPECT_EQ(query.find("source="), std::string::npos) << "a v0.1 node is printed as before: " << query;
+}
+
+TEST_F(EopServerTest, EdgeNodeGoesOfflineWhenItsTelemetryStops)
+{
+    const int previous = serverContext.edgeLivenessSeconds.load();
+    serverContext.edgeLivenessSeconds = 1;
+    sendAndReceive(telemetryLine("vault-it-10"));
+    EXPECT_NE(sendAndReceive("QUERY_NODE node_id=vault-it-10").find("status=ONLINE"), std::string::npos);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    EXPECT_NE(sendAndReceive("QUERY_NODE node_id=vault-it-10").find("status=OFFLINE"), std::string::npos);
+    sendAndReceive(telemetryLine("vault-it-10", "", "22.0", "1793628188120"));
+    EXPECT_NE(sendAndReceive("QUERY_NODE node_id=vault-it-10").find("status=ONLINE"), std::string::npos)
+        << "back with the next sample";
+    serverContext.edgeLivenessSeconds = previous;
+}
