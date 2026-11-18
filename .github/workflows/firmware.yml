@@ -13,13 +13,18 @@ on:
 permissions:
   contents: read
 
+# A new push cancels the run still going for the same PR (see ci.yml).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 env:
   EOP_ZEPHYR_WS: ${{ github.workspace }}/../eop-zephyr-ws
 
 jobs:
   firmware:
     name: firmware (native_sim)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.EOP_CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
 
     steps:
