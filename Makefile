@@ -1,4 +1,4 @@
-.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan firmware-setup firmware-build firmware-fault-build firmware-test firmware-integration-test firmware-run firmware-image
+.PHONY: deploy-local k8s-apply k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-rollout-restart-test observability-test slo-dashboard-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan firmware-setup firmware-build firmware-fault-build firmware-test firmware-integration-test firmware-tls-build firmware-run firmware-image
 
 deploy-local:
 	docker compose up --build -d
@@ -107,6 +107,9 @@ EOP_ZEPHYR_WS ?= $(HOME)/.cache/eop-zephyr-ws
 FIRMWARE_BUILD ?= build/firmware
 ## Test build with the `eop fault` shell commands (US-403 AC6); never flashed.
 FIRMWARE_FAULT_BUILD ?= build/firmware-fault
+## Test build with TLS to the broker (tls.conf, ADR-013) and the throwaway CA built into it.
+FIRMWARE_TLS_BUILD ?= build/firmware-tls
+FIRMWARE_TLS_CA ?= build/firmware-tls-ca
 FIRMWARE_BOARD ?= native_sim/native/64
 BROKER_HOST ?= 127.0.0.1
 ## native_sim uses the host compiler; the ESP32 build needs ZEPHYR_TOOLCHAIN=zephyr and the
@@ -125,16 +128,28 @@ firmware-fault-build:
 	$(ZEPHYR_ENV) west build -b $(FIRMWARE_BOARD) -d $(FIRMWARE_FAULT_BUILD) firmware/eop-edge \
 		-- -DEXTRA_CONF_FILE=fault_inject.conf
 
+firmware-tls-build:
+	mkdir -p $(FIRMWARE_TLS_CA)
+	test -f $(FIRMWARE_TLS_CA)/ca.crt || openssl req -x509 -newkey rsa:2048 -nodes -sha256 \
+		-days 30 -keyout $(FIRMWARE_TLS_CA)/ca.key -out $(FIRMWARE_TLS_CA)/ca.crt \
+		-subj "/CN=EOP firmware test CA" -addext "basicConstraints=critical,CA:TRUE" \
+		-addext "keyUsage=critical,keyCertSign,cRLSign"
+	$(ZEPHYR_ENV) west build -b $(FIRMWARE_BOARD) -d $(FIRMWARE_TLS_BUILD) firmware/eop-edge \
+		-- -DEXTRA_CONF_FILE=tls.conf -DEOP_MQTT_CA_CERT=$(CURDIR)/$(FIRMWARE_TLS_CA)/ca.crt
+
 ## Unit tests (ztest) of backoff, payloads, identity rules, queue, flush, link, watchdog and LED.
 firmware-test:
 	$(ZEPHYR_ENV) $(EOP_ZEPHYR_WS)/zephyr/scripts/twister -p $(FIRMWARE_BOARD) \
 		-T firmware/eop-edge/tests -O build/firmware-twister --inline-logs
 
-## US-401..US-403 against a real Mosquitto in Docker; US-403 uses the fault-injection build.
-firmware-integration-test: firmware-build firmware-fault-build
+## US-401..US-403 against a real Mosquitto in Docker; US-403 uses the fault-injection build and
+## the TLS listener the TLS build.
+firmware-integration-test: firmware-build firmware-fault-build firmware-tls-build
 	python3 firmware/eop-edge/tests/integration/test_publish.py $(FIRMWARE_BUILD)/zephyr/zephyr.exe
 	python3 firmware/eop-edge/tests/integration/test_resilience.py \
 		$(FIRMWARE_FAULT_BUILD)/zephyr/zephyr.exe
+	python3 firmware/eop-edge/tests/integration/test_tls.py $(FIRMWARE_TLS_BUILD)/zephyr/zephyr.exe \
+		$(FIRMWARE_TLS_CA)
 
 ## One simulated device on this terminal (shell: eop status). FIRMWARE_ARGS="--node-id=vault-7"
 firmware-run: firmware-build
