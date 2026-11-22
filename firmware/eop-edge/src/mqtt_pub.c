@@ -29,6 +29,7 @@
 #include "eop_flush.h"
 #include "eop_platform.h"
 #include "eop_threads.h"
+#include "eop_tls.h"
 
 LOG_MODULE_REGISTER(eop_mqtt, LOG_LEVEL_INF);
 
@@ -154,6 +155,31 @@ static void drop_connection(struct mqtt_session *s)
 	eop_status_set_conn(s->ctx->status, EOP_CONN_DISCONNECTED);
 }
 
+#if defined(CONFIG_EOP_MQTT_TLS)
+static const sec_tag_t tls_tags[] = {EOP_TLS_CA_TAG};
+
+/* TLS 1.2 to the device listener: the broker's certificate must chain to the built-in CA and name
+ * the host (ADR-013).
+ */
+static void set_transport(struct mqtt_session *s)
+{
+	struct mqtt_sec_config *tls = &s->client.transport.tls.config;
+
+	s->client.transport.type = MQTT_TRANSPORT_SECURE;
+	tls->peer_verify = TLS_PEER_VERIFY_REQUIRED;
+	tls->cipher_list = NULL;
+	tls->sec_tag_list = tls_tags;
+	tls->sec_tag_count = ARRAY_SIZE(tls_tags);
+	tls->hostname = CONFIG_EOP_MQTT_TLS_HOSTNAME[0] != '\0' ? CONFIG_EOP_MQTT_TLS_HOSTNAME
+								  : s->ctx->config->broker_host;
+}
+#else
+static void set_transport(struct mqtt_session *s)
+{
+	s->client.transport.type = MQTT_TRANSPORT_NON_SECURE;
+}
+#endif
+
 static int broker_connect(struct mqtt_session *s)
 {
 	const struct eop_device_config *config = s->ctx->config;
@@ -180,7 +206,7 @@ static int broker_connect(struct mqtt_session *s)
 	client->rx_buf_size = sizeof(s->rx_buf);
 	client->tx_buf = s->tx_buf;
 	client->tx_buf_size = sizeof(s->tx_buf);
-	client->transport.type = MQTT_TRANSPORT_NON_SECURE;
+	set_transport(s);
 
 	s->connack_seen = false;
 	ret = mqtt_connect(client);
@@ -369,6 +395,14 @@ static int session_start(struct mqtt_session *s, struct eop_context *ctx)
 		return -ENOSPC;
 	}
 	eop_backoff_init(&s->backoff, CONFIG_EOP_BACKOFF_INITIAL_S, CONFIG_EOP_BACKOFF_MAX_S);
+#if defined(CONFIG_EOP_MQTT_TLS)
+	int ret = eop_tls_init();
+
+	if (ret < 0) {
+		LOG_ERR("broker CA not loaded (%d)", ret);
+		return ret;
+	}
+#endif
 	s->started = true;
 	return 0;
 }

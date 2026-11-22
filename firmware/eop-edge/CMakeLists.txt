@@ -32,3 +32,14 @@ if(CONFIG_EOP_CLOCK_SNTP)
 else()
   target_sources(app PRIVATE src/platform_native_sim.c)
 endif()
+
+# TLS to the broker (tls.conf): the broker's CA is built into the firmware from a file given at
+# build time, never committed (scripts/edge-certs.sh creates it).
+if(CONFIG_EOP_MQTT_TLS)
+  set(EOP_MQTT_CA_CERT "" CACHE FILEPATH "CA certificate (PEM) that signed the broker's certificate")
+  if(NOT EXISTS "${EOP_MQTT_CA_CERT}")
+    message(FATAL_ERROR "tls.conf needs -DEOP_MQTT_CA_CERT=<path to the broker's ca.crt>")
+  endif()
+  generate_inc_file_for_target(app ${EOP_MQTT_CA_CERT} ${ZEPHYR_BINARY_DIR}/include/generated/eop_ca_cert.inc)
+  target_sources(app PRIVATE src/tls.c)
+endif()
