@@ -79,6 +79,22 @@ config EOP_MQTT_TOPIC_PREFIX
 	help
 	  Topics are <prefix>/<node_id>/telemetry, /events and /health.
 
+config EOP_MQTT_TLS
+	bool "TLS to the broker"
+	depends on MQTT_LIB_TLS && NET_SOCKETS_SOCKOPT_TLS && TLS_CREDENTIALS
+	help
+	  The broker's device listener (8883, ADR-013) over TLS 1.2. The device verifies the broker's
+	  certificate against the CA given at build time with -DEOP_MQTT_CA_CERT=<ca.crt> (the CA of
+	  scripts/edge-certs.sh); there is no client certificate. tls.conf turns it on.
+
+config EOP_MQTT_TLS_HOSTNAME
+	string "Name checked against the broker's certificate"
+	default ""
+	depends on EOP_MQTT_TLS
+	help
+	  Empty: the broker host itself. Set it when the device reaches the broker by an address the
+	  certificate does not name.
+
 config EOP_MQTT_KEEPALIVE_S
 	int "MQTT keep-alive (s)"
 	default 30

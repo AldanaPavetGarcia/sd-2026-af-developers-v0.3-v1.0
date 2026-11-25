@@ -35,7 +35,7 @@ source "$WS/.venv/bin/activate"
 [[ -d "$WS/.west" ]] || west init -l "$MANIFEST_DIR"
 cd "$WS"
 if (( ESP32 )); then
-    west config manifest.group-filter -- +hal,+crypto
+    west config manifest.group-filter -- +hal
 fi
 # Fetching Zephyr is the step a flaky connection breaks (an early EOF ends the shallow fetch), so
 # it is retried; west resumes from what it already has.

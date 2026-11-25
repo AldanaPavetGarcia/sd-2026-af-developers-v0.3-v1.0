@@ -34,10 +34,17 @@ def _packet(kind, flags, body):
 class Subscriber:
     """Collects (receive_time, topic, payload) for every message on a topic filter."""
 
-    def __init__(self, host, port, topic_filter, client_id="eop-firmware-test"):
+    def __init__(self, host, port, topic_filter, client_id="eop-firmware-test", ssl_context=None):
+        """ssl_context: an ssl.SSLContext to reach a TLS listener (test_tls.py); None for plain TCP."""
         self.messages = []
         self.lock = threading.Lock()
         self.sock = socket.create_connection((host, port), timeout=10)
+        if ssl_context is not None:
+            try:
+                self.sock = ssl_context.wrap_socket(self.sock, server_hostname=host)
+            except OSError:
+                self.sock.close()
+                raise
         try:
             self._handshake(topic_filter, client_id)
         except (ConnectionError, OSError):

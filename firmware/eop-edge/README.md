@@ -155,10 +155,39 @@ Everything is a Kconfig option set in `prj.conf` (US-401 AC7); nothing is hardco
 | `CONFIG_EOP_SENSOR_PRIORITY` / `_MQTT_PRIORITY` | `5` / `6` | Thread priorities |
 | `CONFIG_EOP_SENSOR_STACK_SIZE` / `_MQTT_STACK_SIZE` | `512` / `2048` | ESP32 stacks; `native_sim` raises them in `boards/` |
 | `CONFIG_EOP_TEMP_WARN_DC` / `_ALERT_DC` | `300` / `350` | Status thresholds, tenths of °C |
+| `CONFIG_EOP_MQTT_TLS` | off (`tls.conf` turns it on) | TLS to the broker's device listener ([TLS](#tls-to-the-broker)) |
+| `CONFIG_EOP_MQTT_TLS_HOSTNAME` | empty: the broker host | Name the broker's certificate must have |
 
 On `native_sim`, `--node-id=`, `--bunker-name=`, `--broker-host=` and `--broker-port=` override the
 `prj.conf` values at start, so one image runs any number of devices. An invalid identity or port
 stops the firmware at boot with an error instead of publishing wrong data.
+
+## TLS to the broker
+
+The broker has a TLS listener for devices on 8883 (ADR-013; `make edge-certs`, from the edge ingestion
+work in US-404, creates its CA and certificate). `tls.conf` builds the firmware for it: TLS 1.2 with Mbed TLS, the broker's
+certificate checked against a CA built into the firmware, and the broker host checked against
+the names in that certificate. The device has no certificate of its own: the listener
+authenticates the broker, not the devices.
+
+```bash
+make edge-certs                       # certs/edge/ca.crt (git-ignored), once per deployment
+west build -b native_sim/native/64 -d build/firmware-tls firmware/eop-edge \
+    -- -DEXTRA_CONF_FILE=tls.conf -DEOP_MQTT_CA_CERT=$PWD/certs/edge/ca.crt
+build/firmware-tls/zephyr/zephyr.exe --broker-host=localhost --broker-port=8883
+```
+
+The CA is a build input, never committed: without `-DEOP_MQTT_CA_CERT` the TLS build stops with
+an error. The broker host must be a name or address in the broker's certificate (`edge-certs.sh`
+puts `mosquitto`, its cluster names, `localhost`, `127.0.0.1` and the minikube IP there); when the
+device reaches the broker by another address, set `CONFIG_EOP_MQTT_TLS_HOSTNAME` to one of those
+names. A broker whose certificate does not chain to the CA or does not name the host is refused
+like an unreachable one: the firmware logs `unreachable (-103)`, retries with the backoff and
+keeps buffering.
+
+On the board (checked on 2026-11-24, [below](#tested-on-an-esp32-2026-11-17)), add `tls.conf` to the WiFi overlay: `EXTRA_CONF_FILE="$PWD/firmware/eop-edge/wifi.local.conf;tls.conf"`
+plus `-DEOP_MQTT_CA_CERT=…`. TLS costs about 60 KB of DRAM there (Mbed TLS heap and a larger MQTT
+stack): 203 KB of 288 KB, 70 %.
 
 ## Build, run, test
 
@@ -168,7 +197,7 @@ make firmware-build              # build/firmware/zephyr/zephyr.exe
 docker compose up -d mosquitto
 make firmware-run FIRMWARE_ARGS="--node-id=vault-7 --bunker-name=Vault-7"
 make firmware-test               # unit tests (ztest, twister)
-make firmware-integration-test   # US-401..US-403 against Mosquitto in Docker (also builds the fault build)
+make firmware-integration-test   # US-401..US-403 and TLS against Mosquitto in Docker (also builds the fault and TLS builds)
 make firmware-image              # eop-edge:local
 docker compose --profile edge up -d eop-edge
 ```
@@ -236,6 +265,12 @@ led:            offline
 | AC5 | LED pattern per state, documented above | `tests/unit` (patterns); visual on the board |
 | AC6 | injected fault (Kconfig test build) → restart and counter | `tests/integration/test_resilience.py` |
 | AC7 | health with the new counter within 10 s of the restart | `tests/integration/test_resilience.py` |
+
+| TLS (ADR-013) check | Where |
+|---|---|
+| publishes through the 8883 listener with a certificate from the built-in CA | `tests/integration/test_tls.py` |
+| refuses a certificate that does not name the broker host | `tests/integration/test_tls.py` |
+| refuses a certificate from another CA, keeps retrying, publishes nothing | `tests/integration/test_tls.py` |
 
 ## Simulation limits
 
@@ -308,6 +343,8 @@ laptop through docker-compose:
 | US-402: broker down 31 s (62 s offline with the backoff) | all samples delivered in order, no gaps, no duplicates; `RECONNECTED` with 62; `dropped` 0 (with a 60-sample buffer the same test lost one sample, hence 120) |
 | US-403: `eop fault hang mqtt` / `hang sensor` (fault build) | restarted after ~6 s; health with the new counter at once; MQTT restart delivered the 6 samples buffered meanwhile; sensor ids continued |
 | US-403: `eop fault crash` | the board rebooted and published again, new `boot_id` |
+| TLS (2026-11-24, `tls.conf`, Mosquitto with only a TLS 1.2 listener on 8883) | connected and published telemetry, `BOOT` and health; first sample acknowledged 6.3 s after boot (13 s on a quick reset, the router behaviour above); the handshake takes about 2 s on the board |
+| TLS with `CONFIG_EOP_MQTT_TLS_HOSTNAME` set to a name the certificate does not have | refused (`unreachable`, backoff 1-2-4-8-16 s), nothing published from that boot, samples buffered |
 
 Not checked on the board: a real WiFi loss (the broker loss above exercises the same buffer and
 reconnection path) and the LED blinking (no LED wired to GPIO2 during the test; `eop status`

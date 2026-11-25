@@ -8,9 +8,10 @@ manifest:
     - name: zephyrproject-rtos
       url-base: https://github.com/zephyrproject-rtos
 
-  # The ESP32 HAL and mbedTLS + TF-PSA-Crypto (used by its WiFi driver) are only needed for the board build;
-  # zephyr-setup.sh --esp32 enables both groups.
-  group-filter: [-hal, -crypto]
+  # The ESP32 HAL is only needed for the board build (zephyr-setup.sh --esp32 enables it). Mbed TLS
+  # and TF-PSA-Crypto are always fetched: the TLS build (tls.conf) is tested on native_sim too, and
+  # the board's WiFi driver uses them.
+  group-filter: [-hal]
 
   projects:
     - name: zephyr
