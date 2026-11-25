@@ -185,7 +185,7 @@ names. A broker whose certificate does not chain to the CA or does not name the 
 like an unreachable one: the firmware logs `unreachable (-103)`, retries with the backoff and
 keeps buffering.
 
-On the board, add `tls.conf` to the WiFi overlay: `EXTRA_CONF_FILE="$PWD/firmware/eop-edge/wifi.local.conf;tls.conf"`
+On the board (checked on 2026-11-24, [below](#tested-on-an-esp32-2026-11-17)), add `tls.conf` to the WiFi overlay: `EXTRA_CONF_FILE="$PWD/firmware/eop-edge/wifi.local.conf;tls.conf"`
 plus `-DEOP_MQTT_CA_CERT=…`. TLS costs about 60 KB of DRAM there (Mbed TLS heap and a larger MQTT
 stack): 203 KB of 288 KB, 70 %.
 
@@ -343,6 +343,8 @@ laptop through docker-compose:
 | US-402: broker down 31 s (62 s offline with the backoff) | all samples delivered in order, no gaps, no duplicates; `RECONNECTED` with 62; `dropped` 0 (with a 60-sample buffer the same test lost one sample, hence 120) |
 | US-403: `eop fault hang mqtt` / `hang sensor` (fault build) | restarted after ~6 s; health with the new counter at once; MQTT restart delivered the 6 samples buffered meanwhile; sensor ids continued |
 | US-403: `eop fault crash` | the board rebooted and published again, new `boot_id` |
+| TLS (2026-11-24, `tls.conf`, Mosquitto with only a TLS 1.2 listener on 8883) | connected and published telemetry, `BOOT` and health; first sample acknowledged 6.3 s after boot (13 s on a quick reset, the router behaviour above); the handshake takes about 2 s on the board |
+| TLS with `CONFIG_EOP_MQTT_TLS_HOSTNAME` set to a name the certificate does not have | refused (`unreachable`, backoff 1-2-4-8-16 s), nothing published from that boot, samples buffered |
 
 Not checked on the board: a real WiFi loss (the broker loss above exercises the same buffer and
 reconnection path) and the LED blinking (no LED wired to GPIO2 during the test; `eop status`
