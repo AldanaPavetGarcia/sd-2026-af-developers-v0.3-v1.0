@@ -21,6 +21,7 @@ CLEAN_CPUS="${EOP_LAB_CLEAN_CPUS:-4}"
 CLEAN_MEMORY="${EOP_LAB_CLEAN_MEMORY:-8g}"
 DISK="${EOP_LAB_DISK:-60g}"
 LOCAL_IMAGES=(eop-server hpc-engine api-gateway external-stub mttr-watcher edge-ingestor edge-sim slo-traffic)
+LOG_FILE=""
 
 log() { printf '[lab] %s\n' "$*" >&2; }
 fail() { printf '[lab] FAIL: %s\n' "$*" >&2; exit 1; }
@@ -46,10 +47,9 @@ EOF
 # Every command's output also goes to a log file.
 start_log() {
     mkdir -p "${LAB_DIR}/logs"
-    local file
-    file="${LAB_DIR}/logs/$(date +%Y%m%d-%H%M%S)-$1.log"
-    exec > >(tee -a "${file}") 2>&1
-    log "$(date -Is) $1 on $(git -C "${REPO}" rev-parse --abbrev-ref HEAD)@$(git -C "${REPO}" rev-parse --short HEAD); log: ${file}"
+    LOG_FILE="${LAB_DIR}/logs/$(date +%Y%m%d-%H%M%S)-$1.log"
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+    log "$(date -Is) $1 on $(git -C "${REPO}" rev-parse --abbrev-ref HEAD)@$(git -C "${REPO}" rev-parse --short HEAD) in ${REPO}; log: ${LOG_FILE}"
 }
 
 use_profile() {
@@ -137,6 +137,7 @@ cmd_start() {
 
 cmd_status() {
     use_profile "${PROFILE}"
+    log "SLO run started: $(cat "${LAB_DIR}/slo-start.txt" 2>/dev/null || echo 'not started (scripts/lab.sh start)')"
     make -C "${REPO}" slo-run-status
 }
 
@@ -159,8 +160,10 @@ cmd_update() {
     load_images "${PROFILE}"
     make -C "${REPO}" k8s-prod-apply
     kubectl apply -f "${REPO}/k8s/slo-run/"
-    # Only the Deployments that run EOP's own images: Prometheus keeps running (its data stays anyway).
-    local deployments="eop-server api-gateway-stable api-gateway-canary ai-service corporate-service mttr-watcher edge-ingestor edge-sim slo-traffic"
+    # The Deployments that run EOP's own images, plus Prometheus and Grafana, which read their
+    # configuration and rules only at start. Prometheus keeps its data on the prometheus-data volume
+    # and loses only the seconds it is down (Recreate).
+    local deployments="eop-server api-gateway-stable api-gateway-canary ai-service corporate-service mttr-watcher edge-ingestor edge-sim slo-traffic prometheus grafana"
     for name in ${deployments}; do
         kubectl rollout restart "deployment/${name}"
     done
@@ -220,7 +223,12 @@ cmd_evidence() {
         kubectl get pods,pvc -o wide >"${LAB_DIR}/pods.txt" 2>&1 || true
     fi
     # The TSDB snapshot (make slo-run-export) is large: it goes only at the end of the run.
-    tar -czf "${out}" -C "${LAB_DIR}" --exclude='evidence-*.tar.gz' .
+    # This command's own log is still being written, so it stays out, and a file that changes while
+    # tar reads it (exit 1) is not a failure; only exit 2 is.
+    local status=0
+    tar -czf "${out}" -C "${LAB_DIR}" --exclude='evidence-*.tar.gz' \
+        --exclude="logs/$(basename "${LOG_FILE}")" --warning=no-file-changed . || status=$?
+    ((status <= 1)) || fail "tar failed (exit ${status}); ${out} is incomplete"
     log "evidence: ${out} ($(du -h "${out}" | cut -f1)); copy it to a USB drive or your Drive"
 }
 
