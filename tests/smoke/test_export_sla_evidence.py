@@ -5,6 +5,7 @@ import csv
 import http.server
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -20,7 +21,7 @@ DASHBOARD = {
     "panels": [
         {"id": 1, "type": "row", "title": "SLO"},
         {"id": 2, "type": "stat", "title": "Error Budget Remaining (30 d)",
-         "targets": [{"refId": "A", "expr": "min(eop:error_budget_remaining:ratio30d) * 100"}]},
+         "targets": [{"refId": "A", "expr": "min(last_over_time(eop:error_budget_remaining:ratio30d[2h])) * 100"}]},
         {"id": 3, "type": "stat", "title": "MTTR P99 (dashboard range)",
          "targets": [{"refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (increase(x_bucket[$__range])))"}]},
         {"id": 4, "type": "text", "title": "Notes"},
@@ -130,6 +131,12 @@ class ExportTest(unittest.TestCase):
     def test_an_exhausted_budget_fails(self):
         Fake.budget = "0"
         self.assertEqual(self.run_tool(), 1)
+
+    def test_summary_reads_recording_rules_through_a_range(self):
+        # One sample an hour: an instant read of the rule (5-minute lookback) would come back empty.
+        for key, query in tool.SUMMARY_QUERIES.items():
+            for rule in re.findall(r"eop:[a-z0-9_:]+", query):
+                self.assertIn(f"last_over_time({rule}", query, key)
 
     def test_helpers(self):
         self.assertEqual(tool.duration_seconds("1h"), 3600)

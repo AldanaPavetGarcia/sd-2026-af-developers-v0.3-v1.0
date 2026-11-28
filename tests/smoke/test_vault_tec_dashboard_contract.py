@@ -61,6 +61,8 @@ THRESHOLDS = {
 }
 RECORDING_RULE = re.compile(r"\beop:[a-z0-9_:]+")
 RAW_METRIC = re.compile(r"\beop_[a-z0-9_]+")
+# A recording rule followed by its optional labels and what comes next: it must be a range selector.
+RULE_READ = re.compile(r"\b(eop:[a-z0-9_:]+)(\{[^}]*\})?\s*(.?)")
 HISTOGRAM_SUFFIXES = ("_bucket", "_sum", "_count")
 LIVE_RATE = re.compile(r"rate\(eop_(gateway|edge)_")
 
@@ -142,6 +144,11 @@ def main() -> None:
             for rule in RECORDING_RULE.findall(expr):
                 if rule not in rules:
                     fail(f"'{panel['title']}' reads {rule}, which no recording rule defines")
+            # The rules record one sample an hour; an instant read (5-minute lookback) misses it.
+            for rule, _, after in RULE_READ.findall(expr):
+                if after != "[":
+                    fail(f"'{panel['title']}' reads {rule} without a range selector "
+                         f"(use last_over_time({rule}[2h]))")
             for metric in RAW_METRIC.findall(expr):
                 if not exported(metric, sources):
                     fail(f"'{panel['title']}' queries {metric}, which nothing exports")

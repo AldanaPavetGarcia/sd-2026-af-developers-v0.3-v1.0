@@ -34,13 +34,13 @@ import json, os, time, urllib.parse, urllib.request
 
 prom, out = os.environ["PROM"], os.environ["OUT"]
 end = time.time()
-start = end - 35 * 86400
 series = {}
+# One sample an hour: a range selector returns every recorded sample as it is. query_range would
+# look 5 minutes back from each step and miss them.
 for name in ("eop:requests:increase1h", "eop:requests_ok:increase1h", "eop:gateway_requests:increase1h",
              "eop:gateway_requests_5xx:increase1h", "eop:up:avg1h", "eop:requests_success:ratio30d",
              "eop:error_budget_remaining:ratio30d", "eop:gateway_success:ratio30d", "eop:up:avg30d"):
-    url = prom + "/api/v1/query_range?" + urllib.parse.urlencode(
-        {"query": name, "start": start, "end": end, "step": "3600"})
+    url = prom + "/api/v1/query?" + urllib.parse.urlencode({"query": f"{name}[35d]", "time": end})
     with urllib.request.urlopen(url, timeout=60) as resp:
         series[name] = json.load(resp)["data"]["result"]
 path = os.path.join(out, "slo-series.json")
