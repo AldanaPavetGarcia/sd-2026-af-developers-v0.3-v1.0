@@ -36,6 +36,7 @@ Usage: scripts/lab.sh <command>
   status      is the SLO run collecting? (once a day)
   autostart   bring the run back by itself after a reboot (user crontab, no sudo)
   update      git pull, rebuild the images and roll them out; the SLO data stays
+  rollout     the same without the git pull (update runs it from the pulled script)
   ready-time  US-406: clean throwaway cluster, < 3 min to Ready, smoke test, then delete it
   smoke       US-406 AC8 smoke test against the long-lived stack
   demo        US-407 demo rehearsal (interactive; DEMO_AUTO=1 for no pauses)
@@ -155,7 +156,19 @@ cmd_autostart() {
 
 cmd_update() {
     use_profile "${PROFILE}"
+    local before
+    before="$(git -C "${REPO}" rev-parse HEAD)"
     git -C "${REPO}" pull --ff-only
+    # Bash has already read this file: what follows must come from the pulled version.
+    if [[ "$(git -C "${REPO}" rev-parse HEAD)" != "${before}" ]]; then
+        log "pulled $(git -C "${REPO}" rev-parse --short HEAD): continuing with its scripts/lab.sh"
+        exec "${REPO}/scripts/lab.sh" rollout
+    fi
+    cmd_rollout
+}
+
+cmd_rollout() {
+    use_profile "${PROFILE}"
     build_images
     load_images "${PROFILE}"
     make -C "${REPO}" k8s-prod-apply
@@ -235,7 +248,7 @@ cmd_evidence() {
 main() {
     local command="${1:-}"
     case "${command}" in
-        check | setup | start | status | autostart | update | ready-time | smoke | demo | sla-export | evidence)
+        check | setup | start | status | autostart | update | rollout | ready-time | smoke | demo | sla-export | evidence)
             start_log "${command}"
             "cmd_${command//-/_}"
             ;;
