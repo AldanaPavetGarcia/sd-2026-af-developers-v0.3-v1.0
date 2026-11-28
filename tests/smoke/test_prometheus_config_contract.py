@@ -39,6 +39,9 @@ K8S_REQUIRED_TOKENS = [
     "prometheus_io_port",
     "rule_files:",
     "/etc/prometheus/rules/*.yml",
+    # Self-scrape: slo-run-status reads the days on the volume from prometheus_tsdb_lowest_timestamp.
+    "job_name: prometheus",
+    "localhost:9090",
 ]
 
 K8S_DEPLOYMENT_REQUIRED_TOKENS = [
