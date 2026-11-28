@@ -1,4 +1,4 @@
-.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-prod-apply k8s-ready-time smoke-test-prod k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-mttr-test edge-certs edge-integration-test k8s-rollout-restart-test slo-run-start slo-run-status slo-run-export observability-test slo-dashboard-test edge-dashboard-test production-config-test edge-test edge-load-tool-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan vault-tec-dashboard-test sla-export sla-export-tool-test demo-script prometheus-rules-test
+.PHONY: gateway-p99-test gateway-smoke-suite-test blue-green-layout canary-layout blue-green-deploy blue-green-switch blue-green-rollback blue-green-status gateway-smoke-test gateway-overlays-test gateway-load-tool-test canary-deploy canary-rollout canary-rollback canary-promote canary-status gateway-load-test loki-test k8s-log-trace-test deploy-local gateway-test gateway-lint gateway-integration-test gateway-coverage gateway-image k8s-apply k8s-prod-apply k8s-ready-time smoke-test-prod k8s-recovery-test k8s-hpc-batch-demo k8s-hpc-recovery-test k8s-mttr-test edge-certs edge-integration-test k8s-rollout-restart-test slo-run-start slo-run-status slo-run-export observability-test slo-dashboard-test edge-dashboard-test production-config-test edge-test edge-load-tool-test hpc-dashboard-test hpc-metrics-test load-test-hpc prometheus-test benchmark benchmark-report-test tsan vault-tec-dashboard-test sla-export sla-export-tool-test demo-script prometheus-rules-test slo-partial-report slo-partial-report-tool-test
 
 deploy-local:
 	docker compose up --build -d
@@ -272,6 +272,14 @@ demo-script:
 ## the SLA period into evidence/ (OUT=…, SLA_DAYS, SLA_STEP). Fails if the error budget is spent.
 sla-export:
 	./scripts/sla-export.sh $(OUT)
+
+## SLA report of a partial period from the hourly series saved as raw-<rule>.json (#67):
+## make slo-partial-report RAW=<dir> OUT=<dir> [START="2026-11-19 00:47 UTC"]
+slo-partial-report:
+	python3 scripts/slo_partial_report.py --raw "$(RAW)" --out "$(OUT)" $(if $(START),--start "$(START)")
+
+slo-partial-report-tool-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 tests/smoke/test_slo_partial_report.py
 
 ## The export logic of sla-export against a fake Grafana and Prometheus.
 sla-export-tool-test:

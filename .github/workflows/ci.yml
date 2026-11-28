@@ -461,6 +461,7 @@ jobs:
           make edge-load-tool-test
           make sla-export-tool-test
           make prometheus-rules-test
+          make slo-partial-report-tool-test
           make loki-test
 
       # Canary and blue-green layouts as rendered by Kustomize (selectors, Services, Ingress), the
