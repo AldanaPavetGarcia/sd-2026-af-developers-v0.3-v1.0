@@ -1,0 +1,89 @@
+# promtool unit tests of the 30-day SLO recording rules (k8s/prometheus-rules-configmap.yaml, #67).
+# Run with `make prometheus-rules-test`, which extracts the rules from the ConfigMap next to this file.
+rule_files:
+  - eop-slo-rules.yml
+
+# promtool evaluates every group at this interval, ignoring the group's own: 1h, as in production.
+evaluation_interval: 1h
+
+tests:
+  # No 5xx in the period: the 5xx series does not exist, the gateway ratio must still be 1.
+  - interval: 1m
+    input_series:
+      - series: 'eop_gateway_http_requests_total{status_class="2xx"}'
+        values: '0+60x300'
+      - series: 'eop_requests_total{service="eop-server",result="OK"}'
+        values: '0+100x300'
+      - series: 'up{job="eop-server"}'
+        values: '1x300'
+    promql_expr_test:
+      - expr: last_over_time(eop:gateway_requests_5xx:increase1h[2h])
+        eval_time: 3h30m
+        exp_samples:
+          - labels: 'eop:gateway_requests_5xx:increase1h'
+            value: 0
+      - expr: last_over_time(eop:gateway_success:ratio30d[2h])
+        eval_time: 3h30m
+        exp_samples:
+          - labels: 'eop:gateway_success:ratio30d'
+            value: 1
+      - expr: last_over_time(eop:requests_success:ratio30d[2h])
+        eval_time: 3h30m
+        exp_samples:
+          - labels: 'eop:requests_success:ratio30d{service="eop-server"}'
+            value: 1
+      - expr: last_over_time(eop:error_budget_remaining:ratio30d[2h])
+        eval_time: 3h30m
+        exp_samples:
+          - labels: 'eop:error_budget_remaining:ratio30d{service="eop-server"}'
+            value: 1
+      - expr: last_over_time(eop:up:avg30d[2h])
+        eval_time: 3h30m
+        exp_samples:
+          - labels: 'eop:up:avg30d{job="eop-server"}'
+            value: 1
+      # The bug of the first run: an hourly sample is invisible to a plain instant query 30 minutes
+      # after its evaluation (5-minute lookback). Readers must use a range selector.
+      - expr: eop:gateway_success:ratio30d
+        eval_time: 3h30m
+        exp_samples: []
+
+  # Errors: 1 failed command in 1000 and 1 gateway 5xx in 100.
+  - interval: 1m
+    input_series:
+      - series: 'eop_requests_total{service="eop-server",result="OK"}'
+        values: '0+999x300'
+      - series: 'eop_requests_total{service="eop-server",result="ERROR"}'
+        values: '0+1x300'
+      - series: 'eop_gateway_http_requests_total{status_class="2xx"}'
+        values: '0+99x300'
+      - series: 'eop_gateway_http_requests_total{status_class="5xx"}'
+        values: '0+1x300'
+    promql_expr_test:
+      - expr: last_over_time(eop:requests_success:ratio30d[2h])
+        eval_time: 3h30m
+        exp_samples:
+          - labels: 'eop:requests_success:ratio30d{service="eop-server"}'
+            value: 0.999
+      - expr: last_over_time(eop:error_budget_remaining:ratio30d[2h]) < 0.0001
+        eval_time: 3h30m
+        exp_samples:
+          - labels: 'eop:error_budget_remaining:ratio30d{service="eop-server"}'
+            value: 0
+      - expr: last_over_time(eop:gateway_success:ratio30d[2h])
+        eval_time: 3h30m
+        exp_samples:
+          - labels: 'eop:gateway_success:ratio30d'
+            value: 0.99
+
+  # Every command fails: the OK series does not exist, the success ratio must be 0, not missing.
+  - interval: 1m
+    input_series:
+      - series: 'eop_requests_total{service="eop-server",result="ERROR"}'
+        values: '0+10x300'
+    promql_expr_test:
+      - expr: last_over_time(eop:requests_success:ratio30d[2h])
+        eval_time: 3h30m
+        exp_samples:
+          - labels: 'eop:requests_success:ratio30d{service="eop-server"}'
+            value: 0

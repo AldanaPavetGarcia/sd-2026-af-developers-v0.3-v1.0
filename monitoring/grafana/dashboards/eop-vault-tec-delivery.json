@@ -48,7 +48,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "min(eop:requests_success:ratio30d) * 100",
+          "expr": "min(last_over_time(eop:requests_success:ratio30d[2h])) * 100",
           "instant": true
         }
       ],
@@ -103,7 +103,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "min(eop:error_budget_remaining:ratio30d) * 100",
+          "expr": "min(last_over_time(eop:error_budget_remaining:ratio30d[2h])) * 100",
           "instant": true
         }
       ],
@@ -162,7 +162,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "eop:gateway_success:ratio30d * 100",
+          "expr": "last_over_time(eop:gateway_success:ratio30d[2h]) * 100",
           "instant": true
         }
       ],
@@ -217,7 +217,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "avg(eop:up:avg30d{job=\"eop-server\"}) * 100",
+          "expr": "avg(last_over_time(eop:up:avg30d{job=\"eop-server\"}[2h])) * 100",
           "instant": true
         }
       ],
@@ -272,12 +272,12 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(eop:requests_ok:increase1h) / clamp_min(sum(eop:requests:increase1h), 1) * 100",
+          "expr": "sum(last_over_time(eop:requests_ok:increase1h[1h])) / clamp_min(sum(last_over_time(eop:requests:increase1h[1h])), 1) * 100",
           "legendFormat": "eop-server"
         },
         {
           "refId": "B",
-          "expr": "(1 - sum(eop:gateway_requests_5xx:increase1h) / clamp_min(sum(eop:gateway_requests:increase1h), 1)) * 100",
+          "expr": "(1 - sum(last_over_time(eop:gateway_requests_5xx:increase1h[1h])) / clamp_min(sum(last_over_time(eop:gateway_requests:increase1h[1h])), 1)) * 100",
           "legendFormat": "api-gateway"
         }
       ],
@@ -308,7 +308,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "min(eop:error_budget_remaining:ratio30d) * 100",
+          "expr": "min(last_over_time(eop:error_budget_remaining:ratio30d[1h])) * 100",
           "legendFormat": "budget left (%)"
         }
       ],

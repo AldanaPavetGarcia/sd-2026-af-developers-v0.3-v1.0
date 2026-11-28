@@ -80,3 +80,9 @@ data:
           - source_labels: [__meta_kubernetes_pod_name]
             action: replace
             target_label: pod
+
+      # Prometheus itself: make slo-run-status reads how many days the TSDB holds
+      # (prometheus_tsdb_lowest_timestamp) and how much it takes on the volume.
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:9090"]

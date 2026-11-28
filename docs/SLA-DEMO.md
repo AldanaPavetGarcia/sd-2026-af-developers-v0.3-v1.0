@@ -86,3 +86,34 @@ attach the directory to the delivery.
 
 If the period is shorter than 30 days (the run started late), `SLA_DAYS` is the real number of days
 and the delivery says so.
+
+### The period so far
+
+The run started on 2026-11-19 00:47 UTC (`docs/LAB-14-CORE.md`). On 2026-11-27, the status on the
+lab machine and the hourly series saved that day gave:
+
+| SLO | Target | 2026-11-19 00:47 → 2026-11-27 UTC (8.96 days, 215 hourly samples) |
+|---|---|---|
+| eop-server success ratio | ≥ 99.9 % | 100 % (about 6,500 requests an hour, none failed) |
+| Error budget left | > 0 | 100 % |
+| API gateway success ratio (no 5xx) | ≥ 99.9 % | 100 %: no 5xx was recorded in the period |
+| Availability (`up`) | ≥ 99.9 % | 100 % for each of the 6 jobs: eop-server, hpc-engine, api-gateway, slo-traffic, mttr-watcher, edge-ingestor |
+
+#### Events of the period
+
+| When (UTC) | Event | Effect on the data |
+|---|---|---|
+| 2026-11-19 00:47 | Start of the run (`scripts/lab.sh start`) | Start of the SLO period |
+| 2026-11-27 23:57 | First extraction, with the old readers | None: it found the read bugs (`docs/LAB-14-CORE.md`) |
+| 2026-11-28 ~00:38 | `scripts/lab.sh update` to the fixes: every EOP Deployment restarted (eop-server with its 2 replicas one at a time) | 6 failed synthetic requests out of 958 in the following 10 minutes, the first failures of the run. To be checked in the next extraction: whether they reached eop-server or the gateway as errors (`eop:requests_success`, `eop:gateway_success`) or only the client (`eop_traffic_requests_total`) |
+| 2026-11-28 00:45:08 | Prometheus and Grafana restarted by hand to load the new configuration and rules | About 1–2 minutes without scrapes |
+| 2026-12-19 00:47 | Planned end of the 30 days (2026-12-18 21:47 ART) | |
+
+The table above covers up to the first extraction, before these restarts. The restarts are
+maintenance of the measurement itself, not a failure of the product, but they count against the SLO
+like any other failure: the report states them and does not remove them.
+
+`make slo-partial-report RAW=<dir> OUT=<dir> START="2026-11-19 00:47 UTC"` recomputes the table
+from the saved `raw-eop_*.json` files, hour by hour, and lists any hour without a sample. The table
+above is replaced by its `slo-report.md`, and at the end of the run by `make sla-export` with the
+final number of days.

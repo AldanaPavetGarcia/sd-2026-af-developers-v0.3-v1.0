@@ -1,6 +1,11 @@
 # Recording rules for 30-day SLO queries (#67, US-407 AC1/AC2). Each group runs once an hour and
 # records the increase of the request counters over that hour, so a 30-day figure is a cheap
 # sum_over_time(...[30d]) over 720 samples instead of a rate() over 30 days of raw data.
+#
+# One sample an hour is invisible to a plain instant query, which looks back only 5 minutes: read
+# these series with a range selector (last_over_time(eop:...[2h]), sum_over_time(eop:...[30d])).
+# A series that only exists after a failure (5xx, result!=OK) falls back to 0 times the total, so a
+# period with no errors records 0 instead of nothing.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -17,12 +22,16 @@ data:
           - record: eop:requests:increase1h
             expr: sum by (service) (increase(eop_requests_total[1h]))
           - record: eop:requests_ok:increase1h
-            expr: sum by (service) (increase(eop_requests_total{result="OK"}[1h]))
+            expr: >
+              sum by (service) (increase(eop_requests_total{result="OK"}[1h]))
+              or sum by (service) (increase(eop_requests_total[1h])) * 0
           # API gateway (ADR-010: 5xx are the errors that count against the SLO).
           - record: eop:gateway_requests:increase1h
             expr: sum(increase(eop_gateway_http_requests_total[1h]))
           - record: eop:gateway_requests_5xx:increase1h
-            expr: sum(increase(eop_gateway_http_requests_total{status_class="5xx"}[1h]))
+            expr: >
+              sum(increase(eop_gateway_http_requests_total{status_class="5xx"}[1h]))
+              or sum(increase(eop_gateway_http_requests_total[1h])) * 0
           # Availability of every scraped job (SLO dashboard: up).
           - record: eop:up:avg1h
             expr: avg by (job) (avg_over_time(up[1h]))
@@ -38,7 +47,8 @@ data:
             expr: clamp_min(1 - (1 - eop:requests_success:ratio30d) / 0.001, 0)
           - record: eop:gateway_success:ratio30d
             expr: >
-              1 - sum_over_time(eop:gateway_requests_5xx:increase1h[30d])
+              1 - (sum_over_time(eop:gateway_requests_5xx:increase1h[30d])
+                   or sum_over_time(eop:gateway_requests:increase1h[30d]) * 0)
               / clamp_min(sum_over_time(eop:gateway_requests:increase1h[30d]), 1)
           - record: eop:up:avg30d
             expr: avg_over_time(eop:up:avg1h[30d])

@@ -35,13 +35,20 @@ def scalar(expr):
     result = query(expr)
     return float(result[0]["value"][1]) if result else None
 
+# Prometheus' own metrics come from its self-scrape job (k8s/prometheus-configmap.yaml).
 lowest_ms = scalar("prometheus_tsdb_lowest_timestamp")
-days = (time.time() * 1000 - lowest_ms) / 86_400_000 if lowest_ms else 0
-print(f"[slo-run] data since {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime((lowest_ms or 0) / 1000))}"
-      f" ({days:.1f} days of the 30)")
+if lowest_ms:
+    days = (time.time() * 1000 - lowest_ms) / 86_400_000
+    print(f"[slo-run] data since {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(lowest_ms / 1000))}"
+          f" ({days:.1f} days of the 30)")
+else:
+    print("[slo-run] data since: unknown (Prometheus does not scrape itself yet: make slo-run-start)")
+hours = scalar("count_over_time(eop:up:avg1h{job=\"eop-server\"}[35d])")
+print(f"[slo-run] hourly SLO samples recorded: {hours or 0:.0f} ({(hours or 0) / 24:.2f} days)")
 
 size = scalar("prometheus_tsdb_storage_blocks_bytes")
-print(f"[slo-run] TSDB blocks on the volume: {(size or 0) / 2**20:.0f} MiB")
+print(f"[slo-run] TSDB blocks on the volume: "
+      f"{'unknown' if size is None else f'{size / 2**20:.0f} MiB'}")
 
 for row in query('up{job=~"eop-server|hpc-engine|api-gateway.*|slo-traffic"}'):
     print(f"[slo-run] up {row['metric'].get('job')} {row['metric'].get('pod', '')}: {row['value'][1]}")
@@ -54,7 +61,8 @@ print(f"[slo-run] synthetic traffic, last 10 min: {sent:.0f} requests, {failed:.
 
 for name in ("eop:requests_success:ratio30d", "eop:error_budget_remaining:ratio30d",
              "eop:gateway_success:ratio30d"):
-    rows = query(name)
+    # Recorded once an hour: a plain instant query (5-minute lookback) misses it most of the time.
+    rows = query(f"last_over_time({name}[2h])")
     shown = ", ".join(f"{r['metric'].get('service', 'all')}={float(r['value'][1]):.5f}" for r in rows)
     print(f"[slo-run] {name}: {shown or 'not recorded yet (first value after 1 h)'}")
 

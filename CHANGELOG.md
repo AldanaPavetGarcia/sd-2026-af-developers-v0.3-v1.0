@@ -4,6 +4,10 @@ All notable changes to the EOP Server Node Registry project will be documented i
 
 ## [Unreleased]
 
+## [1.0.0] - date set when release/1.0.0 is cut
+
+Edge Integration & Product Delivery (Milestone 4): ZephyrOS bunker devices publish telemetry over MQTT, buffer it while offline and recover from hung threads; an edge ingestor brings it into the EOP server exactly once; two server replicas share the node registry so a Pod crash costs under 200 ms of service; and EOP v1.0 deploys with one command and demonstrates its SLA live. Known limitations: [`docs/release-1.0.0-known-limitations.md`](docs/release-1.0.0-known-limitations.md). The firmware entries (US-401..US-403, #68–#70) and the v1.0 ADRs (#66) arrive through their own stack (#77–#80) and join this section when both stacks are merged.
+
 ### Added
 
 - **SLA demonstration (US-407, #75):** the Grafana dashboard **Vault-Tec Delivery — EOP v1.0** puts the SLA in one place: a 30-day row from the hourly recording rules (eop-server and API gateway success ratios, error budget left, availability, hourly series), the failover row (MTTR on Pod failure, its P99, replica replacement time, routable replicas), the canary row (requests, error rate and P99 by version) and the edge row (E2E P99, devices, messages per second); thresholds are the SLO targets of `config/production.env`, checked by `make vault-tec-dashboard-test`. `make demo-script` (`scripts/demo.sh`) runs the live demo step by step: an eop-server Pod deleted under a 20 ms probe, the gateway canary at 10 → 50 → 100 % under client load, one simulated device's samples to `/v1/nodes` and SigNoz, and `make smoke-test-prod`; it stops at the first failure and always leaves the canary at weight 0. `make sla-export` writes the evidence of the period (dashboard JSON, every panel's data as CSV, headline numbers, screenshot or how to take it) and fails if the error budget is spent. Rehearsal checklist, script for each step and fallbacks in `docs/SLA-DEMO.md`.
@@ -15,6 +19,7 @@ All notable changes to the EOP Server Node Registry project will be documented i
 
 ### Fixed
 
+- **The 30-day SLO figures read as empty although the data was collected (#67):** the first extraction on the 14-core machine (2026-11-27, 9 days into the run) gave `n/a` everywhere. The rules record one sample an hour and every reader used an instant query, which looks back only 5 minutes. The dashboard, `make slo-run-status`, `make slo-run-export` and `make sla-export` now read them through `last_over_time(…[2h])` or `<rule>[35d]`, and the dashboard contract test rejects an instant read. The gateway success rule was empty in a period with no 5xx, because the 5xx series never existed; the 5xx and OK rules now fall back to 0. `make prometheus-rules-test` checks both with promtool in CI. Prometheus scrapes itself, so the status shows the days on the volume instead of 1970. `scripts/lab.sh evidence` no longer fails when its own log changes while it packs, and `lab.sh update` restarts Prometheus and Grafana so they load the new rules, keeping the data; after `git pull` it continues with the pulled `lab.sh` (`lab.sh rollout`), since Bash had already read the old one. `make slo-partial-report` turns the hourly series saved on the machine (`raw-<rule>.json`) into `slo-series.json` and a report of the period.
 - **A command left without `\n` when a client closed could be answered to another client (#71):** the server queued it and closed the socket at once, so a new connection could get the same fd before the worker wrote the answer. The session now stays open, out of the poll set, until the worker has answered, which also makes a half-closed client (`printf 'LIST_NODES' | nc`) get its answer.
 
 ## [0.3.0] - date set when release/0.3.0 is cut

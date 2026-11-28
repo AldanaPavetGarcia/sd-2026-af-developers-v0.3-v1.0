@@ -38,11 +38,13 @@ RENDER_WIDTH = 1800
 RENDER_HEIGHT = 2400
 SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 # Headline numbers of summary.json: name -> instant PromQL.
+# The recording rules run once an hour, so they are read through last_over_time: a plain instant
+# query only looks 5 minutes back.
 SUMMARY_QUERIES = {
-    "eop_server_success_ratio_30d": "min(eop:requests_success:ratio30d)",
-    "error_budget_remaining_30d": "min(eop:error_budget_remaining:ratio30d)",
-    "gateway_success_ratio_30d": "eop:gateway_success:ratio30d",
-    "eop_server_availability_30d": 'avg(eop:up:avg30d{job="eop-server"})',
+    "eop_server_success_ratio_30d": "min(last_over_time(eop:requests_success:ratio30d[2h]))",
+    "error_budget_remaining_30d": "min(last_over_time(eop:error_budget_remaining:ratio30d[2h]))",
+    "gateway_success_ratio_30d": "last_over_time(eop:gateway_success:ratio30d[2h])",
+    "eop_server_availability_30d": 'avg(last_over_time(eop:up:avg30d{job="eop-server"}[2h]))',
     "mttr_last_seconds": 'eop_mttr_last_seconds{kind="service_restoration"}',
     "replica_replacement_last_seconds": 'eop_mttr_last_seconds{kind="replica_replacement"}',
     "edge_e2e_p99_seconds_1h": "histogram_quantile(0.99, sum by (le) (rate(eop_edge_e2e_latency_seconds_bucket[1h])))",
