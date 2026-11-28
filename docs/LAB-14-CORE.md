@@ -2,7 +2,9 @@
 
 The 14-core machine is used in person: no SSH. The repository is cloned there and everything runs
 through `scripts/lab.sh`, which logs each command to `~/eop-lab/logs/` and packs the results into
-one file to carry back. The clone can be anywhere: run the commands below from its directory
+one file to carry back. The lab machine's shell is fish, where `VAR=value command` does not work:
+every command here that sets a variable is written `env VAR=value command`, which works in fish and
+bash alike. The clone can be anywhere: run the commands below from its directory
 (`cd "<clone>"`, quoted if the path has spaces); `lab.sh` finds the repository by itself and logs
 which one it used. No commits are made on that machine: the evidence comes back to the
 laptop, where it is committed with the signing key.
@@ -56,7 +58,7 @@ scripts/lab.sh ready-time  # US-406 on a throwaway profile, deleted at the end
 ```
 
 `check` prints the cores, memory and disk. If the machine has less memory, lower the profiles:
-`EOP_LAB_MEMORY=8g EOP_LAB_CLEAN_MEMORY=6g scripts/lab.sh setup` (the same variables for
+`env EOP_LAB_MEMORY=8g EOP_LAB_CLEAN_MEMORY=6g scripts/lab.sh setup` (the same variables for
 `ready-time`). `ready-time` needs both profiles at once; it never touches the long-lived one.
 
 The machine must not suspend or install updates that reboot it: every hour down is an hour with
@@ -77,7 +79,7 @@ they prove.
 ## 4. Demo rehearsals and the end of the run
 
 ```bash
-scripts/lab.sh demo        # step by step with pauses; DEMO_AUTO=1 without them
+scripts/lab.sh demo        # step by step with pauses; env DEMO_AUTO=1 scripts/lab.sh demo without them
 scripts/lab.sh smoke       # US-406 AC8 on the long-lived stack
 scripts/lab.sh sla-export  # SLA evidence of the period so far
 make slo-run-export        # only at the end: the TSDB snapshot (large) in slo-run-export/
@@ -105,6 +107,7 @@ The data was being collected correctly, but the tools that read it did not show 
 | 3 | `eop:gateway_success:ratio30d` empty | With no 5xx in the period the 5xx series never existed, so the division had nothing to divide | The 5xx and OK rules fall back to 0 × the total. `make prometheus-rules-test` (promtool) covers both cases |
 | 4 | `lab.sh evidence` exited 1 with "file changed as we read it" | It packed `~/eop-lab` while writing its own log there | The current log is left out and tar's exit 1 is no longer a failure |
 | 5 | The guide assumed `~/eop` | | Commands run from wherever the clone is |
+| 6 | The first `lab.sh update` with these fixes (2026-11-28 00:38 UTC) applied the new Prometheus configuration and rules but did not restart Prometheus or Grafana | Bash had already read the old `lab.sh` before `git pull`, so the old list of Deployments to restart ran | `update` now runs the rest from the pulled script (`lab.sh rollout`). That time they were restarted by hand at 00:45:08 UTC |
 
 None of this lost data: the raw metrics and the hourly samples are on the volume. On the next visit:
 
@@ -112,6 +115,12 @@ None of this lost data: the raw metrics and the hourly samples are on the volume
 scripts/lab.sh update      # new rules, self-scrape, dashboard; Prometheus restarts, data stays
 scripts/lab.sh status      # now shows the days and the 30-day figures
 ```
+
+Applied on 2026-11-28 (Prometheus and Grafana restarted by hand, finding 6). Afterwards the status
+showed data since 2026-11-19 00:46 UTC (9.0 days), 216 hourly samples, 34 MiB of TSDB blocks and
+success ratio and error budget at 1.00000. The new gateway rule had its first evaluation pending.
+The synthetic traffic showed 6 failed requests out of 958 in the 10 minutes after the restarts,
+where it had always shown 0: see "Events of the period" in `docs/SLA-DEMO.md`.
 
 The figures of the first 9 days come from the hourly series saved that day (`raw-eop_*.json`):
 `make slo-partial-report RAW=<dir> OUT=<dir> START="2026-11-19 00:47 UTC"` writes `slo-series.json`,
