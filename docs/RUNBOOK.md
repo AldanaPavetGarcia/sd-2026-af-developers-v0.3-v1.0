@@ -62,8 +62,10 @@ Grafana → Dashboards → EOP → *EOP SLO Dashboard* (`docs/slo-dashboard-graf
   pod ready" (seconds, informative).
 - **30-day figures:** Prometheus records them hourly (`k8s/prometheus-rules-configmap.yaml`):
   `eop:requests_success:ratio30d`, `eop:error_budget_remaining:ratio30d`,
-  `eop:gateway_success:ratio30d`, `eop:up:avg30d`. Query them in Grafana → Explore, or run
-  `make slo-run-status` (docs/slo-30-day-run.md).
+  `eop:gateway_success:ratio30d`, `eop:up:avg30d`. There is one sample an hour, so in Grafana →
+  Explore query them as `last_over_time(eop:requests_success:ratio30d[2h])`: a bare instant query
+  sees only the last 5 minutes and usually comes back empty. Or run `make slo-run-status`
+  (docs/slo-30-day-run.md).
 
 Edge telemetry has its own dashboard, *EOP Edge Telemetry* (`docs/edge-latency-dashboard.md`):
 end-to-end P99 against 500 ms, messages per second, buffer overflow losses and the device table.

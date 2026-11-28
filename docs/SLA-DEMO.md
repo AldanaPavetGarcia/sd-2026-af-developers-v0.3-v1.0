@@ -86,3 +86,20 @@ attach the directory to the delivery.
 
 If the period is shorter than 30 days (the run started late), `SLA_DAYS` is the real number of days
 and the delivery says so.
+
+### The period so far
+
+The run started on 2026-11-19 00:47 UTC (`docs/LAB-14-CORE.md`). On 2026-11-27, the status on the
+lab machine and the hourly series saved that day gave:
+
+| SLO | Target | 2026-11-19 00:47 → 2026-11-27 UTC (8.96 days, 215 hourly samples) |
+|---|---|---|
+| eop-server success ratio | ≥ 99.9 % | 100 % (about 6,500 requests an hour, none failed) |
+| Error budget left | > 0 | 100 % |
+| API gateway success ratio (no 5xx) | ≥ 99.9 % | 100 %: no 5xx was recorded in the period |
+| Availability (`up`) | ≥ 99.9 % | 100 % for each of the 6 jobs: eop-server, hpc-engine, api-gateway, slo-traffic, mttr-watcher, edge-ingestor |
+
+`make slo-partial-report RAW=<dir> OUT=<dir> START="2026-11-19 00:47 UTC"` recomputes the table
+from the saved `raw-eop_*.json` files, hour by hour, and lists any hour without a sample. The table
+above is replaced by its `slo-report.md`, and at the end of the run by `make sla-export` with the
+final number of days.

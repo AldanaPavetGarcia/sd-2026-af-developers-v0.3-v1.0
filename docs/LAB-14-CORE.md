@@ -2,7 +2,9 @@
 
 The 14-core machine is used in person: no SSH. The repository is cloned there and everything runs
 through `scripts/lab.sh`, which logs each command to `~/eop-lab/logs/` and packs the results into
-one file to carry back. No commits are made on that machine: the evidence comes back to the
+one file to carry back. The clone can be anywhere: run the commands below from its directory
+(`cd "<clone>"`, quoted if the path has spaces); `lab.sh` finds the repository by itself and logs
+which one it used. No commits are made on that machine: the evidence comes back to the
 laptop, where it is committed with the signing key.
 
 What it is for: the 30-day SLO run ([slo-30-day-run.md](slo-30-day-run.md)), the clean-cluster
@@ -28,7 +30,20 @@ use a token that can only read this repository:
 
    Username: `AldanaPavetGarcia`; password: the token.
 
+   On the lab machine the clone is in `~/Descargas/Aldana Pavet/eop`, with the symlink `~/eop`
+   pointing to it.
+
 If the token leaks, revoking it on that page is enough: it cannot write to anything.
+
+## The machine
+
+As set up for the run (2026-11-18):
+
+| | |
+|---|---|
+| OS | Rocky Linux 8.10, kernel 7.2 (ELRepo) |
+| cgroups | **v2**. Kubernetes v1.37's kubelet does not start on cgroups v1, because the `cpuset` controller is missing there. Switched with `sudo grubby --update-kernel=ALL --args="systemd.unified_cgroup_hierarchy=1"` and a reboot. `stat -fc %T /sys/fs/cgroup` must print `cgroup2fs` |
+| Tools | Docker CE 26.1.3, minikube v1.39.0, kubectl v1.37.2 |
 
 ## 2. First day
 
@@ -52,6 +67,7 @@ no data, which the report has to declare.
 ```bash
 scripts/lab.sh status      # days collected, traffic flowing; exits 1 if it is not collecting
 scripts/lab.sh update      # only when there is a new build to try: git pull + images + rollout
+                           # (also restarts Prometheus and Grafana; the SLO data stays)
 scripts/lab.sh evidence    # ~/eop-lab/evidence-<date>.tar.gz
 ```
 
@@ -70,6 +86,36 @@ scripts/lab.sh evidence
 
 **Never** run `minikube delete -p eop` or delete the `prometheus-data` claim: that is the SLO
 data, and the run would start over.
+
+## The current run
+
+Started **2026-11-19 00:47 UTC** (2026-11-18 21:47 ART, `~/eop-lab/slo-start.txt`); 30 days end on
+2026-12-19 00:47 UTC (2026-12-18 21:47 ART). As of 2026-11-27: 8 days 23 hours of uptime with no
+reboot, Prometheus with 0 restarts, `prometheus-data` Bound, 215 hourly samples (8.96 days), about
+6,500 eop-server requests an hour and none failed.
+
+### What the first extraction found (2026-11-27)
+
+The data was being collected correctly, but the tools that read it did not show it:
+
+| # | Symptom | Cause | Fix |
+|---|---|---|---|
+| 1 | `status`, `sla-export` and `slo-run-export` gave `n/a` and an empty `slo-series.json` | The rules record one sample an hour; an instant query looks back only 5 minutes, and `query_range` with a 1 h step does the same at each step | Every reader uses a range selector: `last_over_time(eop:…[2h])`, and `eop:…[35d]` for the hourly series. `make vault-tec-dashboard-test` rejects a panel that reads a rule without one |
+| 2 | `status` said "data since 1970-01-01 (0.0 days)" and "0 MiB" | Prometheus did not scrape itself, so `prometheus_tsdb_lowest_timestamp` did not exist | `prometheus` self-scrape job. `status` also prints the hourly samples recorded |
+| 3 | `eop:gateway_success:ratio30d` empty | With no 5xx in the period the 5xx series never existed, so the division had nothing to divide | The 5xx and OK rules fall back to 0 × the total. `make prometheus-rules-test` (promtool) covers both cases |
+| 4 | `lab.sh evidence` exited 1 with "file changed as we read it" | It packed `~/eop-lab` while writing its own log there | The current log is left out and tar's exit 1 is no longer a failure |
+| 5 | The guide assumed `~/eop` | | Commands run from wherever the clone is |
+
+None of this lost data: the raw metrics and the hourly samples are on the volume. On the next visit:
+
+```bash
+scripts/lab.sh update      # new rules, self-scrape, dashboard; Prometheus restarts, data stays
+scripts/lab.sh status      # now shows the days and the 30-day figures
+```
+
+The figures of the first 9 days come from the hourly series saved that day (`raw-eop_*.json`):
+`make slo-partial-report RAW=<dir> OUT=<dir> START="2026-11-19 00:47 UTC"` writes `slo-series.json`,
+`slo-report.json` and `slo-report.md` on the laptop, without the cluster.
 
 ## 5. Optional: CI on this machine
 

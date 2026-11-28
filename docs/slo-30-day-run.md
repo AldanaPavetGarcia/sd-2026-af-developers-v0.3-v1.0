@@ -77,7 +77,15 @@ once a day; Grafana shows the same data:
 kubectl port-forward service/grafana 3000:3000     # http://localhost:3000, EOP SLO Dashboard
 ```
 
-The days counted come from `prometheus_tsdb_lowest_timestamp`: the oldest sample on the volume.
+The days counted come from `prometheus_tsdb_lowest_timestamp`: the oldest sample on the volume,
+from Prometheus' own `prometheus` scrape job.
+
+**Reading the recorded series.** The rules run once an hour, so each `eop:*` series has one sample
+an hour. A plain instant query looks back only 5 minutes and misses it most of the time, and
+`query_range` does the same at each step. Read them through a range selector:
+`last_over_time(eop:requests_success:ratio30d[2h])` for the latest value, `eop:requests:increase1h[35d]`
+for every hourly sample. The dashboard, `slo-run-status`, `slo-run-export` and `sla-export` all do,
+and `make prometheus-rules-test` checks the rules with promtool.
 
 ## 4. Restarts and upgrades to v1.0, without losing the data
 
@@ -104,11 +112,13 @@ docker build -t eop-server:local . && docker build -t hpc-engine:local -f hpc-en
 make gateway-image
 make slo-run-start           # applies the new manifests; the PVC and its data stay
 kubectl rollout restart deployment/eop-server deployment/api-gateway-stable deployment/slo-traffic
+kubectl rollout restart deployment/prometheus deployment/grafana   # only if their config or rules changed
 make slo-run-status          # same "data since" as before the upgrade
 ```
 
-Prometheus itself restarts only when its own manifests change, and then loses only the seconds it
-is down (`Recreate`). Scrape targets that v1.0 adds (the hpc-engine sidecar, mttr-watcher, the edge
+Prometheus and Grafana read their configuration, rules and dashboards only at start, so a change
+to them needs the restart above (`scripts/lab.sh update` always does it). Prometheus then loses only
+the seconds it is down (`Recreate`). Scrape targets that v1.0 adds (the hpc-engine sidecar, mttr-watcher, the edge
 ingestor) simply start having data from the upgrade on.
 
 ## 5. End of the run: export the data
@@ -122,11 +132,17 @@ It writes to `slo-run-export/` (ignored by git):
 * `tsdb-<snapshot>.tar.gz`: a consistent snapshot of the whole TSDB (admin API). To look at it on
   any machine: unpack it and run
   `prometheus --storage.tsdb.path=tsdb-<snapshot> --config.file=monitoring/prometheus/prometheus.yml`.
-* `slo-series.json`: the hourly recording-rule series of the last 35 days, the input of the
-  US-407 SLA report.
+* `slo-series.json`: every hourly sample of the recording rules in the last 35 days (`<rule>[35d]`),
+  the input of the US-407 SLA report.
+
+For a period saved as one Prometheus answer per rule (`raw-<rule>.json`, `:` written as `_`, from
+`/api/v1/query?query=<rule>[10d]`), `make slo-partial-report RAW=<dir> OUT=<dir> START="<start>"`
+writes the same `slo-series.json` plus `slo-report.json` and `slo-report.md`: hours recorded and
+missing, requests, success ratio and error budget left, gateway success ratio and availability.
 
 ## 6. Declaring the period
 
-Issue #67 planned the start for 2026-11-08 at the latest. If the run starts later, the delivery
-shows the days actually collected (`make slo-run-status`) and says so: the report states the real
-start date and the gaps, never extrapolated figures.
+Issue #67 planned the start for 2026-11-08 at the latest. The run started on
+**2026-11-19 00:47 UTC** on the 14-core machine (`docs/LAB-14-CORE.md`, "The current run"), so the
+delivery shows the days actually collected (`make slo-run-status`) and says so: the report states the
+real start date and the gaps, never extrapolated figures.
